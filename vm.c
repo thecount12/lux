@@ -7,13 +7,12 @@ int disassembleInstruction(Chunk* chunk, int offset);
 
 VM vm;
 
-
-void initVM() {
-	print("");
+void initVM(void) {
+	print(".");
 }
 
 void freeVM() {
-	print("");
+	print(".");
 }
 
 
