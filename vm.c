@@ -50,7 +50,13 @@ InterpretResult interpret(Chunk* chunk)
     // Define the macros locally for the interpreter loop
     #define READ_BYTE() (*vm.ip++)
     #define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
-
+	#define BINARY_OP(op) \
+		do { \
+			double b = pop(); \
+			double a = pop(); \
+			push (a op b); \
+		} while (0)
+	// note: while(false) plan9 C does not use false
 	for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
 	print("        ");
@@ -71,13 +77,18 @@ InterpretResult interpret(Chunk* chunk)
 				//print("\n");
 				break;
 			}
-			case OP_NEGATE: push(-pop()); break;
+			case OP_ADD:		BINARY_OP(+); break;
+			case OP_SUBTRACT:	BINARY_OP(-); break;
+			case OP_MULTIPLY:	BINARY_OP(*); break;
+			case OP_DIVIDE:		BINARY_OP(/); break;
+			case OP_NEGATE: 	push(-pop()); break;
 			case OP_RETURN: {
 				// return INTERPRET_OK; // Function returns here
 				printValue(pop());
 				print("\n");
                 #undef READ_BYTE
                 #undef READ_CONSTANT
+				#undef BINARY_OP
                 return INTERPRET_OK;
 			}
 		}
