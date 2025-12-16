@@ -1,18 +1,43 @@
 #include "lux.h"
+#include "common.h"
+#include "debug.h"
 #include "vm.h"
 #include "value.h"
 
+//static void resetStack(void);
+//void push(Value value);
+//Value pop();
 void printValue(Value value);
 int disassembleInstruction(Chunk* chunk, int offset); 
 
 VM vm;
 
-void initVM(void) {
+static void resetStack(void)
+{
+	vm.stackTop = vm.stack;
+}
+
+void initVM(void)
+{
+	//print(".");
+	resetStack();
+}
+
+void freeVM(void)
+{
 	print(".");
 }
 
-void freeVM() {
-	print(".");
+void push(Value value)
+{
+	*vm.stackTop = value;
+	vm.stackTop++;
+}
+
+Value pop(void)
+{
+	vm.stackTop--;
+	return *vm.stackTop;
 }
 
 
@@ -27,19 +52,30 @@ InterpretResult interpret(Chunk* chunk)
     #define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
 
 	for (;;) {
+#ifdef DEBUG_TRACE_EXECUTION
+	print("        ");
+	for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
+		print("[ ");
+		printValue(*slot);
+		print(" ]");
+	}
+	print("\n");
 	disassembleInstruction(vm.chunk, (int)(vm.ip - vm.chunk->code));
-     
+#endif
 		uchar instruction; 
 		switch (instruction = READ_BYTE()) {
 			case OP_CONSTANT: {
 				Value constant = READ_CONSTANT();
-				printValue(constant);
-				print("\n");
+				//printValue(constant);
+				push(constant);
+				//print("\n");
 				break;
 			}
+			case OP_NEGATE: push(-pop()); break;
 			case OP_RETURN: {
 				// return INTERPRET_OK; // Function returns here
-				// print("\n");
+				printValue(pop());
+				print("\n");
                 #undef READ_BYTE
                 #undef READ_CONSTANT
                 return INTERPRET_OK;
