@@ -94,4 +94,3 @@ InterpretResult interpret(Chunk* chunk)
 		}
 	}
 }
-
