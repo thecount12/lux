@@ -1,19 +1,58 @@
 #include "lux.h"
 #include "common.h"
-#include "value.h"
 #include "compiler.h"
 #include "debug.h"
 #include "vm.h"
 
-void printValue(Value value);
-int disassembleInstruction(Chunk* chunk, int offset); 
+/* 
+ * Plan 9 C Style: 
+ * 1. Headers u.h and libc.h must be included first and second.
+ * 2. Function definitions use KNF (Ken's Normal Form) layout.
+ * 3. fprint(2, ...) is used for stderr.
+ */
+
+struct Chunk; /* Forward declare the tag */
+extern int compile(char*, struct Chunk*); 
+int disassembleInstruction(Chunk* chunk, int offset);
 
 VM vm;
 
 static void 
-resetStack(void)
+resetstack(void)
 {
 	vm.stackTop = vm.stack;
+}
+
+static void 
+runtimeerror(char *format, ...)
+{
+	va_list args;
+	long inst;
+	int line;
+
+	va_start(args, format);
+	/* Plan 9 uses fd 2 for stderr; fprint is the native print to fd */
+	vfprint(2, format, args);
+	va_end(args);
+	fprint(2, "\n");
+
+	/* Pointer subtraction returns long/vlong; size_t is not a Plan 9 type */
+	inst = vm.ip - vm.chunk->code - 1;
+	line = vm.chunk->lines[inst];
+	fprint(2, "[line %d] in script\n", line);
+	resetstack();
+}
+
+void 
+initVM(void)
+{
+	resetstack();
+}
+
+void 
+freeVM(void)
+{
+	print(".");
 }
 
 void 
@@ -30,21 +69,32 @@ pop(void)
 	return *vm.stackTop;
 }
 
-static InterpretResult 
-run(void) 
+static Value 
+peek(int distance)
 {
+	return vm.stackTop[-1 - distance];
+}
+
+static int 
+isfalsey(Value value)
+{
+	return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+}
+
+static InterpretResult 
+run(void)
+{
+	uchar instruction;
+	Value a, b, constant;
+	double da, db;
+	Value *slot;
+
 	#define READ_BYTE() (*vm.ip++)
 	#define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
-	#define BINARY_OP(op) \
-		do { \
-			double b = pop(); \
-			double a = pop(); \
-			push(a op b); \
-		} while (0)
-
+	
 	for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
-		Value* slot;
+		/* Note: 'slot' is already declared at top of function */
 		print("        ");
 		for (slot = vm.stack; slot < vm.stackTop; slot++) {
 			print("[ ");
@@ -54,43 +104,118 @@ run(void)
 		print("\n");
 		disassembleInstruction(vm.chunk, (int)(vm.ip - vm.chunk->code));
 #endif
-		uchar instruction; 
 		instruction = READ_BYTE();
-		
-		/* Plan 9: tell compiler we know we set this but aren't using 
-		   it for anything other than the switch control flow */
-		USED(instruction);
+		USED(instruction); /* Silences 'set and not used' warning */
 
 		switch (instruction) {
-			case OP_CONSTANT: {
-				Value constant = READ_CONSTANT();
-				push(constant);
-				break;
+		case OP_CONSTANT:
+			constant = READ_CONSTANT();
+			push(constant);
+			break;
+
+		case OP_NIL:   push(NIL_VAL); break;
+		case OP_TRUE:  push(BOOL_VAL(1)); break;
+		case OP_FALSE: push(BOOL_VAL(0)); break;
+
+		case OP_EQUAL:
+			b = pop();
+			a = pop();
+			push(BOOL_VAL(valuesEqual(a, b)));
+			break;
+
+		case OP_GREATER:
+			b = pop(); a = pop();
+			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
+				runtimeerror("Operands must be numbers.");
+				return INTERPRET_RUNTIME_ERROR;
 			}
-			case OP_ADD:        BINARY_OP(+); break;
-			case OP_SUBTRACT:   BINARY_OP(-); break;
-			case OP_MULTIPLY:   BINARY_OP(*); break;
-			case OP_DIVIDE:     BINARY_OP(/); break;
-			case OP_NEGATE:     push(-pop()); break;
-			case OP_RETURN: {
-				printValue(pop());
-				print("\n");
-				#undef READ_BYTE
-				#undef READ_CONSTANT
-				#undef BINARY_OP
-				return INTERPRET_OK;
+			push(BOOL_VAL(AS_NUMBER(a) > AS_NUMBER(b)));
+			break;
+
+		case OP_LESS:
+			b = pop(); a = pop();
+			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
+				runtimeerror("Operands must be numbers.");
+				return INTERPRET_RUNTIME_ERROR;
 			}
+			push(BOOL_VAL(AS_NUMBER(a) < AS_NUMBER(b)));
+			break;
+
+		case OP_ADD:
+			b = pop(); a = pop();
+			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
+				runtimeerror("Operands must be numbers.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			da = AS_NUMBER(a);
+			db = AS_NUMBER(b);
+			push(NUMBER_VAL(da + db));
+			break;
+
+		case OP_SUBTRACT:
+			b = pop(); a = pop();
+			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
+				runtimeerror("Operands must be numbers.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			da = AS_NUMBER(a);
+			db = AS_NUMBER(b);
+			push(NUMBER_VAL(da - db));
+			break;
+
+		case OP_MULTIPLY:
+			b = pop(); a = pop();
+			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
+				runtimeerror("Operands must be numbers.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			da = AS_NUMBER(a);
+			db = AS_NUMBER(b);
+			push(NUMBER_VAL(da * db));
+			break;
+
+		case OP_DIVIDE:
+			b = pop(); a = pop();
+			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
+				runtimeerror("Operands must be numbers.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			da = AS_NUMBER(a);
+			db = AS_NUMBER(b);
+			push(NUMBER_VAL(da / db));
+			break;
+
+		case OP_NOT:
+			a = pop();
+			push(BOOL_VAL(isfalsey(a)));
+			break;
+
+		case OP_NEGATE:
+			if (!IS_NUMBER(peek(0))) {
+				runtimeerror("Operand must be a number.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			a = pop();
+			push(NUMBER_VAL(-AS_NUMBER(a)));
+			break;
+
+		case OP_RETURN:
+			constant = pop(); /* use 'constant' as a temporary Value */
+			printValue(constant);
+			print("\n");
+			return INTERPRET_OK;
 		}
 	}
+
+#undef READ_BYTE
+#undef READ_CONSTANT
 }
 
-extern int compile(char* source, Chunk* chunk);
-
 InterpretResult 
-interpret(char* source) 
+interpret(char *source)
 {
 	Chunk chunk;
-	InterpretResult result; /* Declared ONCE at top */
+	InterpretResult result;
 
 	initChunk(&chunk);
 
@@ -102,21 +227,8 @@ interpret(char* source)
 	vm.chunk = &chunk;
 	vm.ip = vm.chunk->code;
 
-	/* result = run(); NO TYPE NAME HERE to avoid redeclaration */
 	result = run();
 
 	freeChunk(&chunk);
 	return result;
-}
-
-void 
-initVM(void)
-{
-	resetStack();
-}
-
-void 
-freeVM(void)
-{
-	print(".");
 }

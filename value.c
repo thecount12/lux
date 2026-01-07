@@ -1,10 +1,38 @@
 #include "lux.h"
 #include "memory.h"
+#include "common.h"
 #include "value.h"
 
 
 int grow_capacity(int capacity);
 void* reallocate(void* pointer, ulong oldSize, ulong newSize);
+
+Value
+nil_val(void)
+{
+	Value v;
+	v.type = VAL_NIL;
+	v.as.number = 0;
+	return v;
+}
+
+Value
+bool_val(int boolean)
+{
+	Value v;
+	v.type = VAL_BOOL;
+	v.as.boolean = boolean;
+	return v;
+}
+
+Value
+number_val(double number)
+{
+	Value v;
+	v.type = VAL_NUMBER;
+	v.as.number = number;
+	return v;
+}
 
 void
 initValueArray(ValueArray* array)
@@ -38,8 +66,24 @@ freeValueArray(ValueArray* array)
 	initValueArray(array);
 }
 
-void
-printValue(Value value)
-{
-	print("%g", value);
+void 
+printValue(Value value) {
+	switch (value.type) {
+		case VAL_BOOL:
+			print(AS_BOOL(value) ? "true" : "false");
+			break;
+		case VAL_NIL: print("nil"); break;
+		case VAL_NUMBER: print("%g", AS_NUMBER(value)); break;
+	}
+}
+
+bool 
+valuesEqual(Value a, Value b) {
+	if (a.type != b.type) return false;
+	switch (a.type) {
+		case VAL_BOOL: return AS_BOOL(a) == AS_BOOL(b);
+		case VAL_NIL: return true;
+		case VAL_NUMBER: return AS_NUMBER(a) == AS_NUMBER(b);
+		default: return false;
+	}
 }

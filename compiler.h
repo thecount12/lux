@@ -1,18 +1,12 @@
-//#ifndef lux_compiler_h
-//#define lux_compiler_h
-
-#ifndef _LUX_COMPILER_H_PROTOTYPE_
-#define _LUX_COMPILER_H_PROTOTYPE_
+#ifndef _LUX_COMPILER_H_
+#define _LUX_COMPILER_H_
 
 #include "common.h"
 
-/* Forward declare Chunk so the compiler doesn't panic on the pointer type */
-typedef struct Chunk Chunk;
+/* Use the tag exclusively for the forward declaration */
+struct Chunk; 
 
-/* 
- * If 'bool' is causing the 'function not declared' error, 
- * it is because the compiler doesn't recognize the return type. 
- */
-int compile(char* source, Chunk* chunk);
+/* Use 'struct Chunk' in the prototype to match the tag namespace */
+int compile(char* source, struct Chunk* chunk);
 
 #endif
