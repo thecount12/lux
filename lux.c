@@ -1,6 +1,4 @@
 #include "lux.h"
-//#include "chunk.h"
-//#include "debug.h"
 #include "vm.h"
 
 void initVM(void);

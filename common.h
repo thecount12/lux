@@ -6,8 +6,9 @@
 typedef int bool;
 #define true 1
 #define false 0
+#endif
 
 #define DEBUG_PRINT_CODE
 #define DEBUG_TRACE_EXECUTION
 
-#endif
+#endif /* lux_common_h */
