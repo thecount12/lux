@@ -3,6 +3,11 @@
 
 int grow_capacity(int capacity);
 void* reallocate(void* pointer, ulong oldSize, ulong newSize);
+void freeObjects(void);
 
+#define ALLOCATE(type, count) \
+	(type*)reallocate(nil, 0, sizeof(type) * (count))
+
+#define FREE(type, pointer) reallocate(pointer, sizeof(type), 0)
 
 #endif

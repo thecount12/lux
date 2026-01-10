@@ -1,5 +1,11 @@
 #include "lux.h"
+#include "types.h"
 #include "common.h"
+#include "value.h"
+#include "chunk.h"
+#include "vm.h"
+#include "memory.h"
+#include "object.h"
 #include "scanner.h"
 
 // prototypes

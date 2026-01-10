@@ -1,10 +1,16 @@
 #include "lux.h"
-#include "debug.h"
+#include "types.h"
+#include "common.h"
 #include "value.h"
+#include "chunk.h"
+#include "vm.h"
+#include "memory.h"
+#include "object.h"
+#include "debug.h"
 
 /* we will add a header so we can track this*/
 void 
-disassembleChunk(Chunk* chunk, const char* name) 
+disassembleChunk(Chunk* chunk, char* name) 
 {
     print("== %s == \n", name);
     for (int offset = 0; offset < chunk->count;) {
@@ -13,7 +19,7 @@ disassembleChunk(Chunk* chunk, const char* name)
 }
 
 static
-int constantInstruction(const char* name, Chunk* chunk, int offset)
+int constantInstruction(char* name, Chunk* chunk, int offset)
 {
 	int constant = chunk->code[offset +1];
 	print("%-16s %4d '", name, constant);
@@ -22,7 +28,7 @@ int constantInstruction(const char* name, Chunk* chunk, int offset)
 	return offset + 2;
 }
 
-static int simpleInstruction(const char* name, int offset)
+static int simpleInstruction(char* name, int offset)
 {
     print("%s\n", name);
     return offset + 1;
