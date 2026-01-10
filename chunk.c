@@ -1,9 +1,10 @@
 #include "lux.h"
+#include "types.h"
+#include "common.h"
+#include "value.h"
 #include "chunk.h"
+#include "vm.h"
 #include "memory.h"
-
-int grow_capacity(int capacity);
-void* reallocate(void* pointer, ulong oldSize, ulong newSize);
 
 void 
 initChunk(Chunk* chunk) 

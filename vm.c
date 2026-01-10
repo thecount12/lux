@@ -1,19 +1,13 @@
 #include "lux.h"
+#include "types.h"
 #include "common.h"
+#include "value.h"
+#include "chunk.h"
+#include "vm.h"
+#include "memory.h"
+#include "object.h"
 #include "compiler.h"
 #include "debug.h"
-#include "vm.h"
-
-/* 
- * Plan 9 C Style: 
- * 1. Headers u.h and libc.h must be included first and second.
- * 2. Function definitions use KNF (Ken's Normal Form) layout.
- * 3. fprint(2, ...) is used for stderr.
- */
-
-struct Chunk; /* Forward declare the tag */
-extern int compile(char*, struct Chunk*); 
-int disassembleInstruction(Chunk* chunk, int offset);
 
 VM vm;
 
@@ -24,7 +18,7 @@ resetstack(void)
 }
 
 static void 
-runtimeerror(char *format, ...)
+runtimeError(char *format, ...)
 {
 	va_list args;
 	long inst;
@@ -47,12 +41,13 @@ void
 initVM(void)
 {
 	resetstack();
+	vm.objects = nil;
 }
 
 void 
 freeVM(void)
 {
-	print(".");
+	freeObjects();
 }
 
 void 
@@ -79,6 +74,21 @@ static int
 isfalsey(Value value)
 {
 	return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+}
+
+static void 
+concatenate(void)
+{
+	ObjString* b = AS_STRING(pop());
+	ObjString* a = AS_STRING(pop());
+	int length = a->length + b->length;
+	char* chars = ALLOCATE(char, length + 1);
+	memcpy(chars, a->chars, a->length);
+	memcpy(chars + a->length, b->chars, b->length);
+	chars[length] = '\0';
+
+	ObjString* result = takeString(chars, length);
+	push(OBJ_VAL(result));
 }
 
 static InterpretResult 
@@ -126,7 +136,7 @@ run(void)
 		case OP_GREATER:
 			b = pop(); a = pop();
 			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
-				runtimeerror("Operands must be numbers.");
+				runtimeError("Operands must be numbers.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
 			push(BOOL_VAL(AS_NUMBER(a) > AS_NUMBER(b)));
@@ -135,27 +145,43 @@ run(void)
 		case OP_LESS:
 			b = pop(); a = pop();
 			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
-				runtimeerror("Operands must be numbers.");
+				runtimeError("Operands must be numbers.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
 			push(BOOL_VAL(AS_NUMBER(a) < AS_NUMBER(b)));
 			break;
 
 		case OP_ADD:
+			/*
 			b = pop(); a = pop();
 			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
-				runtimeerror("Operands must be numbers.");
+				runtimeError("Operands must be numbers.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
 			da = AS_NUMBER(a);
 			db = AS_NUMBER(b);
 			push(NUMBER_VAL(da + db));
 			break;
+			*/
+			{
+			if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
+					concatenate();
+				} else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+					double b = AS_NUMBER(pop());
+					double a = AS_NUMBER(pop());
+					push(NUMBER_VAL(a + b));
+				} else {
+					runtimeError(
+						"Operands must be two numbers or two strings.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				break;
+			}	
 
 		case OP_SUBTRACT:
 			b = pop(); a = pop();
 			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
-				runtimeerror("Operands must be numbers.");
+				runtimeError("Operands must be numbers.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
 			da = AS_NUMBER(a);
@@ -166,7 +192,7 @@ run(void)
 		case OP_MULTIPLY:
 			b = pop(); a = pop();
 			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
-				runtimeerror("Operands must be numbers.");
+				runtimeError("Operands must be numbers.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
 			da = AS_NUMBER(a);
@@ -177,7 +203,7 @@ run(void)
 		case OP_DIVIDE:
 			b = pop(); a = pop();
 			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
-				runtimeerror("Operands must be numbers.");
+				runtimeError("Operands must be numbers.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
 			da = AS_NUMBER(a);
@@ -192,7 +218,7 @@ run(void)
 
 		case OP_NEGATE:
 			if (!IS_NUMBER(peek(0))) {
-				runtimeerror("Operand must be a number.");
+				runtimeError("Operand must be a number.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
 			a = pop();

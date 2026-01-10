@@ -1,7 +1,13 @@
 #include "lux.h"
+#include "types.h"
 #include "common.h"
-#include "scanner.h"
+#include "value.h"
+#include "chunk.h"
+#include "vm.h"
+#include "memory.h"
+#include "object.h"
 #include "compiler.h"
+#include "scanner.h"
 
 #ifdef DEBUG_PRINT_CODE
 #include "debug.h"
@@ -210,6 +216,13 @@ number(void)
 }
 
 static void
+string(void)
+{
+	emitConstant(OBJ_VAL(copyString(parser.previous.start + 1,
+									parser.previous.length - 2)));
+}
+
+static void
 unary(void)
 {
 	TokenType operatorType = parser.previous.type;
@@ -247,7 +260,7 @@ ParseRule rules[] = {
 	{nil,      binary, PREC_COMPARISON}, /* TOKEN_LESS */
 	{nil,      binary, PREC_COMPARISON}, /* TOKEN_LESS_EQUAL */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_IDENTIFIER */
-	{nil,      nil,    PREC_NONE},       /* TOKEN_STRING */
+	{string,   nil,    PREC_NONE},       /* TOKEN_STRING */
 	{number,   nil,    PREC_NONE},       /* TOKEN_NUMBER */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_AND */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_CLASS */

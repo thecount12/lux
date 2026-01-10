@@ -1,7 +1,6 @@
 #ifndef lux_scanner_h
 #define lux_scanner_h
 
-/* 1. Fully define the enum first */
 enum TTypeTag {
 	TOKEN_LEFT_PAREN, TOKEN_RIGHT_PAREN,
 	TOKEN_LEFT_BRACE, TOKEN_RIGHT_BRACE,
@@ -20,18 +19,15 @@ enum TTypeTag {
 };
 typedef enum TTypeTag TokenType;
 
-/* 2. Fully define the struct BEFORE any typedef or usage */
 struct TokenTag {
 	TokenType type;
 	char* start;
 	int length;
 	int line;
-}; /* Ensure this semicolon exists */
+};
 
-/* 3. Create the alias name */
 typedef struct TokenTag Token;
 
-/* 4. Prototypes using the finalized names */
 void	initScanner(char* source);
 Token	scanToken(void);
 
