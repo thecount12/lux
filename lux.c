@@ -6,6 +6,7 @@
 #include "vm.h"
 #include "memory.h"
 #include "object.h"
+#include "table.h"
 
 void initVM(void);
 void freeVM(void);

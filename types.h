@@ -32,6 +32,17 @@ struct Value {
     } as;
 };
 
+typedef struct {
+	ObjString* key;
+	Value value;
+} Entry;
+
+typedef struct {
+	int count;
+	int capacity;
+	Entry* entries;
+} Table;
+
 /* ValueArray type - MUST be identical in all compilation units */
 struct ValueArray {
     int capacity;
@@ -74,6 +85,7 @@ struct VM {
     uchar* ip;
     Value stack[STACK_MAX];
     Value* stackTop;
+	Table strings;
     Obj* objects;
 };
 
@@ -91,6 +103,7 @@ struct ObjString {
     Obj obj;
     int length;
     char* chars;
+	unsigned long hash;
 };
 
 #endif

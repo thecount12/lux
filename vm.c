@@ -8,6 +8,7 @@
 #include "object.h"
 #include "compiler.h"
 #include "debug.h"
+#include "table.h"
 
 VM vm;
 
@@ -42,11 +43,13 @@ initVM(void)
 {
 	resetstack();
 	vm.objects = nil;
+	initTable(&vm.strings);
 }
 
 void 
 freeVM(void)
 {
+	freeTable(&vm.strings);
 	freeObjects();
 }
 

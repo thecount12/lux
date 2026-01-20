@@ -10,6 +10,8 @@ OFILES=lux.$O\
 	scanner.$O\
 	compiler.$O\
 	object.$O\
+	table.$O\
+
 
 HFILES=chunk.h\
 	memory.h\
@@ -19,6 +21,7 @@ HFILES=chunk.h\
 	scanner.h\
 	compiler.h\
 	object.h\
+	table.h\
 
 BIN=$home/bin/$objtype
 
