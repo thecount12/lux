@@ -228,10 +228,16 @@ run(void)
 			push(NUMBER_VAL(-AS_NUMBER(a)));
 			break;
 
-		case OP_RETURN:
-			constant = pop(); /* use 'constant' as a temporary Value */
-			printValue(constant);
+		case OP_PRINT:
+			a = pop();
+			printValue(a);
 			print("\n");
+			break;
+
+		case OP_RETURN:
+			//constant = pop(); /* use 'constant' as a temporary Value */
+			//printValue(constant);
+			//print("\n");
 			return INTERPRET_OK;
 		}
 	}
