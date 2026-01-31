@@ -13,14 +13,19 @@ typedef int bool;
 #define DEBUG_PRINT_CODE
 #define DEBUG_TRACE_EXECUTION
 
+#define UINT8_MAX 255
+#define UINT8_COUNT (UINT8_MAX + 1)
+
 #define IS_BOOL(v)    ((v).type == VAL_BOOL)
 #define IS_NIL(v)     ((v).type == VAL_NIL)
 #define IS_NUMBER(v)  ((v).type == VAL_NUMBER)
 #define IS_OBJ(v)     ((v).type == VAL_OBJ)
+#define IS_STRING(v)  (IS_OBJ(v) && AS_OBJ(v)->type == OBJ_STRING)
 
 #define AS_OBJ(v)     ((v).as.obj)
 #define AS_BOOL(v)    ((v).as.boolean)
 #define AS_NUMBER(v)  ((v).as.number)
+#define AS_STRING(v)  ((ObjString*)AS_OBJ(v))
 
 extern VM vm;
 

@@ -26,4 +26,3 @@ void tableAddAll(Table* from, Table* to);
 ObjString* tableFindString(Table* table, char* chars, int length, unsigned long hash);
 
 #endif
-

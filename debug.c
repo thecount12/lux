@@ -28,10 +28,19 @@ int constantInstruction(char* name, Chunk* chunk, int offset)
 	return offset + 2;
 }
 
-static int simpleInstruction(char* name, int offset)
+static int 
+simpleInstruction(char* name, int offset)
 {
     print("%s\n", name);
     return offset + 1;
+}
+
+static int 
+byteInstruction(const char* name, Chunk* chunk, int offset)
+{
+	unsigned char slot = chunk->code[offset +1];
+	print("%-16s %4d\n", name, (int)slot);
+	return offset + 2;
 }
 
 
@@ -58,6 +67,10 @@ int disassembleInstruction(Chunk* chunk, int offset)
 			return simpleInstruction("OP_FALSE", offset);
 		case OP_POP:
 			return simpleInstruction("OP_POP", offset);
+		case OP_GET_LOCAL:
+			return byteInstruction("OP_GET_LOCAL", chunk, offset);
+		case OP_SET_LOCAL:
+			return byteInstruction("OP_SET_LOCAL", chunk, offset);
 		case OP_GET_GLOBAL:
 			return constantInstruction("OP_GET_GLOBAL", chunk, offset);
 		case OP_DEFINE_GLOBAL:
