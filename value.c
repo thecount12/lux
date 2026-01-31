@@ -89,10 +89,6 @@ printValue(Value value) {
 
 bool 
 valuesEqual(Value a, Value b) {
-	/* DECLARE at the very top of the function block */
-	ObjString* aString;
-	ObjString* bString;
-
 	if (a.type != b.type) return false;
 	
 	switch (a.type) {

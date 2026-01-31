@@ -81,11 +81,13 @@ isfalsey(Value value)
 	return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
 
-static void 
+static void
 concatenate(void)
 {
-	ObjString* b = AS_STRING(pop());
-	ObjString* a = AS_STRING(pop());
+	Value b_val = pop();
+	ObjString* b = AS_STRING(b_val);
+	Value a_val = pop();
+	ObjString* a = AS_STRING(a_val);
 	int length = a->length + b->length;
 	char* chars = ALLOCATE(char, length + 1);
 	memcpy(chars, a->chars, a->length);
@@ -95,7 +97,6 @@ concatenate(void)
 	ObjString* result = takeString(chars, length);
 	push(OBJ_VAL(result));
 }
-
 static InterpretResult 
 run(void)
 {
@@ -133,6 +134,16 @@ run(void)
 		case OP_TRUE:  push(BOOL_VAL(1)); break;
 		case OP_FALSE: push(BOOL_VAL(0)); break;
 		case OP_POP: pop(); break;
+		case OP_GET_LOCAL: {
+			int slot = READ_BYTE();
+			push(vm.stack[slot]);
+			break;
+		}
+		case OP_SET_LOCAL: {
+			int slot = READ_BYTE();
+			vm.stack[slot] = peek(0);
+			break;
+		}
 		case OP_GET_GLOBAL: {
 			ObjString* name = READ_STRING();
 			Value value;
@@ -185,31 +196,14 @@ run(void)
 			break;
 
 		case OP_ADD:
-			/*
-			b = pop(); a = pop();
+			b = pop();
+			a = pop();
 			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
 				runtimeError("Operands must be numbers.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
-			da = AS_NUMBER(a);
-			db = AS_NUMBER(b);
-			push(NUMBER_VAL(da + db));
-			break;
-			*/
-			{
-			if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
-					concatenate();
-				} else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
-					double b = AS_NUMBER(pop());
-					double a = AS_NUMBER(pop());
-					push(NUMBER_VAL(a + b));
-				} else {
-					runtimeError(
-						"Operands must be two numbers or two strings.");
-					return INTERPRET_RUNTIME_ERROR;
-				}
-				break;
-			}	
+			push(NUMBER_VAL(AS_NUMBER(a) + AS_NUMBER(b)));
+			break;	
 
 		case OP_SUBTRACT:
 			b = pop(); a = pop();
