@@ -76,7 +76,7 @@ peek(int distance)
 }
 
 static int 
-isfalsey(Value value)
+isFalsey(Value value)
 {
 	return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
@@ -107,6 +107,8 @@ run(void)
 
 	#define READ_BYTE() (*vm.ip++)
 	#define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
+	#define READ_SHORT() \
+		(vm.ip += 2, (unsigned int)((vm.ip[-2] << 8) | vm.ip[-1])) // uint16_t in posix linux
 	#define READ_STRING() AS_STRING(READ_CONSTANT())
 	
 	for (;;) {
@@ -240,7 +242,7 @@ run(void)
 
 		case OP_NOT:
 			a = pop();
-			push(BOOL_VAL(isfalsey(a)));
+			push(BOOL_VAL(isFalsey(a)));
 			break;
 
 		case OP_NEGATE:
@@ -258,6 +260,24 @@ run(void)
 			print("\n");
 			break;
 
+		case OP_JUMP: {
+			unsigned char offset = READ_SHORT(); // uint16_t in posix linux
+			vm.ip += offset;
+			break;			
+		}
+
+		case OP_JUMP_IF_FALSE: {
+			unsigned char offset = READ_SHORT();
+			if (isFalsey(peek(0))) vm.ip += offset;
+			break;
+		}
+		
+		case OP_LOOP: {
+			unsigned char offset = READ_SHORT();
+			vm.ip -= offset;
+			break;
+		}
+
 		case OP_RETURN:
 			//constant = pop(); /* use 'constant' as a temporary Value */
 			//printValue(constant);
@@ -267,6 +287,7 @@ run(void)
 	}
 
 #undef READ_BYTE
+#undef READ_SHORT
 #undef READ_CONSTANT
 #undef READ_STRING
 }
