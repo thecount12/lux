@@ -153,9 +153,9 @@ identifierType(void)
 	case 'f':
 		if (scanner.current - scanner.start > 1) {
 			switch (scanner.start[1]) {
-			case 'a': return checkKeyword(2, 3, "lse", TOKEN_FALSE);
-			case 'o': return checkKeyword(2, 3, "r", TOKEN_FOR);
-			case 'u': return checkKeyword(2, 3, "n", TOKEN_FUN);
+			case 'a': return checkKeyword(1, 4, "alse", TOKEN_FALSE);
+			case 'o': return checkKeyword(1, 2, "or", TOKEN_FOR);
+			case 'u': return checkKeyword(1, 2, "un", TOKEN_FUN);
 			}
 		}
 		break;

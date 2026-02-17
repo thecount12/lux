@@ -3,27 +3,43 @@
 #include "common.h"
 #include "value.h"
 #include "chunk.h"
+#include "object.h"
 #include "vm.h"
 #include "memory.h"
-#include "object.h"
 #include "compiler.h"
 #include "debug.h"
 #include "table.h"
 
 VM vm;
 
+/* posix linux only 
+static Value 
+clockNative(int argCount, Value* args)
+{
+	return NUMBER_VAL((double)clock() / CLOCK_PER_SEC);
+}
+*/
+
+static Value 
+clockNative(int argCount, Value* args)
+{
+    (void)argCount; (void)args;
+    // Plan 9: use nsec() for nanoseconds since boot, divide by 1e9 for seconds
+    return NUMBER_VAL((double)nsec() / 1000000000.0);
+}
+
+
 static void 
-resetstack(void)
+resetStack(void)
 {
 	vm.stackTop = vm.stack;
+	vm.frameCount = 0;
 }
 
 static void 
 runtimeError(char *format, ...)
 {
 	va_list args;
-	long inst;
-	int line;
 
 	va_start(args, format);
 	/* Plan 9 uses fd 2 for stderr; fprint is the native print to fd */
@@ -32,19 +48,43 @@ runtimeError(char *format, ...)
 	fprint(2, "\n");
 
 	/* Pointer subtraction returns long/vlong; size_t is not a Plan 9 type */
-	inst = vm.ip - vm.chunk->code - 1;
-	line = vm.chunk->lines[inst];
-	fprint(2, "[line %d] in script\n", line);
-	resetstack();
+
+	for (int i = vm.frameCount -1; i >= 0; i--) {
+		CallFrame* frame = &vm.frames[i];
+		ObjFunction* function = frame->function;
+		long instruction = frame->ip - function->chunk.code -1;
+		print("[line %d] in ", function->chunk.lines[instruction]);
+		if (function->name == nil) {
+			print("script\n");
+		} else {
+			print("%s()\n", function->name->chars);
+		}
+	}
+
+	resetStack();
 }
+
+
+static void 
+defineNative(const char* name, NativeFn function)
+{
+	push(OBJ_VAL(copyString(name, (int)strlen(name))));
+	push(OBJ_VAL(newNative(function)));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
+	pop();
+	pop();
+}
+
 
 void 
 initVM(void)
 {
-	resetstack();
+	resetStack();
 	vm.objects = nil;
 	initTable(&vm.globals);
 	initTable(&vm.strings);
+
+	defineNative("clock", clockNative);
 }
 
 void 
@@ -75,6 +115,48 @@ peek(int distance)
 	return vm.stackTop[-1 - distance];
 }
 
+static bool 
+call(ObjFunction* function, int argCount) 
+{
+	if (argCount != function->arity) {
+		runtimeError("Expected %d arguments but got %d.",
+			function->arity, argCount);
+		return false;
+	}
+	if (vm.frameCount == FRAMES_MAX) {
+		runtimeError("Stack overflow.");
+		return false;
+	}
+
+	CallFrame* frame = &vm.frames[vm.frameCount++];
+	frame->function = function;
+	frame->ip = function->chunk.code;
+	frame->slots = vm.stackTop - argCount -1;
+	return true;
+}
+
+static bool callValue(Value callee, int argCount) {
+	if (IS_OBJ(callee)) {
+		switch (OBJ_TYPE(callee)) {
+			case OBJ_FUNCTION:
+				return call(AS_FUNCTION(callee), argCount);
+			case OBJ_NATIVE: {
+			    NativeFn native;
+                Value result;
+                native = AS_NATIVE(callee);
+				result = native(argCount, vm.stackTop - argCount);
+				vm.stackTop -= argCount + 1;
+				push(result);
+				return true;
+			}
+			default:
+				break; // non callable object type
+		}
+	}
+	runtimeError("Can only call functions and classes.");
+	return false;
+}
+
 static int 
 isFalsey(Value value)
 {
@@ -100,16 +182,22 @@ concatenate(void)
 static InterpretResult 
 run(void)
 {
+	CallFrame* frame = &vm.frames[vm.frameCount -1];
 	uchar instruction;
 	Value a, b, constant;
 	double da, db;
 	Value *slot;
 
-	#define READ_BYTE() (*vm.ip++)
-	#define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
-	#define READ_SHORT() \
-		(vm.ip += 2, (unsigned int)((vm.ip[-2] << 8) | vm.ip[-1])) // uint16_t in posix linux
-	#define READ_STRING() AS_STRING(READ_CONSTANT())
+#define READ_BYTE() (*frame->ip++)
+
+#define READ_SHORT() \
+	(frame->ip += 2, \
+	(ushort)((frame->ip[-2] << 8) | frame->ip[-1]))
+
+#define READ_CONSTANT() \
+	(frame->function->chunk.constants.values[READ_BYTE()])
+
+#define READ_STRING() AS_STRING(READ_CONSTANT())
 	
 	for (;;) {
 #ifdef DEBUG_TRACE_EXECUTION
@@ -121,7 +209,7 @@ run(void)
 			print(" ]");
 		}
 		print("\n");
-		disassembleInstruction(vm.chunk, (int)(vm.ip - vm.chunk->code));
+		disassembleInstruction(&frame->function->chunk, (int)(frame->ip - frame->function->chunk.code));
 #endif
 		instruction = READ_BYTE();
 		USED(instruction); /* Silences 'set and not used' warning */
@@ -137,13 +225,15 @@ run(void)
 		case OP_FALSE: push(BOOL_VAL(0)); break;
 		case OP_POP: pop(); break;
 		case OP_GET_LOCAL: {
-			int slot = READ_BYTE();
-			push(vm.stack[slot]);
+			uchar slotnum;
+			slotnum = READ_BYTE();
+			push(frame->slots[slotnum]);
 			break;
 		}
 		case OP_SET_LOCAL: {
-			int slot = READ_BYTE();
-			vm.stack[slot] = peek(0);
+			uchar slotnum;
+			slotnum = READ_BYTE();
+			frame->slots[slotnum] = peek(0);
 			break;
 		}
 		case OP_GET_GLOBAL: {
@@ -262,28 +352,46 @@ run(void)
 
 		case OP_JUMP: {
 			unsigned char offset = READ_SHORT(); // uint16_t in posix linux
-			vm.ip += offset;
+			frame->ip += offset;
 			break;			
 		}
 
 		case OP_JUMP_IF_FALSE: {
 			unsigned char offset = READ_SHORT();
-			if (isFalsey(peek(0))) vm.ip += offset;
+			if (isFalsey(peek(0))) frame->ip += offset;
 			break;
 		}
 		
 		case OP_LOOP: {
 			unsigned char offset = READ_SHORT();
-			vm.ip -= offset;
+			frame->ip -= offset;
+			break;
+		}
+			
+		case OP_CALL: {
+			int argCount = READ_BYTE();
+			if (!callValue(peek(argCount), argCount)) {
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			frame = &vm.frames[vm.frameCount -1];
 			break;
 		}
 
-		case OP_RETURN:
-			//constant = pop(); /* use 'constant' as a temporary Value */
-			//printValue(constant);
-			//print("\n");
-			return INTERPRET_OK;
+		case OP_RETURN: {
+			Value result;
+			result = pop();
+			vm.frameCount--;
+			if (vm.frameCount == 0) {
+				pop();
+				return INTERPRET_OK;
+			}
+			
+			vm.stackTop = frame->slots;
+			push(result);
+			frame = &vm.frames[vm.frameCount -1];
+			break;
 		}
+	}
 	}
 
 #undef READ_BYTE
@@ -295,21 +403,13 @@ run(void)
 InterpretResult 
 interpret(char *source)
 {
-	Chunk chunk;
 	InterpretResult result;
+	ObjFunction* function = compile(source);
+	if (function == nil) return INTERPRET_COMPILE_ERROR;
 
-	initChunk(&chunk);
-
-	if (!compile(source, &chunk)) {
-		freeChunk(&chunk);
-		return INTERPRET_COMPILE_ERROR;
-	}
-
-	vm.chunk = &chunk;
-	vm.ip = vm.chunk->code;
+	push (OBJ_VAL(function));
+	call(function, 0);
 
 	result = run();
-
-	freeChunk(&chunk);
 	return result;
 }
