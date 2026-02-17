@@ -7,6 +7,9 @@
  * Every .c file includes this FIRST to ensure identical type signatures.
  */
 
+#define UINT8_MAX 255
+#define UINT8_COUNT (UINT8_MAX + 1)
+
 /* Forward declarations */
 typedef struct VM VM;
 typedef struct Obj Obj;
@@ -14,6 +17,7 @@ typedef struct ObjString ObjString;
 typedef struct Chunk Chunk;
 typedef struct Value Value;
 typedef struct ValueArray ValueArray;
+typedef struct Compiler Compiler;
 
 /* Value type - MUST be identical in all compilation units */
 typedef enum {
@@ -75,6 +79,7 @@ typedef enum {
 	OP_JUMP,
 	OP_JUMP_IF_FALSE,
 	OP_LOOP,
+	OP_CALL,
     OP_RETURN
 } OpCode;
 
@@ -88,11 +93,24 @@ struct Chunk {
 };
 
 /* VM struct */
-#define STACK_MAX 256
+#define FRAMES_MAX 64
+#define STACK_MAX (FRAMES_MAX * UINT8_COUNT)
+
+
+/* Forward declare ObjFunction before CallFrame uses it */
+typedef struct ObjFunction ObjFunction;
+
+
+typedef struct {
+	struct ObjFunction* function;
+	unsigned char* ip;
+	Value* slots;
+} CallFrame;
 
 struct VM {
-    Chunk* chunk;
-    uchar* ip;
+	CallFrame frames[FRAMES_MAX];
+	int frameCount;
+
     Value stack[STACK_MAX];
     Value* stackTop;
 	Table globals;
@@ -102,12 +120,30 @@ struct VM {
 
 /* Object types */
 typedef enum {
+	OBJ_FUNCTION,
+	OBJ_NATIVE,
     OBJ_STRING
 } ObjType;
 
 struct Obj {
     ObjType type;
     struct Obj* next;
+};
+
+struct ObjFunction {
+	Obj obj;
+	int arity;
+	Chunk chunk;
+	ObjString* name;
+};
+
+typedef Value (*NativeFn)(int argCount, Value* args);
+
+typedef struct ObjNative ObjNative;
+
+struct ObjNative{
+	Obj obj;
+	NativeFn function;
 };
 
 struct ObjString {
