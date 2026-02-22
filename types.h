@@ -14,6 +14,8 @@
 typedef struct VM VM;
 typedef struct Obj Obj;
 typedef struct ObjString ObjString;
+typedef struct ObjUpvalue ObjUpvalue;
+typedef struct ObjClosure ObjClosure;
 typedef struct Chunk Chunk;
 typedef struct Value Value;
 typedef struct ValueArray ValueArray;
@@ -66,6 +68,8 @@ typedef enum {
 	OP_GET_GLOBAL,
 	OP_DEFINE_GLOBAL,
 	OP_SET_GLOBAL,
+	OP_GET_UPVALUE,
+	OP_SET_UPVALUE,
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
@@ -80,6 +84,8 @@ typedef enum {
 	OP_JUMP_IF_FALSE,
 	OP_LOOP,
 	OP_CALL,
+	OP_CLOSURE,
+	OP_CLOSE_UPVALUE,
     OP_RETURN
 } OpCode;
 
@@ -99,10 +105,11 @@ struct Chunk {
 
 /* Forward declare ObjFunction before CallFrame uses it */
 typedef struct ObjFunction ObjFunction;
+typedef struct ObjClosure ObjClosure;
 
 
 typedef struct {
-	struct ObjFunction* function;
+	struct ObjClosure* closure;
 	unsigned char* ip;
 	Value* slots;
 } CallFrame;
@@ -115,14 +122,17 @@ struct VM {
     Value* stackTop;
 	Table globals;
 	Table strings;
+	ObjUpvalue* openUpvalues;
     Obj* objects;
 };
 
 /* Object types */
 typedef enum {
+	OBJ_CLOSURE,
 	OBJ_FUNCTION,
 	OBJ_NATIVE,
-    OBJ_STRING
+    OBJ_STRING,
+	OBJ_UPVALUE,
 } ObjType;
 
 struct Obj {
@@ -133,6 +143,7 @@ struct Obj {
 struct ObjFunction {
 	Obj obj;
 	int arity;
+	int upvalueCount;
 	Chunk chunk;
 	ObjString* name;
 };
@@ -151,6 +162,20 @@ struct ObjString {
     int length;
     char* chars;
 	unsigned long hash;
+};
+
+struct ObjUpvalue {
+	Obj obj;
+	Value* location;
+	Value closed;
+	struct ObjUpvalue* next;
+};
+
+struct ObjClosure {
+	Obj obj;
+	ObjFunction* function;
+	ObjUpvalue** upvalues;
+	int upvalueCount;
 };
 
 #endif
