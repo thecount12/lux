@@ -34,6 +34,14 @@ static void
 freeObject(Obj* object) 
 {
 	switch (object->type) {
+		case OBJ_CLOSURE: {
+			ObjClosure* closure = (ObjClosure*)object;
+			//FREE_ARRAY(ObjUpvalue*, closure->upvalues, closure->upvalueCount);
+			reallocate(closure->upvalues, closure->upvalueCount, 0);
+			//FREE(ObjClosure, object); // posix
+			reallocate(object, sizeof(ObjClosure), 0);
+			break;
+		}
 		case OBJ_FUNCTION: {
 			ObjFunction* function = (ObjFunction*)object;
 			freeChunk(&function->chunk);
@@ -48,12 +56,16 @@ freeObject(Obj* object)
 			ObjString* string = (ObjString*)object;
 			//FREE_ARRAY(char, string->chars, string->length + 1);	
 			//FREE(ObjString, object);
-			// plsn9 gic msnusl just in case
+			// plan9
 			reallocate(string->chars, string->length + 1, 0);	
 			reallocate(object, sizeof(ObjString), 0);
 			break;
 			break;
 		}
+		case OBJ_UPVALUE:
+			//FREE(ObjUpvalue, object);
+			reallocate(object, sizeof(ObjUpvalue), 0);
+			break;
 	}
 }
 

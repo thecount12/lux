@@ -8,20 +8,37 @@
 #define OBJ_TYPE(value)     (AS_OBJ(value)->type)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_NATIVE(value)	isObjType(value, OBJ_NATIVE)
+#define IS_CLOSURE(value)	isObjType(value, OBJ_CLOSURE)
+
 #define AS_NATIVE(value) \
 	(((struct ObjNative*)AS_OBJ(value))->function)
 #define AS_CSTRING(value)	(((ObjString*)AS_OBJ(value))->chars)
 
 // Fix macro typo: change ObjTypeFunction to ObjFunction
 #define AS_FUNCTION(value)  	((ObjFunction*)AS_OBJ(value))
+#define AS_CLOSURE(value) 	((ObjClosure*)AS_OBJ(value))
 ObjFunction* newFunction(void);
+ObjClosure* newClosure(ObjFunction* function);
 ObjNative* newNative(NativeFn function);
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
+ObjUpvalue* newUpvalue(Value* slot);
 void printObject(Value value);
 
+/* posix only
 static bool isObjType(Value value, ObjType type) {
     return IS_OBJ(value) && AS_OBJ(value)->type == type;
+}
+*/
+
+static bool 
+isObjType(Value value, ObjType type) 
+{
+	int isObj, typeMatches;
+	isObj = IS_OBJ(value);
+	if (!isObj) return false;
+	typeMatches = (AS_OBJ(value)->type == type);
+	return typeMatches;
 }
 
 #endif
