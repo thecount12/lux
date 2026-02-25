@@ -10,6 +10,15 @@
 #define UINT8_MAX 255
 #define UINT8_COUNT (UINT8_MAX + 1)
 
+/* Plan 9 bool type */
+#ifndef lux_bool_defined
+#define lux_bool_defined
+typedef int bool;
+#define true 1
+#define false 0
+#endif
+
+
 /* Forward declarations */
 typedef struct VM VM;
 typedef struct Obj Obj;
@@ -123,7 +132,13 @@ struct VM {
 	Table globals;
 	Table strings;
 	ObjUpvalue* openUpvalues;
+
+	unsigned long bytesAllocated;
+	unsigned long nextGC;
     Obj* objects;
+	int grayCount;
+	int grayCapacity;
+	Obj** grayStack;
 };
 
 /* Object types */
@@ -137,6 +152,7 @@ typedef enum {
 
 struct Obj {
     ObjType type;
+	bool isMarked;
     struct Obj* next;
 };
 

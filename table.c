@@ -146,3 +146,24 @@ tableFindString(Table* table, const char* chars, int length, unsigned long hash)
 		index = (index + 1) % table->capacity;
 	}
 }
+
+void 
+tableRemoveWhite(Table* table)
+{
+	for (int i = 0; i < table->capacity; i++) {
+		Entry* entry = &table->entries[i];
+		if (entry->key != nil && !entry->key->obj.isMarked) {
+			tableDelete(table,entry->key);
+		}
+	}
+}
+
+void 
+markTable(Table* table)
+{
+	for (int i = 0; i < table->capacity; i++) {
+		Entry* entry = &table->entries[i];
+		markObject((Obj*)entry->key);
+		markValue(entry->value);
+	}
+}

@@ -935,3 +935,13 @@ compile(char* source)
 	ObjFunction* function = endCompiler();
 	return parser.hadError ? nil : function;
 }
+
+void 
+markCompilerRoots(void)
+{
+	Compiler* compiler = current;
+	while (compiler != nil) {
+		markObject((Obj*)compiler->function);
+		compiler = compiler->enclosing;
+	}
+}
