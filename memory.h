@@ -3,6 +3,9 @@
 
 int grow_capacity(int capacity);
 void* reallocate(void* pointer, ulong oldSize, ulong newSize);
+void markObject(Obj* object);
+void markValue(Value value);
+void collectGarbage(void);
 void freeObjects(void);
 
 #define GROW_CAPACITY(capacity) grow_capacity(capacity)

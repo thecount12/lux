@@ -82,6 +82,15 @@ initVM(void)
 {
 	resetStack();
 	vm.objects = nil;
+
+	vm.grayCount = 0;
+	vm.grayCapacity = 0;
+	vm.grayStack = nil;
+
+	vm.bytesAllocated = 0;
+	vm.nextGC = 1024 * 1024;
+
+
 	initTable(&vm.globals);
 	initTable(&vm.strings);
 
@@ -203,9 +212,9 @@ isFalsey(Value value)
 static void
 concatenate(void)
 {
-	Value b_val = pop();
+	Value b_val = peek(0);
 	ObjString* b = AS_STRING(b_val);
-	Value a_val = pop();
+	Value a_val = peek(1);
 	ObjString* a = AS_STRING(a_val);
 	int length = a->length + b->length;
 	char* chars = ALLOCATE(char, length + 1);
@@ -214,6 +223,8 @@ concatenate(void)
 	chars[length] = '\0';
 
 	ObjString* result = takeString(chars, length);
+	pop();
+	pop();
 	push(OBJ_VAL(result));
 }
 static InterpretResult 
@@ -337,13 +348,16 @@ run(void)
 			break;
 
 		case OP_ADD:
-			b = pop();
-			a = pop();
-			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
-				runtimeError("Operands must be numbers.");
+			if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
+				concatenate();
+			} else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+				b = pop();
+				a = pop();
+				push(NUMBER_VAL(AS_NUMBER(a) + AS_NUMBER(b)));
+			} else {
+				runtimeError("Operands must be two numbers or two strings.");
 				return INTERPRET_RUNTIME_ERROR;
 			}
-			push(NUMBER_VAL(AS_NUMBER(a) + AS_NUMBER(b)));
 			break;	
 
 		case OP_SUBTRACT:

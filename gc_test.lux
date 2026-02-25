@@ -1,0 +1,24 @@
+// gc_test.lux - Test string allocation
+{
+  var a = "a";
+  var b = "b";
+  var c = a + b;
+}
+
+// gc_stress.lux - Allocate many objects
+for (var i = 0; i < 100; i = i + 1) {
+  var str = "string" + "concat";
+}
+
+// results
+//
+//0x103422430 free type 3
+//0x103422400 free type 3
+//0x1034223d0 free type 0
+//0x103422280 free type 3
+//0x103422250 free type 3
+//0x1034221e0 free type 3
+//0x103422120 free type 3
+//0x1034220d0 free type 1
+//0x103421b00 free type 2
+//0x103421a10 free type 3

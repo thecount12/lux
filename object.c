@@ -17,25 +17,31 @@ allocateObject(ulong size, ObjType type)
 {
 	Obj* object = (Obj*)reallocate(nil, 0, size);
 	object->type = type;
-
+	object->isMarked = false;
 
 	object->next = vm.objects;
 	vm.objects = object;
+
+#ifdef DEBUG_LOG_GC
+	print("%p allocate %uld for %d\n", (void*)object, size, type);
+#endif
+
 	return object;
 }
 
 ObjClosure* 
 newClosure(ObjFunction* function) 
 {
-	ObjUpvalue** upvalues = ALLOCATE(ObjUpvalue*, function->upvalueCount);
-	for (int i = 0; i < function->upvalueCount; i++) {
-		upvalues[i] = nil;
-	}
-
 	ObjClosure* closure = ALLOCATE_OBJ(ObjClosure, OBJ_CLOSURE);
 	closure->function = function;
-	closure->upvalues = upvalues;
 	closure->upvalueCount = function->upvalueCount;
+	closure->upvalues = nil; /* Initialize to nil before allocation */
+	
+	closure->upvalues = ALLOCATE(ObjUpvalue*, function->upvalueCount);
+	for (int i = 0; i < closure->upvalueCount; i++) {
+		closure->upvalues[i] = nil;
+	}
+	
 	return closure;
 }
 
@@ -65,7 +71,11 @@ allocateString(char* chars, int length, unsigned long hash)
 	string->length = length;
 	string->chars = chars;
 	string->hash = hash;
+
+	push(OBJ_VAL(string));
 	tableSet(&vm.strings, string, NIL_VAL);
+	pop();
+
 	return string;
 }
 
