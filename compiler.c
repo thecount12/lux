@@ -100,6 +100,7 @@ static void expressionStatement(void);
 static void parsePrecedence(Precedence precedence);
 static unsigned int argumentList(void);
 static int resolveUpvalue(Compiler* compiler, Token* name);
+static void classDeclaration(void);
 
 static void
 errorAt(Token* token, char* message)
@@ -504,6 +505,20 @@ call(bool canAssign)
 	emitBytes(OP_CALL, argCount);
 }
 
+static void 
+dot(bool canAssign)
+{
+	consume(TOKEN_IDENTIFIER, "Expect property name after '.'.");
+	unsigned char name = identifierConstant(&parser.previous);
+
+	if (canAssign && match(TOKEN_EQUAL)) {
+		expression();
+		emitBytes(OP_SET_PROPERTY, name);
+	} else {
+		emitBytes(OP_GET_PROPERTY, name);
+	}
+}
+
 static void
 literal(bool canAssign)
 {
@@ -667,7 +682,7 @@ ParseRule rules[] = {
 	{nil,      nil,    PREC_NONE},       /* TOKEN_LEFT_BRACE */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_RIGHT_BRACE */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_COMMA */
-	{nil,      nil,    PREC_NONE},       /* TOKEN_DOT */
+	{nil,      dot,    PREC_CALL},       /* TOKEN_DOT */
 	{unary,    binary, PREC_TERM},       /* TOKEN_MINUS */
 	{nil,      binary, PREC_TERM},       /* TOKEN_PLUS */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_SEMICOLON */
@@ -786,6 +801,20 @@ function(FunctionType type)
 }
 
 static void 
+classDeclaration()
+{
+	consume(TOKEN_IDENTIFIER, "Expect class name.");
+	unsigned char nameConstant = identifierConstant(&parser.previous);
+	declareVariable();
+
+	emitBytes(OP_CLASS, nameConstant);
+	defineVariable(nameConstant);
+
+	consume(TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+	consume(TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+}
+
+static void 
 funDeclaration(void) 
 {
 	unsigned int global = parseVariable("Expect function name.");
@@ -885,7 +914,9 @@ ifStatement(void)
 static void 
 declaration(void) 
 {
-	if (match(TOKEN_FUN)) {
+	if (match(TOKEN_CLASS)) {
+		classDeclaration();
+	} else if (match(TOKEN_FUN)) {
 		funDeclaration();
 	} else if (match(TOKEN_VAR)) {
 		varDeclaration();

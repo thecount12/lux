@@ -25,6 +25,8 @@ typedef struct Obj Obj;
 typedef struct ObjString ObjString;
 typedef struct ObjUpvalue ObjUpvalue;
 typedef struct ObjClosure ObjClosure;
+typedef struct ObjClass ObjClass;
+typedef struct ObjInstance ObjInstance;
 typedef struct Chunk Chunk;
 typedef struct Value Value;
 typedef struct ValueArray ValueArray;
@@ -79,6 +81,8 @@ typedef enum {
 	OP_SET_GLOBAL,
 	OP_GET_UPVALUE,
 	OP_SET_UPVALUE,
+	OP_GET_PROPERTY,
+	OP_SET_PROPERTY,
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
@@ -95,7 +99,8 @@ typedef enum {
 	OP_CALL,
 	OP_CLOSURE,
 	OP_CLOSE_UPVALUE,
-    OP_RETURN
+    OP_RETURN,
+	OP_CLASS,
 } OpCode;
 
 /* Chunk struct */
@@ -143,8 +148,10 @@ struct VM {
 
 /* Object types */
 typedef enum {
+	OBJ_CLASS,
 	OBJ_CLOSURE,
 	OBJ_FUNCTION,
+	OBJ_INSTANCE,
 	OBJ_NATIVE,
     OBJ_STRING,
 	OBJ_UPVALUE,
@@ -193,6 +200,18 @@ struct ObjClosure {
 	ObjUpvalue** upvalues;
 	int upvalueCount;
 };
+
+struct ObjClass {
+	Obj obj;
+	ObjString* name;
+};
+
+struct ObjInstance {
+	Obj obj;
+	ObjClass* klass;
+	Table fields;
+};
+
 
 #endif
 
