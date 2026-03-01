@@ -29,6 +29,15 @@ allocateObject(ulong size, ObjType type)
 	return object;
 }
 
+ObjClass* 
+newClass(ObjString* name)
+{
+	ObjClass* klass = ALLOCATE_OBJ(ObjClass, OBJ_CLASS);
+	klass->name = name;
+	return klass;
+}
+
+
 ObjClosure* 
 newClosure(ObjFunction* function) 
 {
@@ -54,6 +63,15 @@ newFunction()
 	function->name = nil;
 	initChunk(&function->chunk);
 	return function;
+}
+
+ObjInstance* 
+newInstance(ObjClass* klass)
+{
+	ObjInstance* instance = ALLOCATE_OBJ(ObjInstance, OBJ_INSTANCE);
+	instance->klass = klass;
+	initTable(&instance->fields);
+	return instance;
 }
 
 ObjNative* 
@@ -138,11 +156,17 @@ printFunction(ObjFunction* function)
 void printObject(Value value) 
 {
 	switch (OBJ_TYPE(value)) {
+		case OBJ_CLASS:
+			print("%s", AS_CLASS(value)->name->chars);
+			break;
 		case OBJ_CLOSURE:
 			printFunction(AS_CLOSURE(value)->function);
 			break;
 		case OBJ_FUNCTION:
 			printFunction(AS_FUNCTION(value));
+			break;
+		case OBJ_INSTANCE:
+			print("%s instance", AS_INSTANCE(value)->klass->name->chars);
 			break;
 		case OBJ_NATIVE:
 			print("<native fn>");
