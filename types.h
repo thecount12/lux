@@ -25,6 +25,7 @@ typedef struct Obj Obj;
 typedef struct ObjString ObjString;
 typedef struct ObjUpvalue ObjUpvalue;
 typedef struct ObjClosure ObjClosure;
+typedef struct ObjBoundMethod ObjBoundMethod;
 typedef struct ObjClass ObjClass;
 typedef struct ObjInstance ObjInstance;
 typedef struct Chunk Chunk;
@@ -97,10 +98,12 @@ typedef enum {
 	OP_JUMP_IF_FALSE,
 	OP_LOOP,
 	OP_CALL,
+	OP_INVOKE,
 	OP_CLOSURE,
 	OP_CLOSE_UPVALUE,
     OP_RETURN,
 	OP_CLASS,
+	OP_METHOD
 } OpCode;
 
 /* Chunk struct */
@@ -136,6 +139,7 @@ struct VM {
     Value* stackTop;
 	Table globals;
 	Table strings;
+	ObjString* initString;
 	ObjUpvalue* openUpvalues;
 
 	unsigned long bytesAllocated;
@@ -148,6 +152,7 @@ struct VM {
 
 /* Object types */
 typedef enum {
+	OBJ_BOUND_METHOD,
 	OBJ_CLASS,
 	OBJ_CLOSURE,
 	OBJ_FUNCTION,
@@ -204,6 +209,7 @@ struct ObjClosure {
 struct ObjClass {
 	Obj obj;
 	ObjString* name;
+	Table methods;
 };
 
 struct ObjInstance {
@@ -211,7 +217,12 @@ struct ObjInstance {
 	ObjClass* klass;
 	Table fields;
 };
-
+ 
+struct ObjBoundMethod {
+	Obj obj;
+	Value receiver;
+	ObjClosure* method;
+};
 
 #endif
 

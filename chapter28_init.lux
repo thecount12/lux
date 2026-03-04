@@ -1,0 +1,99 @@
+// Chapter 28: Initializers (init method)
+// The init method is automatically called when an instance is created
+
+class Point {
+    init(x, y) {
+        this.x = x;
+        this.y = y;
+        print "Point created";
+    }
+    
+    distance() {
+        // Simple Manhattan distance from origin
+        return this.x + this.y;
+    }
+}
+
+var p1 = Point(3, 4);
+print "Distance: ";
+print p1.distance();
+
+
+// Init with default-like behavior
+class Circle {
+    init(radius) {
+        this.radius = radius;
+        this.pi = 3.14159;
+    }
+    
+    area() {
+        return this.pi * this.radius * this.radius;
+    }
+    
+    circumference() {
+        return 2 * this.pi * this.radius;
+    }
+}
+
+var circle = Circle(5);
+print "Area: ";
+print circle.area();
+print "Circumference: ";
+print circle.circumference();
+
+
+// Init returns 'this' implicitly
+class User {
+    init(username, email) {
+        this.username = username;
+        this.email = email;
+        print "User registered: " + username;
+    }
+    
+    login() {
+        print this.username + " logged in";
+    }
+}
+
+var user = User("bob123", "bob@example.com");
+user.login();
+
+
+// More complex initialization
+class Game {
+    init(playerName) {
+        this.playerName = playerName;
+        this.score = 0;
+        this.level = 1;
+        this.lives = 3;
+        print "New game started for " + playerName;
+    }
+    
+    addPoints(points) {
+        this.score = this.score + points;
+        if (this.score > 100 * this.level) {
+            this.levelUp();
+        }
+    }
+    
+    levelUp() {
+        this.level = this.level + 1;
+        print "Level up! Now at level ";
+        print this.level;
+    }
+    
+    loseLife() {
+        this.lives = this.lives - 1;
+        if (this.lives <= 0) {
+            print "Game Over!";
+        } else {
+            print "Lives remaining: ";
+            print this.lives;
+        }
+    }
+}
+
+var game = Game("Player1");
+game.addPoints(50);
+game.addPoints(60);
+game.loseLife();
