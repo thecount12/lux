@@ -1,6 +1,6 @@
 # Lux Programming Language
 
-A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features. File IO, Json serialization, HTTP client functionality (GET, POST and PUT), and HTTP server capabilities.
+A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features. File IO, Json serialization, HTTP/HTTPS client functionality (GET, POST and PUT), and HTTP server capabilities.
 
 ## Features
 
@@ -142,8 +142,9 @@ make
 8.out tests/test_fileio.lux         # File I/O examples
 8.out tests/test_fileops.lux        # Complete file operations test
 8.out tests/test_json.lux           # JSON parsing and serialization
-8.out tests/test_http_plan9.lux     # HTTP client (Plan 9 HTTP, POSIX HTTP/HTTPS)
-posix/my_program tests/test_http.lux  # HTTP with HTTPS examples (POSIX)
+8.out tests/test_http_plan9.lux     # HTTP client (Plan 9 HTTP)
+8.out tests/test_https.lux          # HTTPS client with TLS (Plan 9)
+posix/my_program tests/test_http.lux  # HTTP/HTTPS examples (POSIX)
 8.out tests/test_http_server.lux    # HTTP server (both Plan 9 and POSIX)
 8.out ch29-inherit.lux              # Inheritance examples
 8.out closure.lux                   # Closure examples
@@ -320,14 +321,14 @@ if (loaded != nil) {
 Lux includes HTTP client functions for making web requests on both Plan 9 and POSIX platforms.
 
 **Platform Support:**
-- **Plan 9**: HTTP only (uses native `dial()` with manual HTTP protocol)
+- **Plan 9**: HTTP and HTTPS (uses native `dial()` with libsec TLS)
 - **POSIX**: HTTP and HTTPS (uses libcurl)
 
 #### `httpGet(url)` → string or nil
 Makes an HTTP GET request and returns the response body as a string.
 
 ```lux
-// HTTPS example (POSIX only)
+// HTTPS example (both platforms)
 var response = httpGet("https://api.example.com/data");
 if (response != nil) {
     print "Received: " + response;
@@ -472,9 +473,9 @@ if (json != nil) {
 ```
 
 **Implementation Notes:**
-- **Plan 9 HTTP Client**: Uses native `dial()` system call with manual HTTP/1.0 protocol. Supports HTTP only (port 80). HTTPS requires adding encryption layer.
+- **Plan 9 HTTP Client**: Uses native `dial()` system call with manual HTTP/1.0 protocol and `libsec` for TLS/HTTPS support. HTTP (port 80) and HTTPS (port 443) both supported with automatic fallback.
 - **POSIX HTTP Client**: Uses libcurl library with full HTTP/1.1 and HTTPS support, automatic redirects, and robust error handling.
-- **HTTP Client (Both)**: 30-second timeouts, automatic `Content-Type: application/json` header, returns `nil` on failure.
+- **HTTP Client (Both)**: 30-second timeouts (POSIX), automatic `Content-Type: application/json` header, returns `nil` on failure.
 - **Plan 9 HTTP Server**: Uses native `announce()`, `listen()`, `accept()` system calls with manual HTTP/1.0 protocol parsing.
 - **POSIX HTTP Server**: Uses standard BSD sockets (`socket()`, `bind()`, `listen()`, `accept()`) with HTTP/1.0 protocol.
 - **HTTP Server (Both)**: Binds to all interfaces, handles Content-Length parsing, supports sequential connections, returns JSON responses.
@@ -493,7 +494,7 @@ To disable NaN boxing, edit `common.h` and comment out:
 1. **Flexible concatenation**: Mix any type with strings using `+` (automatic conversion)
 2. **File I/O**: Use built-in functions for reading/writing files and managing directories
 3. **JSON support**: Parse and serialize JSON for data persistence and configuration files
-4. **HTTP client**: Make GET/POST/PUT requests to APIs and web services (both platforms; HTTPS on POSIX only)
+4. **HTTP/HTTPS client**: Make GET/POST/PUT requests to APIs and web services (both HTTP and HTTPS on both platforms)
 5. **HTTP server**: Start a basic HTTP server with `httpServer(port)` for local development and testing
 6. **Error handling**: File, JSON, and HTTP operations return `nil` or `false` on failure - always check return values
 7. **Array access**: JSON arrays become objects with numeric string keys - access with `arr.0`, `arr.1`, etc.
