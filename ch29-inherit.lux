@@ -1,0 +1,25 @@
+// Basic inheritance
+class Base {
+    init(name) {
+        this.name = name;
+    }
+    
+    greet() {
+        print "Hello from " + this.name;
+    }
+}
+
+class Derived < Base {
+    init(name, title) {
+        super.init(name);
+        this.title = title;
+    }
+    
+    greet() {
+        super.greet();
+        print "I am a " + this.title;
+    }
+}
+
+var obj = Derived("Alice", "Developer");
+obj.greet();
