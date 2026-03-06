@@ -1,0 +1,144 @@
+// Test JSON parsing and serialization
+
+print "=== JSON Test Suite ===";
+print "";
+
+// Test 1: Serialize object to JSON
+print "1. Converting object to JSON...";
+class Person {
+    init(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+}
+
+var person = Person("Alice", 30);
+var json1 = toJSON(person);
+if (json1 != nil) {
+    print "   ✓ Serialized successfully";
+    print "   JSON: " + json1;
+} else {
+    print "   ✗ Failed to serialize";
+}
+
+// Test 2: Round-trip (serialize then parse)
+print "2. Round-trip test...";
+var person2 = Person("Bob", 42);
+var serialized = toJSON(person2);
+print "   Serialized: " + serialized;
+var parsed2 = parseJSON(serialized);
+if (parsed2 != nil) {
+    print "   ✓ Round-trip successful";
+    print "   Name: " + parsed2.name;
+    var age = parsed2.age;
+    if (age != nil) {
+        print "   Age value retrieved";
+        print age;
+    } else {
+        print "   Age is nil";
+    }
+} else {
+    print "   ✗ Round-trip failed";
+}
+
+// Test 3: Write JSON to file and read back
+print "3. File I/O with JSON...";
+var person3 = Person("Charlie", 25);
+var json3 = toJSON(person3);
+if (writeFile("save.json", json3)) {
+    var loaded = readFile("save.json");
+    if (loaded != nil) {
+        var parsed3 = parseJSON(loaded);
+        if (parsed3 != nil) {
+            print "   ✓ File I/O successful";
+            print "   Name: " + parsed3.name;
+            print "   Age: " + parsed3.age;
+        }
+    }
+}
+
+// Test 4: Stringify primitives
+print "4. Serializing primitive values...";
+print "   Number: " + toJSON(42);
+print "   String: " + toJSON("hello");
+print "   Bool true: " + toJSON(true);
+print "   Bool false: " + toJSON(false);
+print "   Nil: " + toJSON(nil);
+
+// Test 5: Parse different types
+print "5. Parsing different JSON types...";
+var numJson = "123";
+var boolJson = "true";
+var nullJson = "null";
+print "   Number: " + parseJSON(numJson);
+print "   Bool: " + parseJSON(boolJson);
+print "   Null: " + parseJSON(nullJson);
+
+// Test 6: Nested object
+print "6. Nested objects...";
+class Address {
+    init(city, zip) {
+        this.city = city;
+        this.zip = zip;
+    }
+}
+
+class User {
+    init(name, address) {
+        this.name = name;
+        this.addr = address;
+    }
+}
+
+var addr = Address("NYC", 10001);
+var user = User("Diana", addr);
+var userJson = toJSON(user);
+print "   Nested JSON: " + userJson;
+
+var parsed6 = parseJSON(userJson);
+if (parsed6 != nil) {
+    print "   ✓ Nested parsing successful";
+    print "   Name: " + parsed6.name;
+    if (parsed6.addr != nil) {
+        print "   City: " + parsed6.addr.city;
+        print "   Zip: " + parsed6.addr.zip;
+    }
+}
+
+// Test 7: Multiple properties
+print "7. Object with many properties...";
+class Config {
+    init() {
+        this.debug = true;
+        this.port = 8080;
+        this.host = "localhost";
+        this.timeout = 30;
+    }
+}
+
+var config = Config();
+var configJson = toJSON(config);
+print "   Config JSON: " + configJson;
+
+var parsedConfig = parseJSON(configJson);
+if (parsedConfig != nil) {
+    print "   ✓ Multi-property round-trip successful";
+}
+
+// Test 8: Save and load configuration
+print "8. Configuration persistence...";
+writeFile("config.json", configJson);
+var loadedConfig = readFile("config.json");
+if (loadedConfig != nil) {
+    var cfg = parseJSON(loadedConfig);
+    if (cfg != nil) {
+        print "   ✓ Config loaded from file";
+        print "   Debug: " + cfg.debug;
+        print "   Port: " + cfg.port;
+        print "   Host: " + cfg.host;
+    }
+}
+
+print "";
+print "=== All Tests Complete ===";
+print "Note: save.json and config.json created for testing";

@@ -116,6 +116,26 @@ ObjString* copyString(const char* chars, int length) {
 	return allocateString(heapChars, length, hash);
 }
 
+ObjString* valueToString(Value value) {
+	if (IS_BOOL(value)) {
+		if (AS_BOOL(value)) {
+			return copyString("true", 4);
+		} else {
+			return copyString("false", 5);
+		}
+	} else if (IS_NIL(value)) {
+		return copyString("nil", 3);
+	} else if (IS_NUMBER(value)) {
+		char buffer[32];
+		int length = snprintf(buffer, sizeof(buffer), "%g", AS_NUMBER(value));
+		return copyString(buffer, length);
+	} else if (IS_STRING(value)) {
+		return AS_STRING(value);
+	}
+	/* For other objects, return a simple representation */
+	return copyString("[object]", 8);
+}
+
 ObjUpvalue* newUpvalue(Value* slot) {
 	ObjUpvalue* upvalue = ALLOCATE_OBJ(ObjUpvalue, OBJ_UPVALUE);
 	upvalue->closed = NIL_VAL;

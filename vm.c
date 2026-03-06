@@ -267,6 +267,347 @@ listDirNative(int argCount, Value* args)
 	return retval;
 }
 
+/* JSON parsing helpers */
+typedef struct {
+	char* start;
+	char* current;
+} JsonParser;
+
+static void skipWhitespace(JsonParser* parser) {
+	while (*parser->current == ' ' || *parser->current == '\t' || 
+	       *parser->current == '\n' || *parser->current == '\r') {
+		parser->current++;
+	}
+}
+
+static bool matchChar(JsonParser* parser, char c) {
+	if (*parser->current == c) {
+		parser->current++;
+		return true;
+	}
+	return false;
+}
+
+static Value parseJsonValue(JsonParser* parser);
+
+static Value parseJsonString(JsonParser* parser) {
+	parser->current++; /* skip opening " */
+	char* start = parser->current;
+	int len = 0;
+	
+	while (*parser->current != '"' && *parser->current != '\0') {
+		if (*parser->current == '\\') {
+			parser->current++; /* skip escape char for now */
+			if (*parser->current != '\0') parser->current++;
+			len += 2; /* simplified: count both chars */
+		} else {
+			parser->current++;
+			len++;
+		}
+	}
+	
+	if (*parser->current != '"') return NIL_VAL; /* error */
+	
+	/* simplified: just copy the string without unescaping */
+	char* str = malloc(len + 1);
+	if (str == nil) return NIL_VAL;
+	
+	char* dst = str;
+	char* src = start;
+	while (src < parser->current) {
+		if (*src == '\\' && src + 1 < parser->current) {
+			src++; /* skip backslash */
+			switch (*src) {
+				case 'n': *dst++ = '\n'; break;
+				case 't': *dst++ = '\t'; break;
+				case 'r': *dst++ = '\r'; break;
+				case '"': *dst++ = '"'; break;
+				case '\\': *dst++ = '\\'; break;
+				default: *dst++ = *src; break;
+			}
+			src++;
+		} else {
+			*dst++ = *src++;
+		}
+	}
+	*dst = '\0';
+	
+	parser->current++; /* skip closing " */
+	Value result = OBJ_VAL(copyString(str, (int)(dst - str)));
+	free(str);
+	return result;
+}
+
+static Value parseJsonNumber(JsonParser* parser) {
+	char* start = parser->current;
+	
+	if (*parser->current == '-') parser->current++;
+	
+	while (*parser->current >= '0' && *parser->current <= '9') {
+		parser->current++;
+	}
+	
+	if (*parser->current == '.') {
+		parser->current++;
+		while (*parser->current >= '0' && *parser->current <= '9') {
+			parser->current++;
+		}
+	}
+	
+	char* end = parser->current;
+	char saved = *end;
+	*end = '\0';
+	double num = strtod(start, nil);
+	*end = saved;
+	
+	return NUMBER_VAL(num);
+}
+
+static Value parseJsonArray(JsonParser* parser) {
+	parser->current++; /* skip [ */
+	skipWhitespace(parser);
+	
+	/* Create an instance to hold array elements */
+	ObjClass* arrayClass = newClass(copyString("Array", 5));
+	push(OBJ_VAL(arrayClass)); /* protect from GC */
+	ObjInstance* instance = newInstance(arrayClass);
+	push(OBJ_VAL(instance)); /* protect from GC */
+	
+	int index = 0;
+	
+	if (*parser->current != ']') {
+		for (;;) {
+			skipWhitespace(parser);
+			Value elem = parseJsonValue(parser);
+			
+			/* Set numeric key as string */
+			char key[32];
+			sprint(key, "%d", index);
+			ObjString* keyStr = copyString(key, strlen(key));
+			push(OBJ_VAL(keyStr)); /* protect from GC */
+			tableSet(&instance->fields, keyStr, elem);
+			pop();
+			index++;
+			
+			skipWhitespace(parser);
+			if (!matchChar(parser, ',')) break;
+		}
+	}
+	
+	skipWhitespace(parser);
+	if (*parser->current == ']') parser->current++;
+	
+	/* Set length property */
+	ObjString* lenKey = copyString("length", 6);
+	push(OBJ_VAL(lenKey));
+	tableSet(&instance->fields, lenKey, NUMBER_VAL(index));
+	pop();
+	
+	pop(); /* instance */
+	pop(); /* arrayClass */
+	return OBJ_VAL(instance);
+}
+
+static Value parseJsonObject(JsonParser* parser) {
+	parser->current++; /* skip { */
+	skipWhitespace(parser);
+	
+	/* Create an instance to hold object properties */
+	ObjClass* objClass = newClass(copyString("Object", 6));
+	push(OBJ_VAL(objClass)); /* protect from GC */
+	ObjInstance* instance = newInstance(objClass);
+	push(OBJ_VAL(instance)); /* protect from GC */
+	
+	if (*parser->current != '}') {
+		for (;;) {
+			skipWhitespace(parser);
+			
+			/* Parse key */
+			if (*parser->current != '"') {
+				pop(); /* instance */
+				pop(); /* objClass */
+				return NIL_VAL; /* error */
+			}
+			
+			Value keyVal = parseJsonString(parser);
+			if (!IS_STRING(keyVal)) {
+				pop();
+				pop();
+				return NIL_VAL;
+			}
+			ObjString* key = AS_STRING(keyVal);
+			push(OBJ_VAL(key)); /* protect from GC */
+			
+			skipWhitespace(parser);
+			if (!matchChar(parser, ':')) {
+				pop(); /* key */
+				pop(); /* instance */
+				pop(); /* objClass */
+				return NIL_VAL; /* error */
+			}
+			
+			skipWhitespace(parser);
+			Value value = parseJsonValue(parser);
+			
+			tableSet(&instance->fields, key, value);
+			pop(); /* key */
+			
+			skipWhitespace(parser);
+			if (!matchChar(parser, ',')) break;
+		}
+	}
+	
+	skipWhitespace(parser);
+	if (*parser->current == '}') parser->current++;
+	
+	pop(); /* instance */
+	pop(); /* objClass */
+	return OBJ_VAL(instance);
+}
+
+static Value parseJsonValue(JsonParser* parser) {
+	skipWhitespace(parser);
+	
+	if (*parser->current == '"') {
+		return parseJsonString(parser);
+	} else if (*parser->current == '{') {
+		return parseJsonObject(parser);
+	} else if (*parser->current == '[') {
+		return parseJsonArray(parser);
+	} else if (*parser->current == 't') {
+		if (strncmp(parser->current, "true", 4) == 0) {
+			parser->current += 4;
+			return BOOL_VAL(true);
+		}
+	} else if (*parser->current == 'f') {
+		if (strncmp(parser->current, "false", 5) == 0) {
+			parser->current += 5;
+			return BOOL_VAL(false);
+		}
+	} else if (*parser->current == 'n') {
+		if (strncmp(parser->current, "null", 4) == 0) {
+			parser->current += 4;
+			return NIL_VAL;
+		}
+	} else if (*parser->current == '-' || (*parser->current >= '0' && *parser->current <= '9')) {
+		return parseJsonNumber(parser);
+	}
+	
+	return NIL_VAL;
+}
+
+/* Native function to parse JSON: parseJSON(jsonString) -> value */
+static Value 
+parseJSONNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+	
+	char* jsonStr = AS_CSTRING(args[0]);
+	
+	JsonParser parser;
+	parser.start = jsonStr;
+	parser.current = jsonStr;
+	
+	return parseJsonValue(&parser);
+}
+
+/* JSON serialization helper */
+static void appendToBuffer(char** buffer, int* len, int* cap, char* str) {
+	int addLen = strlen(str);
+	while (*len + addLen + 1 > *cap) {
+		*cap *= 2;
+		char* newBuf = realloc(*buffer, *cap);
+		if (newBuf == nil) return;
+		*buffer = newBuf;
+	}
+	strcpy(*buffer + *len, str);
+	*len += addLen;
+}
+
+static void appendChar(char** buffer, int* len, int* cap, char c) {
+	if (*len + 2> *cap) {
+		*cap *= 2;
+		char* newBuf = realloc(*buffer, *cap);
+		if (newBuf == nil) return;
+		*buffer = newBuf;
+	}
+	(*buffer)[(*len)++] = c;
+	(*buffer)[*len] = '\0';
+}
+
+static void serializeJsonValue(Value value, char** buffer, int* len, int* cap);
+
+static void serializeJsonObject(ObjInstance* instance, char** buffer, int* len, int* cap) {
+	appendChar(buffer, len, cap, '{');
+	
+	bool first = true;
+	for (int i = 0; i < instance->fields.capacity; i++) {
+		if (instance->fields.entries[i].key != nil) {
+			if (!first) appendChar(buffer, len, cap, ',');
+			first = false;
+			
+			/* Add key */
+			appendChar(buffer, len, cap, '"');
+			appendToBuffer(buffer, len, cap, instance->fields.entries[i].key->chars);
+			appendChar(buffer, len, cap, '"');
+			appendChar(buffer, len, cap, ':');
+			
+			/* Add value */
+			serializeJsonValue(instance->fields.entries[i].value, buffer, len, cap);
+		}
+	}
+	
+	appendChar(buffer, len, cap, '}');
+}
+
+static void serializeJsonValue(Value value, char** buffer, int* len, int* cap) {
+	if (IS_BOOL(value)) {
+		appendToBuffer(buffer, len, cap, AS_BOOL(value) ? "true" : "false");
+	} else if (IS_NIL(value)) {
+		appendToBuffer(buffer, len, cap, "null");
+	} else if (IS_NUMBER(value)) {
+		char numBuf[64];
+		sprint(numBuf, "%g", AS_NUMBER(value));
+		appendToBuffer(buffer, len, cap, numBuf);
+	} else if (IS_STRING(value)) {
+		appendChar(buffer, len, cap, '"');
+		char* str = AS_CSTRING(value);
+		while (*str) {
+			if (*str == '"') appendToBuffer(buffer, len, cap, "\\\"");
+			else if (*str == '\\') appendToBuffer(buffer, len, cap, "\\\\");
+			else if (*str == '\n') appendToBuffer(buffer, len, cap, "\\n");
+			else if (*str == '\t') appendToBuffer(buffer, len, cap, "\\t");
+			else if (*str == '\r') appendToBuffer(buffer, len, cap, "\\r");
+			else appendChar(buffer, len, cap, *str);
+			str++;
+		}
+		appendChar(buffer, len, cap, '"');
+	} else if (IS_INSTANCE(value)) {
+		serializeJsonObject(AS_INSTANCE(value), buffer, len, cap);
+	}
+}
+
+/* Native function to convert to JSON: toJSON(value) -> string */
+static Value 
+toJSONNative(int argCount, Value* args)
+{
+	if (argCount != 1)
+		return NIL_VAL;
+	
+	int cap = 256;
+	int len = 0;
+	char* buffer = malloc(cap);
+	if (buffer == nil) return NIL_VAL;
+	buffer[0] = '\0';
+	
+	serializeJsonValue(args[0], &buffer, &len, &cap);
+	
+	Value result = OBJ_VAL(copyString(buffer, len));
+	free(buffer);
+	return result;
+}
+
 
 static void 
 resetStack(void)
@@ -344,6 +685,8 @@ initVM(void)
 	defineNative("fileExists", fileExistsNative);
 	defineNative("createDir", createDirNative);
 	defineNative("listDir", listDirNative);
+	defineNative("parseJSON", parseJSONNative);
+	defineNative("toJSON", toJSONNative);
 }
 
 void 
