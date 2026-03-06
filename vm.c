@@ -8,6 +8,7 @@
 #include "compiler.h"
 #include "debug.h"
 #include "table.h"
+#include <libsec.h>
 
 VM vm;
 
@@ -731,7 +732,6 @@ readHttpResponse(int fd, int* outLen)
 				return nil;
 			}
 			buffer = newbuf;
-			bodyStart = buffer + bodyOffset;
 		}
 		
 		int n = read(fd, buffer + len, cap - len - 1);
@@ -770,18 +770,34 @@ httpGetNative(int argCount, Value* args)
 	if (parseUrl(url, &parts) < 0)
 		return NIL_VAL;
 	
-	if (parts.ishttps) {
-		fprint(2, "HTTPS not yet supported on Plan 9 (use http://)\n");
-		return NIL_VAL;
-	}
+	int fd;
+	TLSconn conn;
 	
 	/* Dial format: "tcp!host!port" */
 	char dialAddr[512];
 	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
 	
-	int fd = dial(dialAddr, nil, nil, nil);
-	if (fd < 0)
-		return NIL_VAL;
+	if (parts.ishttps) {
+		/* HTTPS: Use TLS with SNI support */
+		memset(&conn, 0, sizeof(conn));
+		conn.serverName = parts.host;
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0)
+			return NIL_VAL;
+		
+		/* Establish TLS connection */
+		fd = tlsClient(fd, &conn);
+		if (fd < 0) {
+			fprint(2, "TLS handshake failed for %s\n", parts.host);
+			close(fd);
+			return NIL_VAL;
+		}
+	} else {
+		/* HTTP: Plain connection */
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0)
+			return NIL_VAL;
+	}
 	
 	/* Send HTTP GET request */
 	char request[2048];
@@ -794,6 +810,8 @@ httpGetNative(int argCount, Value* args)
 		parts.path, parts.host);
 	
 	if (write(fd, request, strlen(request)) < 0) {
+		if (parts.ishttps)
+			free(conn.cert);
 		close(fd);
 		return NIL_VAL;
 	}
@@ -801,6 +819,9 @@ httpGetNative(int argCount, Value* args)
 	/* Read response */
 	int bodyLen;
 	char* body = readHttpResponse(fd, &bodyLen);
+	
+	if (parts.ishttps)
+		free(conn.cert);
 	close(fd);
 	
 	if (body == nil)
@@ -826,18 +847,33 @@ httpPostNative(int argCount, Value* args)
 	if (parseUrl(url, &parts) < 0)
 		return NIL_VAL;
 	
-	if (parts.ishttps) {
-		fprint(2, "HTTPS not yet supported on Plan 9 (use http://)\n");
-		return NIL_VAL;
-	}
+	int fd;
+	TLSconn conn;
 	
 	/* Dial */
 	char dialAddr[512];
 	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
 	
-	int fd = dial(dialAddr, nil, nil, nil);
-	if (fd < 0)
-		return NIL_VAL;
+	if (parts.ishttps) {
+		/* HTTPS: Use TLS with SNI support */
+		memset(&conn, 0, sizeof(conn));
+		conn.serverName = parts.host;
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0)
+			return NIL_VAL;
+		
+		fd = tlsClient(fd, &conn);
+		if (fd < 0) {
+			fprint(2, "TLS handshake failed for %s\n", parts.host);
+			close(fd);
+			return NIL_VAL;
+		}
+	} else {
+		/* HTTP: Plain connection */
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0)
+			return NIL_VAL;
+	}
 	
 	/* Send HTTP POST request */
 	char request[4096];
@@ -852,11 +888,15 @@ httpPostNative(int argCount, Value* args)
 		parts.path, parts.host, postBodyLen);
 	
 	if (write(fd, request, reqLen) < 0) {
+		if (parts.ishttps)
+			free(conn.cert);
 		close(fd);
 		return NIL_VAL;
 	}
 	
 	if (write(fd, postBody, postBodyLen) < 0) {
+		if (parts.ishttps)
+			free(conn.cert);
 		close(fd);
 		return NIL_VAL;
 	}
@@ -864,6 +904,9 @@ httpPostNative(int argCount, Value* args)
 	/* Read response */
 	int bodyLen;
 	char* respBody = readHttpResponse(fd, &bodyLen);
+	
+	if (parts.ishttps)
+		free(conn.cert);
 	close(fd);
 	
 	if (respBody == nil)
@@ -889,18 +932,33 @@ httpPutNative(int argCount, Value* args)
 	if (parseUrl(url, &parts) < 0)
 		return NIL_VAL;
 	
-	if (parts.ishttps) {
-		fprint(2, "HTTPS not yet supported on Plan 9 (use http://)\n");
-		return NIL_VAL;
-	}
+	int fd;
+	TLSconn conn;
 	
 	/* Dial */
 	char dialAddr[512];
 	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
 	
-	int fd = dial(dialAddr, nil, nil, nil);
-	if (fd < 0)
-		return NIL_VAL;
+	if (parts.ishttps) {
+		/* HTTPS: Use TLS with SNI support */
+		memset(&conn, 0, sizeof(conn));
+		conn.serverName = parts.host;
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0)
+			return NIL_VAL;
+		
+		fd = tlsClient(fd, &conn);
+		if (fd < 0) {
+			fprint(2, "TLS handshake failed for %s\n", parts.host);
+			close(fd);
+			return NIL_VAL;
+		}
+	} else {
+		/* HTTP: Plain connection */
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0)
+			return NIL_VAL;
+	}
 	
 	/* Send HTTP PUT request */
 	char request[4096];
@@ -915,11 +973,15 @@ httpPutNative(int argCount, Value* args)
 		parts.path, parts.host, putBodyLen);
 	
 	if (write(fd, request, reqLen) < 0) {
+		if (parts.ishttps)
+			free(conn.cert);
 		close(fd);
 		return NIL_VAL;
 	}
 	
 	if (write(fd, putBody, putBodyLen) < 0) {
+		if (parts.ishttps)
+			free(conn.cert);
 		close(fd);
 		return NIL_VAL;
 	}
@@ -927,6 +989,9 @@ httpPutNative(int argCount, Value* args)
 	/* Read response */
 	int bodyLen;
 	char* respBody = readHttpResponse(fd, &bodyLen);
+	
+	if (parts.ishttps)
+		free(conn.cert);
 	close(fd);
 	
 	if (respBody == nil)

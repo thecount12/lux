@@ -1,0 +1,153 @@
+// AWS Integration Pattern Example
+// Demonstrates HTTPS client for AWS service calls with TLS support
+// Both Plan 9 (libsec) and POSIX (libcurl) support HTTPS
+
+print "=== AWS Integration Pattern with HTTPS ===";
+print "";
+print "Lux now supports HTTPS on both Plan 9 and POSIX platforms";
+print "This enables direct integration with AWS services";
+print "";
+
+// Pattern 1: Invoke API Gateway endpoint
+print "Example 1: API Gateway Pattern";
+class APIRequest {
+    init(action, userId, data) {
+        this.action = action;
+        this.userId = userId;
+        this.data = data;
+    }
+}
+
+var request = APIRequest("create_user", 123, "sample_data");
+var jsonPayload = toJSON(request);
+
+if (jsonPayload != nil) {
+    print "Request payload: " + jsonPayload;
+    print "→ Can now POST to HTTPS API Gateway endpoints";
+    // Example with real endpoint:
+    // var response = httpPost("https://your-api.execute-api.us-east-1.amazonaws.com/prod/users", jsonPayload);
+    // if (response != nil) {
+    //     print "✓ API Gateway call successful";
+    //     var result = parseJSON(response);
+    // }
+}
+print "";
+
+// Pattern 2: Webhook/Lambda trigger
+print "Example 2: Webhook/Lambda Trigger Pattern";
+class WebhookPayload {
+    init(event, timestamp, data) {
+        this.event = event;
+        this.timestamp = timestamp;
+        this.data = data;
+    }
+}
+
+var webhook = WebhookPayload("user.created", 1234567890, "event data");
+var webhookJson = toJSON(webhook);
+
+if (webhookJson != nil) {
+    print "Webhook payload: " + webhookJson;
+    print "→ Can now trigger Lambda via HTTPS";
+    // Example with real Lambda URL:
+    // var result = httpPost("https://your-lambda-url.lambda-url.us-east-1.on.aws/", webhookJson);
+    // if (result != nil) {
+    //     print "✓ Lambda invoked successfully";
+    // }
+}
+print "";
+
+// Pattern 3: Fetch data from AWS service
+print "Example 3: Fetch Data Pattern (S3/DynamoDB via API)";
+// In real AWS integration with SDK:
+// var response = awsGetObject("my-bucket", "data.json");
+// var data = parseJSON(response);
+
+// With current HTTP:
+var apiUrl = "https://your-api.execute-api.us-east-1.amazonaws.com/prod/data/123";
+// var response = httpGet(apiUrl);
+print "→ Would GET from API/Lambda";
+print "";
+
+// Pattern 4: Configuration from Parameter Store/Secrets Manager
+print "Example 4: Configuration Pattern";
+class Config {
+    init() {
+        // In real AWS integration:
+        // var params = awsGetParameter("/myapp/config");
+        // Load and parse configuration
+        
+        // For now, from local file with fallback
+        if (fileExists("config.json")) {
+            var configData = readFile("config.json");
+            if (configData != nil) {
+                var cfg = parseJSON(configData);
+                if (cfg != nil) {
+                    this.apiKey = cfg.apiKey;
+                    this.region = cfg.region;
+                    this.debug = cfg.debug;
+                } else {
+                    this.apiKey = "default_key";
+                    this.region = "us-east-1";
+                    this.debug = false;
+                }
+            }
+        } else {
+            this.apiKey = "default_key";
+            this.region = "us-east-1";
+            this.debug = false;
+        }
+    }
+    
+    display() {
+        print "Configuration:";
+        print "  API Key: " + this.apiKey;
+        print "  Region: " + this.region;
+        print "  Debug: " + this.debug;
+    }
+}
+
+var config = Config();
+config.display();
+print "";
+
+// Pattern 5: Process and upload results
+print "Example 5: Process & Upload Pattern";
+class ProcessingResult {
+    init(status, recordsProcessed, errors) {
+        this.status = status;
+        this.recordsProcessed = recordsProcessed;
+        this.errors = errors;
+        this.timestamp = 1234567890; // clock() in real code
+    }
+}
+
+var result = ProcessingResult("success", 150, 0);
+var resultJson = toJSON(result);
+
+if (resultJson != nil) {
+    // Save locally first
+    if (writeFile("results.json", resultJson)) {
+        print "✓ Results saved locally";
+    }
+    
+    // In real AWS integration:
+    // var uploadResult = awsPutObject("results-bucket", "result-" + timestamp + ".json", resultJson);
+    // or
+    // var apiResult = httpPut("https://api.../results/123", resultJson);
+    
+    print "→ Would upload to S3 or send to API";
+}
+print "";
+
+print "=== End AWS Pattern Examples ===";
+print "";
+print "Next steps for full AWS integration:";
+print "1. Add AWS signature V4 signing for requests";
+print "2. Implement AWS SDK native functions:";
+print "   - Lambda: createFunction, invokeFunction, updateFunctionCode";
+print "   - S3: putObject, getObject, listObjects, deleteObject";
+print "   - DynamoDB: putItem, getItem, query, scan";
+print "   - Parameter Store: getParameter, putParameter";
+print "3. Add credential management (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)";
+print "4. Add region configuration";
