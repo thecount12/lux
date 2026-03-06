@@ -7,6 +7,9 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <curl/curl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
@@ -666,6 +669,209 @@ static Value httpPutNative(int argCount, Value* args) {
 	return result;
 }
 
+/* HTTP Request parsing for server */
+typedef struct {
+	char method[16];
+	char path[1024];
+	char body[4096];
+	int bodyLen;
+} HttpRequest;
+
+static int parseHttpRequest(char* buffer, int bufLen, HttpRequest* req) {
+	char* p = buffer;
+	
+	/* Parse method (GET, POST, etc.) */
+	char* methodEnd = strchr(p, ' ');
+	if (methodEnd == NULL) return -1;
+	int methodLen = methodEnd - p;
+	if (methodLen >= 16) return -1;
+	strncpy(req->method, p, methodLen);
+	req->method[methodLen] = '\0';
+	
+	/* Parse path */
+	p = methodEnd + 1;
+	char* pathEnd = strchr(p, ' ');
+	if (pathEnd == NULL) return -1;
+	int pathLen = pathEnd - p;
+	if (pathLen >= 1024) return -1;
+	strncpy(req->path, p, pathLen);
+	req->path[pathLen] = '\0';
+	
+	/* Find body (after headers) */
+	char* bodyStart = strstr(buffer, "\r\n\r\n");
+	if (bodyStart != NULL) {
+		bodyStart += 4;
+	} else {
+		bodyStart = strstr(buffer, "\n\n");
+		if (bodyStart != NULL)
+			bodyStart += 2;
+		else
+			bodyStart = NULL;
+	}
+	
+	/* Extract body if present */
+	if (bodyStart != NULL) {
+		req->bodyLen = bufLen - (bodyStart - buffer);
+		if (req->bodyLen >= 4096) req->bodyLen = 4095;
+		memcpy(req->body, bodyStart, req->bodyLen);
+		req->body[req->bodyLen] = '\0';
+	} else {
+		req->body[0] = '\0';
+		req->bodyLen = 0;
+	}
+	
+	return 0;
+}
+
+static void sendHttpResponse(int fd, int statusCode, const char* statusText, const char* body) {
+	char response[8192];
+	int bodyLen = strlen(body);
+	
+	int len = snprintf(response, sizeof(response),
+		"HTTP/1.0 %d %s\r\n"
+		"Content-Type: application/json\r\n"
+		"Content-Length: %d\r\n"
+		"Server: lux/1.0\r\n"
+		"Connection: close\r\n"
+		"\r\n"
+		"%s",
+		statusCode, statusText, bodyLen, body);
+	
+	write(fd, response, len);
+}
+
+/* httpServer(port) -> starts server */
+static Value httpServerNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_NUMBER(args[0]))
+		return NIL_VAL;
+	
+	int port = (int)AS_NUMBER(args[0]);
+	
+	/* Create socket */
+	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_fd < 0) {
+		fprintf(stderr, "Failed to create socket\n");
+		return BOOL_VAL(false);
+	}
+	
+	/* Allow address reuse */
+	int opt = 1;
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+		close(server_fd);
+		return BOOL_VAL(false);
+	}
+	
+	/* Bind to port */
+	struct sockaddr_in address;
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = INADDR_ANY;
+	address.sin_port = htons(port);
+	
+	if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+		fprintf(stderr, "Failed to bind to port %d\n", port);
+		close(server_fd);
+		return BOOL_VAL(false);
+	}
+	
+	/* Listen for connections */
+	if (listen(server_fd, 10) < 0) {
+		close(server_fd);
+		return BOOL_VAL(false);
+	}
+	
+	fprintf(stdout, "HTTP server listening on port %d\n", port);
+	fprintf(stdout, "Press Ctrl+C to stop\n");
+	fflush(stdout);
+	
+	/* Accept connections loop */
+	while (1) {
+		struct sockaddr_in client_addr;
+		socklen_t client_len = sizeof(client_addr);
+		int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+		
+		if (client_fd < 0)
+			continue;
+		
+		/* Read the request - may need multiple reads for POST body */
+		char buffer[8192];
+		int totalRead = 0;
+		int n;
+		
+		/* Read initial chunk (headers + maybe body) */
+		n = read(client_fd, buffer, sizeof(buffer) - 1);
+		if (n <= 0) {
+			close(client_fd);
+			continue;
+		}
+		totalRead = n;
+		buffer[totalRead] = '\0';
+		
+		/* Check if we have headers complete */
+		char* headerEnd = strstr(buffer, "\r\n\r\n");
+		if (headerEnd == NULL)
+			headerEnd = strstr(buffer, "\n\n");
+		
+		/* If we have headers, check for Content-Length and read more if needed */
+		if (headerEnd != NULL) {
+			char* clHeader = strstr(buffer, "Content-Length:");
+			if (clHeader == NULL)
+				clHeader = strstr(buffer, "content-length:");
+			
+			if (clHeader != NULL) {
+				int contentLen = atoi(clHeader + 15);
+				int bodyStart = (headerEnd - buffer) + 4;
+				if (strstr(buffer, "\n\n") != NULL && strstr(buffer, "\r\n\r\n") == NULL)
+					bodyStart = (headerEnd - buffer) + 2;
+				
+				int bodyReceived = totalRead - bodyStart;
+				int needMore = contentLen - bodyReceived;
+				
+				/* Read remaining body if needed */
+				while (needMore > 0 && totalRead < (int)sizeof(buffer) - 1) {
+					n = read(client_fd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
+					if (n <= 0) break;
+					totalRead += n;
+					needMore -= n;
+				}
+				buffer[totalRead] = '\0';
+			}
+		}
+		
+		/* Parse request */
+		HttpRequest req;
+		if (parseHttpRequest(buffer, totalRead, &req) < 0) {
+			sendHttpResponse(client_fd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
+			close(client_fd);
+			continue;
+		}
+		
+		fprintf(stdout, "%s %s\n", req.method, req.path);
+		fflush(stdout);
+		
+		/* Simple routing - respond based on path */
+		char responseBody[4096];
+		if (strcmp(req.path, "/") == 0) {
+			snprintf(responseBody, sizeof(responseBody),
+				"{\"message\":\"Hello from Lux!\",\"server\":\"lux/1.0\"}");
+			sendHttpResponse(client_fd, 200, "OK", responseBody);
+		} else if (strcmp(req.path, "/echo") == 0) {
+			snprintf(responseBody, sizeof(responseBody),
+				"{\"method\":\"%s\",\"path\":\"%s\",\"body\":\"%s\"}",
+				req.method, req.path, req.body);
+			sendHttpResponse(client_fd, 200, "OK", responseBody);
+		} else {
+			snprintf(responseBody, sizeof(responseBody),
+				"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
+			sendHttpResponse(client_fd, 404, "Not Found", responseBody);
+		}
+		
+		close(client_fd);
+	}
+	
+	close(server_fd);
+	return BOOL_VAL(true);
+}
+
 static void resetStack() {
 	vm.stackTop = vm.stack;
 	vm.frameCount = 0;
@@ -733,6 +939,7 @@ void initVM() {
 	defineNative("httpGet", httpGetNative);
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
+	defineNative("httpServer", httpServerNative);
 }
 
 void freeVM() {

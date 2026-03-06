@@ -1,6 +1,6 @@
 # Lux Programming Language
 
-A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features. File IO, Json serialization, and HTTP functionality (GET, POST and PUT).
+A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features. File IO, Json serialization, HTTP client functionality (GET, POST and PUT), and HTTP server capabilities.
 
 ## Features
 
@@ -144,6 +144,7 @@ make
 8.out tests/test_json.lux           # JSON parsing and serialization
 8.out tests/test_http_plan9.lux     # HTTP client (Plan 9 HTTP, POSIX HTTP/HTTPS)
 posix/my_program tests/test_http.lux  # HTTP with HTTPS examples (POSIX)
+8.out tests/test_http_server.lux    # HTTP server (both Plan 9 and POSIX)
 8.out ch29-inherit.lux              # Inheritance examples
 8.out closure.lux                   # Closure examples
 ```
@@ -395,6 +396,46 @@ if (jsonBody != nil) {
 }
 ```
 
+#### `httpServer(port)` → bool
+Starts a basic HTTP server listening on the specified port. The server runs in a blocking loop and responds to requests with built-in routes. Press Ctrl+C to stop the server.
+
+**Built-in Routes:**
+- `GET /` → Returns a hello message
+- `GET/POST /echo` → Echoes back the request method, path, and body
+- Other paths → Returns 404 Not Found
+
+```lux
+// Start a server on port 8080
+print "Starting HTTP server on port 8080...";
+httpServer(8080);
+```
+
+**Testing from command line:**
+```sh
+# From another terminal or machine:
+curl http://localhost:8080/
+curl http://localhost:8080/echo
+curl -X POST http://localhost:8080/echo -d '{"test":"data"}'
+```
+
+**Features:**
+- Listens on all network interfaces (accessible from external machines)
+- Automatic Content-Length header parsing for POST bodies
+- Returns JSON responses with proper HTTP headers
+- Handles multiple sequential connections
+- Simple built-in routing
+
+**Use Cases:**
+- Quick HTTP API testing
+- Local web service development
+- Receiving webhooks
+- Simple microservices
+- Development/debugging endpoints
+
+**Platform Support:**
+- **Plan 9**: Uses native `announce()`, `listen()`, `accept()` system calls
+- **POSIX**: Uses standard BSD sockets API (`socket()`, `bind()`, `listen()`, `accept()`)
+
 **Practical Example: Fetch and Process API Data**
 ```lux
 // Fetch user data from API
@@ -431,9 +472,12 @@ if (json != nil) {
 ```
 
 **Implementation Notes:**
-- **Plan 9**: Uses native `dial()` system call with manual HTTP/1.0 protocol. Supports HTTP only (port 80). HTTPS requires adding encryption layer.
-- **POSIX**: Uses libcurl library with full HTTP/1.1 and HTTPS support, automatic redirects, and robust error handling.
-- **Both**: 30-second timeouts, automatic `Content-Type: application/json` header, returns `nil` on failure.
+- **Plan 9 HTTP Client**: Uses native `dial()` system call with manual HTTP/1.0 protocol. Supports HTTP only (port 80). HTTPS requires adding encryption layer.
+- **POSIX HTTP Client**: Uses libcurl library with full HTTP/1.1 and HTTPS support, automatic redirects, and robust error handling.
+- **HTTP Client (Both)**: 30-second timeouts, automatic `Content-Type: application/json` header, returns `nil` on failure.
+- **Plan 9 HTTP Server**: Uses native `announce()`, `listen()`, `accept()` system calls with manual HTTP/1.0 protocol parsing.
+- **POSIX HTTP Server**: Uses standard BSD sockets (`socket()`, `bind()`, `listen()`, `accept()`) with HTTP/1.0 protocol.
+- **HTTP Server (Both)**: Binds to all interfaces, handles Content-Length parsing, supports sequential connections, returns JSON responses.
 
 ## Performance
 
@@ -450,13 +494,14 @@ To disable NaN boxing, edit `common.h` and comment out:
 2. **File I/O**: Use built-in functions for reading/writing files and managing directories
 3. **JSON support**: Parse and serialize JSON for data persistence and configuration files
 4. **HTTP client**: Make GET/POST/PUT requests to APIs and web services (both platforms; HTTPS on POSIX only)
-5. **Error handling**: File, JSON, and HTTP operations return `nil` or `false` on failure - always check return values
-6. **Array access**: JSON arrays become objects with numeric string keys - access with `arr.0`, `arr.1`, etc.
-7. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
-8. **No exceptions**: Use return values to indicate success/failure
-9. **Global scope**: All functions and classes are global
-10. **Numeric addition**: `+` performs addition when both operands are numbers
-11. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
+5. **HTTP server**: Start a basic HTTP server with `httpServer(port)` for local development and testing
+6. **Error handling**: File, JSON, and HTTP operations return `nil` or `false` on failure - always check return values
+7. **Array access**: JSON arrays become objects with numeric string keys - access with `arr.0`, `arr.1`, etc.
+8. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
+9. **No exceptions**: Use return values to indicate success/failure
+10. **Global scope**: All functions and classes are global
+11. **Numeric addition**: `+` performs addition when both operands are numbers
+12. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
 
 ## Example Programs
 

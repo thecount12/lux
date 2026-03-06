@@ -1,0 +1,20 @@
+// HTTP Server Test
+// Basic HTTP server that responds to requests
+
+print "=== HTTP Server Test ===";
+print "";
+print "Starting simple HTTP server...";
+print "The server has built-in routes:";
+print "  GET /       -> Hello message";
+print "  GET /echo   -> Echo request details";
+print "  Others      -> 404 Not Found";
+print "";
+print "Try these commands in another terminal:";
+print "  curl http://localhost:8080/";
+print "  curl http://localhost:8080/echo";
+print "  curl -X POST http://localhost:8080/echo -d 'test data'";
+print "";
+
+// Start the server on port 8080
+// This is a blocking call - press Ctrl+C to stop
+httpServer(8080);

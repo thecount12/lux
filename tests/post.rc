@@ -1,0 +1,30 @@
+#!/bin/rc
+# script to test HTTP POST
+
+IP='127.0.0.1'
+PORT='8080'
+URL='http://'^$IP^':'^$PORT
+
+# Test 1: GET request to verify server is up
+echo '=== Test 1: GET request ==='
+hget $URL^/
+echo ''
+
+# Test 2: hpost with form data (key:value pairs)
+echo '=== Test 2: POST with key:value pairs ==='
+hpost $URL^/echo name:test value:123
+echo ''
+
+# Test 3: hpost with piped JSON data
+echo '=== Test 3: POST with piped data ==='
+cat <<EOF | hpost $URL^/echo
+{"test":"data","from":"plan9"}
+EOF
+echo ''
+
+# Test 4: hpost with file
+echo '=== Test 4: POST with file ==='
+echo '{"file":"test","content":"from file"}' > /tmp/testpost
+hpost $URL^/echo < /tmp/testpost
+rm /tmp/testpost
+echo ''
