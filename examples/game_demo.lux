@@ -1,0 +1,281 @@
+// Simple Text-Based Game Template
+// Demonstrates practical Lux usage in a complete project
+
+print "================================";
+print "    DUNGEON ADVENTURE GAME";
+print "================================";
+print "";
+
+// ============================================
+// GAME ENTITIES
+// ============================================
+
+class Player {
+    init(name) {
+        this.name = name;
+        this.health = 100;
+        this.maxHealth = 100;
+        this.gold = 0;
+        this.level = 1;
+        this.alive = true;
+    }
+
+    takeDamage(amount) {
+        this.health = this.health - amount;
+        print this.name + " takes " + amount + " damage!";
+        
+        if (this.health <= 0) {
+            this.health = 0;
+            this.alive = false;
+            print this.name + " has been defeated!";
+        } else {
+            print this.name + "'s health: " + this.health + "/" + this.maxHealth;
+        }
+    }
+
+    heal(amount) {
+        this.health = this.health + amount;
+        if (this.health > this.maxHealth) {
+            this.health = this.maxHealth;
+        }
+        print this.name + " heals for " + amount + " HP";
+        print "Health: " + this.health + "/" + this.maxHealth;
+    }
+
+    gainGold(amount) {
+        this.gold = this.gold + amount;
+        print "+" + amount + " gold! (Total: " + this.gold + ")";
+    }
+
+    status() {
+        print "--- " + this.name + " ---";
+        print "Level: " + this.level;
+        print "Health: " + this.health + "/" + this.maxHealth;
+        print "Gold: " + this.gold;
+    }
+}
+
+class Enemy {
+    init(name, health, damage, goldReward) {
+        this.name = name;
+        this.health = health;
+        this.maxHealth = health;
+        this.damage = damage;
+        this.goldReward = goldReward;
+        this.alive = true;
+    }
+
+    takeDamage(amount) {
+        this.health = this.health - amount;
+        print this.name + " takes " + amount + " damage!";
+        
+        if (this.health <= 0) {
+            this.health = 0;
+            this.alive = false;
+            print this.name + " has been defeated!";
+        } else {
+            print this.name + "'s health: " + this.health + "/" + this.maxHealth;
+        }
+    }
+
+    attack(target) {
+        if (this.alive) {
+            print this.name + " attacks!";
+            target.takeDamage(this.damage);
+        }
+    }
+}
+
+// ============================================
+// GAME LOCATIONS
+// ============================================
+
+class Room {
+    init(name, description) {
+        this.name = name;
+        this.description = description;
+        this.visited = false;
+    }
+
+    enter() {
+        print "";
+        print "=== " + this.name + " ===";
+        print this.description;
+        this.visited = true;
+    }
+}
+
+// ============================================
+// COMBAT SYSTEM
+// ============================================
+
+class Combat {
+    init(player, enemy) {
+        this.player = player;
+        this.enemy = enemy;
+        this.turn = 1;
+    }
+
+    fight() {
+        print "";
+        print "!!! COMBAT START !!!";
+        print "Fighting: " + this.enemy.name;
+        print "";
+
+        // Simple auto-combat for demo
+        while (this.player.alive and this.enemy.alive) {
+            print "--- Turn " + this.turn + " ---";
+            
+            // Player attacks
+            print this.player.name + " attacks!";
+            this.enemy.takeDamage(15);
+            
+            // Enemy attacks if still alive
+            if (this.enemy.alive) {
+                this.enemy.attack(this.player);
+            }
+            
+            this.turn = this.turn + 1;
+            print "";
+        }
+
+        // Combat result
+        if (this.player.alive) {
+            print "!!! VICTORY !!!";
+            this.player.gainGold(this.enemy.goldReward);
+        } else {
+            print "!!! DEFEAT !!!";
+            print "Game Over!";
+        }
+    }
+}
+
+// ============================================
+// ITEMS
+// ============================================
+
+class Potion {
+    init(name, healing) {
+        this.name = name;
+        this.healing = healing;
+    }
+
+    use(target) {
+        print "Using " + this.name + "...";
+        target.heal(this.healing);
+    }
+}
+
+// ============================================
+// GAME SETUP
+// ============================================
+
+print "You awaken in a dark dungeon...";
+print "What is your name?";
+print "(For this demo, we'll call you 'Hero')";
+print "";
+
+var hero = Player("Hero");
+hero.status();
+
+// ============================================
+// ROOM 1: ENTRANCE
+// ============================================
+
+var entrance = Room("Dungeon Entrance", "A damp, dark corridor stretches before you.");
+entrance.enter();
+
+print "";
+print "You find a health potion!";
+var potion = Potion("Health Potion", 20);
+
+// ============================================
+// ROOM 2: GOBLIN CHAMBER
+// ============================================
+
+var chamber = Room("Goblin Chamber", "A small room filled with bones and debris.");
+chamber.enter();
+
+print "";
+print "A goblin appears!";
+var goblin = Enemy("Goblin", 30, 8, 25);
+
+var combat1 = Combat(hero, goblin);
+combat1.fight();
+
+if (!hero.alive) {
+    print "";
+    print "Your adventure ends here...";
+} else {
+    print "";
+    potion.use(hero);
+}
+
+// ============================================
+// ROOM 3: TREASURE ROOM
+// ============================================
+
+if (hero.alive) {
+    var treasure = Room("Treasure Room", "Gold coins glitter in the torchlight!");
+    treasure.enter();
+    
+    print "";
+    print "You collect the treasure!";
+    hero.gainGold(100);
+}
+
+// ============================================
+// ROOM 4: BOSS CHAMBER
+// ============================================
+
+if (hero.alive) {
+    var boss = Room("Boss Chamber", "A massive dragon sleeps on a pile of gold...");
+    boss.enter();
+    
+    print "";
+    print "The dragon awakens!";
+    var dragon = Enemy("Dragon", 50, 12, 500);
+    
+    var combat2 = Combat(hero, dragon);
+    combat2.fight();
+}
+
+// ============================================
+// GAME END
+// ============================================
+
+print "";
+print "================================";
+if (hero.alive) {
+    print "    CONGRATULATIONS!";
+    print "================================";
+    print "";
+    hero.status();
+    print "";
+    print "You have conquered the dungeon!";
+} else {
+    print "       GAME OVER";
+    print "================================";
+    print "";
+    print "Better luck next time!";
+}
+print "";
+
+// ============================================
+// LESSONS FROM THIS EXAMPLE
+// ============================================
+print "--- What This Example Demonstrates ---";
+print "1. Class design for game entities";
+print "2. State management (health, gold, etc.)";
+print "3. Combat system with turn-based logic";
+print "4. Object composition (Combat uses Player and Enemy)";
+print "5. Boolean flags (alive, visited)";
+print "6. Conditional game flow";
+print "7. Method organization and naming";
+print "";
+print "Try modifying this to add:";
+print "- Different enemy types";
+print "- Inventory system";
+print "- Different attack types";
+print "- Multiple player characters";
+print "- Save/load functionality (if you add file I/O)";

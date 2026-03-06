@@ -1,0 +1,119 @@
+// Project Template
+// Use this as a starting point for your own Lux programs
+
+print "=== My Lux Project ===";
+print "";
+
+// ============================================
+// CONFIGURATION / CONSTANTS
+// ============================================
+// Put your configuration here
+
+var PROJECT_NAME = "My Project";
+var VERSION = 1.0;
+
+// ============================================
+// UTILITY FUNCTIONS
+// ============================================
+// Helper functions used throughout the project
+
+fun abs(n) {
+    if (n < 0) {
+        return -n;
+    }
+    return n;
+}
+
+fun max(a, b) {
+    if (a > b) return a;
+    return b;
+}
+
+fun min(a, b) {
+    if (a < b) return a;
+    return b;
+}
+
+fun clamp(value, minVal, maxVal) {
+    if (value < minVal) return minVal;
+    if (value > maxVal) return maxVal;
+    return value;
+}
+
+// ============================================
+// CORE CLASSES
+// ============================================
+// Your main application classes
+
+class MyApp {
+    init(name) {
+        this.name = name;
+        this.running = true;
+    }
+
+    start() {
+        print "Starting " + this.name + "...";
+        this.run();
+    }
+
+    run() {
+        // Main application logic here
+        print "Running...";
+        
+        // Example: process some data
+        this.processData(42);
+        
+        this.stop();
+    }
+
+    processData(data) {
+        print "Processing: " + data;
+        // Your processing logic here
+    }
+
+    stop() {
+        print "Stopping " + this.name;
+        this.running = false;
+    }
+}
+
+// ============================================
+// DATA MODELS
+// ============================================
+// Classes that represent your data
+
+class DataItem {
+    init(id, value) {
+        this.id = id;
+        this.value = value;
+    }
+
+    display() {
+        print "Item " + this.id + ": " + this.value;
+    }
+}
+
+// ============================================
+// MAIN EXECUTION
+// ============================================
+
+print "Initializing " + PROJECT_NAME + " v" + VERSION;
+print "";
+
+// Create and run your application
+var app = MyApp(PROJECT_NAME);
+app.start();
+
+// Example usage
+var item1 = DataItem(1, "First Item");
+var item2 = DataItem(2, "Second Item");
+
+item1.display();
+item2.display();
+
+// ============================================
+// CLEANUP
+// ============================================
+
+print "";
+print "=== Program Complete ===";

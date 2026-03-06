@@ -29,9 +29,55 @@ typedef struct ObjBoundMethod ObjBoundMethod;
 typedef struct ObjClass ObjClass;
 typedef struct ObjInstance ObjInstance;
 typedef struct Chunk Chunk;
+#ifndef NAN_BOXING
 typedef struct Value Value;
+#endif
 typedef struct ValueArray ValueArray;
 typedef struct Compiler Compiler;
+
+#ifdef NAN_BOXING
+
+#define SIGN_BIT ((uvlong)0x8000000000000000)
+#define QNAN     ((uvlong)0x7ffc000000000000)
+
+#define TAG_NIL 1 	// 01.
+#define TAG_FALSE 2 // 10.
+#define TAG_TRUE 3 	// 11.
+
+typedef uvlong Value;
+
+#define IS_BOOL(value) (((value) | 1) == TRUE_VAL)
+#define IS_NIL(value) ((value) == NIL_VAL)
+#define IS_NUMBER(value) (((value) & QNAN) != QNAN)
+#define IS_OBJ(value) \
+	(((value) & (QNAN | SIGN_BIT)) == (QNAN | SIGN_BIT))
+
+#define AS_BOOL(value) ((value) == TRUE_VAL)
+#define AS_NUMBER(value) valueToNum(value)
+#define AS_OBJ(value) \
+	((Obj*)(ulong)((value) & ~(SIGN_BIT | QNAN)))
+
+#define BOOL_VAL(b) ((b) ? TRUE_VAL : FALSE_VAL)
+#define FALSE_VAL ((Value)(uvlong)(QNAN | TAG_FALSE))
+#define TRUE_VAL ((Value)(uvlong)(QNAN | TAG_TRUE))
+#define NIL_VAL ((Value)(uvlong)(QNAN | TAG_NIL))
+#define NUMBER_VAL(num) numToValue(num)
+#define OBJ_VAL(obj) \
+	((Value)(SIGN_BIT | QNAN | (uvlong)(ulong)(obj)))
+
+static inline double valueToNum(Value value) {
+	double num;
+	memcpy(&num, &value, sizeof(Value));
+	return num;
+}
+
+static inline Value numToValue(double num) {
+	Value value;
+	memcpy(&value, &num, sizeof(double));
+	return value;
+}
+
+#else
 
 /* Value type - MUST be identical in all compilation units */
 typedef enum {
@@ -49,6 +95,8 @@ struct Value {
         Obj* obj;
     } as;
 };
+
+#endif
 
 typedef struct {
 	ObjString* key;
