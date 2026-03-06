@@ -105,6 +105,7 @@ ObjInstance* newInstance(ObjClass* klass);
 ObjNative* newNative(NativeFn function);
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
+ObjString* valueToString(Value value);
 ObjUpvalue* newUpvalue(Value* slot);
 void printObject(Value value);
 

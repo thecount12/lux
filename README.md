@@ -141,6 +141,7 @@ make
 8.out test_concat.lux      # String concatenation examples
 8.out tests/test_fileio.lux    # File I/O examples
 8.out tests/test_fileops.lux   # Complete file operations test
+8.out tests/test_json.lux      # JSON parsing and serialization
 8.out ch29-inherit.lux     # Inheritance examples
 8.out closure.lux          # Closure examples
 ```
@@ -235,6 +236,82 @@ var elapsed = clock() - start;
 print "Elapsed: " + elapsed + " seconds";
 ```
 
+### JSON Operations
+
+Lux includes native JSON parsing and serialization for easy data interchange.
+
+#### `parseJSON(jsonString)` → value or nil
+Parses a JSON string and returns a Lux value. JSON objects become Lux class instances with properties, and JSON arrays become objects with numeric string keys ("0", "1", "2", etc.) plus a `length` property.
+
+```lux
+var jsonStr = "{\"name\":\"Alice\",\"age\":30,\"active\":true}";
+var obj = parseJSON(jsonStr);
+if (obj != nil) {
+    print obj.name;   // Alice
+    print obj.age;    // 30
+    print obj.active; // true
+}
+
+// Array example
+var arrStr = "[1,2,3,4,5]";
+var arr = parseJSON(arrStr);
+if (arr != nil) {
+    print arr.length; // 5
+    print arr.0;      // 1
+    print arr.4;      // 5
+}
+
+// Nested objects
+var nested = "{\"user\":{\"name\":\"Bob\",\"level\":5}}";
+var data = parseJSON(nested);
+print data.user.name;  // Bob
+```
+
+#### `toJSON(value)` → string or nil
+Converts a Lux value to a JSON string. Supports numbers, strings, booleans, nil, and objects (class instances).
+
+```lux
+class Person {
+    init(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+}
+
+var person = Person("Charlie", 25);
+var json = toJSON(person);
+print json;  // {"name":"Charlie","age":25}
+
+// Round-trip: parse and serialize
+var original = "{\"x\":10,\"y\":20}";
+var parsed = parseJSON(original);
+var serialized = toJSON(parsed);
+print serialized;  // {"x":10,"y":20}
+```
+
+**Practical Example: Save/Load Game Data**
+```lux
+// Save game state
+class GameState {
+    init(level, score) {
+        this.level = level;
+        this.score = score;
+    }
+}
+
+var state = GameState(5, 1000);
+var json = toJSON(state);
+writeFile("save.json", json);
+
+// Load game state
+var loaded = readFile("save.json");
+if (loaded != nil) {
+    var state = parseJSON(loaded);
+    print "Level: " + state.level;
+    print "Score: " + state.score;
+}
+```
+
 ## Performance
 
 NaN boxing is enabled by default for better performance. This uses a clever bit manipulation technique to store type information within IEEE 754 double values, reducing memory usage and improving cache performance.
@@ -248,12 +325,14 @@ To disable NaN boxing, edit `common.h` and comment out:
 
 1. **Flexible concatenation**: Mix any type with strings using `+` (automatic conversion)
 2. **File I/O**: Use built-in functions for reading/writing files and managing directories
-3. **Error handling**: File operations return `nil` or `false` on failure - always check return values
-4. **No built-in collections**: Use object properties or create your own linked structures
-5. **No exceptions**: Use return values to indicate success/failure
-6. **Global scope**: All functions and classes are global
-7. **Numeric addition**: `+` performs addition when both operands are numbers
-8. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
+3. **JSON support**: Parse and serialize JSON for data persistence and configuration files
+4. **Error handling**: File and JSON operations return `nil` or `false` on failure - always check return values
+5. **Array access**: JSON arrays become objects with numeric string keys - access with `arr.0`, `arr.1`, etc.
+6. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
+7. **No exceptions**: Use return values to indicate success/failure
+8. **Global scope**: All functions and classes are global
+9. **Numeric addition**: `+` performs addition when both operands are numbers
+10. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
 
 ## Example Programs
 
@@ -319,6 +398,66 @@ writeFile("saves/game2.txt", "Level 2 complete");
 var files = listDir("saves");
 print "Save files:";
 print files;
+```
+
+### Using Objects as Dictionaries
+```lux
+// Lux has no built-in dictionary/hashmap type,
+// but you can use object properties for key-value storage
+
+// Simple dictionary
+class Dict {
+    init() {}
+}
+
+var config = Dict();
+config.host = "localhost";
+config.port = 8080;
+config.debug = true;
+
+print "Server: " + config.host + ":" + config.port;
+
+// Nested dictionaries for complex data
+var user = Dict();
+user.name = "Alice";
+user.age = 30;
+
+var address = Dict();
+address.street = "123 Main St";
+address.city = "Portland";
+address.zip = "97201";
+
+user.address = address;
+
+print user.name + " lives in " + user.address.city;
+
+// Useful for JSON work - build complex structures
+var gameData = Dict();
+gameData.player = "PlayerOne";
+gameData.level = 5;
+gameData.score = 1500;
+
+var inventory = Dict();
+inventory.gold = 100;
+inventory.potions = 3;
+inventory.keys = 1;
+
+gameData.inventory = inventory;
+
+// Serialize to JSON for saving
+var json = toJSON(gameData);
+if (json != nil) {
+    writeFile("game.json", json);
+    print "Game saved!";
+}
+
+// Load and access nested data
+var loaded = readFile("game.json");
+if (loaded != nil) {
+    var data = parseJSON(loaded);
+    print "Welcome back, " + data.player;
+    print "Gold: " + data.inventory.gold;
+}
 ```
 
 ## Learning Resources
