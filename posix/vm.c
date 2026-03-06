@@ -1,7 +1,11 @@
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <unistd.h>
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
@@ -13,6 +17,162 @@ VM vm;
 
 static Value clockNative(int argCount __attribute__((unused)), Value* args __attribute__((unused))) {
 	return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+}
+
+/* Native function to read a file: readFile(path) -> string */
+static Value readFileNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	char* path = AS_CSTRING(args[0]);
+	FILE* file = fopen(path, "rb");
+	if (file == NULL)
+		return NIL_VAL;
+
+	/* Determine file size */
+	fseek(file, 0L, SEEK_END);
+	size_t fileSize = ftell(file);
+	rewind(file);
+
+	char* buffer = (char*)malloc(fileSize + 1);
+	if (buffer == NULL) {
+		fclose(file);
+		return NIL_VAL;
+	}
+
+	size_t bytesRead = fread(buffer, sizeof(char), fileSize, file);
+	buffer[bytesRead] = '\0';
+	fclose(file);
+
+	/* Wrap the raw C string into a Value */
+	Value result = OBJ_VAL(copyString(buffer, (int)bytesRead));
+	free(buffer);
+	return result;
+}
+
+/* Native function to write a file: writeFile(path, content) -> bool */
+static Value writeFileNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return BOOL_VAL(false);
+
+	char* path = AS_CSTRING(args[0]);
+	char* content = AS_CSTRING(args[1]);
+
+	FILE* file = fopen(path, "wb");
+	if (file == NULL)
+		return BOOL_VAL(false);
+
+	fprintf(file, "%s", content);
+	fclose(file);
+	return BOOL_VAL(true);
+}
+
+/* Native function to append to a file: appendFile(path, content) -> bool */
+static Value appendFileNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return BOOL_VAL(false);
+
+	char* path = AS_CSTRING(args[0]);
+	char* content = AS_CSTRING(args[1]);
+
+	FILE* file = fopen(path, "ab");
+	if (file == NULL)
+		return BOOL_VAL(false);
+
+	fprintf(file, "%s", content);
+	fclose(file);
+	return BOOL_VAL(true);
+}
+
+/* Native function to delete a file: deleteFile(path) -> bool */
+static Value deleteFileNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return BOOL_VAL(false);
+
+	char* path = AS_CSTRING(args[0]);
+	if (remove(path) < 0)
+		return BOOL_VAL(false);
+	return BOOL_VAL(true);
+}
+
+/* Native function to check if file exists: fileExists(path) -> bool */
+static Value fileExistsNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return BOOL_VAL(false);
+
+	char* path = AS_CSTRING(args[0]);
+	if (access(path, F_OK) == 0)
+		return BOOL_VAL(true);
+	return BOOL_VAL(false);
+}
+
+/* Native function to create a directory: createDir(path) -> bool */
+static Value createDirNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return BOOL_VAL(false);
+
+	char* path = AS_CSTRING(args[0]);
+	if (mkdir(path, 0775) < 0)
+		return BOOL_VAL(false);
+	return BOOL_VAL(true);
+}
+
+/* Native function to list directory contents: listDir(path) -> string */
+static Value listDirNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	char* path = AS_CSTRING(args[0]);
+	DIR* dir = opendir(path);
+	if (dir == NULL)
+		return NIL_VAL;
+
+	/* allocate buffer for result string */
+	int resultCap = 1024;
+	char* result = malloc(resultCap);
+	if (result == NULL) {
+		closedir(dir);
+		return NIL_VAL;
+	}
+	int resultLen = 0;
+	result[0] = '\0';
+
+	/* read directory entries */
+	struct dirent* entry;
+	while ((entry = readdir(dir)) != NULL) {
+		/* skip . and .. */
+		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+			continue;
+		
+		int nameLen = strlen(entry->d_name);
+		/* ensure buffer is large enough */
+		while (resultLen + nameLen + 2 > resultCap) {
+			resultCap *= 2;
+			char* newResult = realloc(result, resultCap);
+			if (newResult == NULL) {
+				free(result);
+				closedir(dir);
+				return NIL_VAL;
+			}
+			result = newResult;
+		}
+		/* append name and newline */
+		strcpy(result + resultLen, entry->d_name);
+		resultLen += nameLen;
+		result[resultLen++] = '\n';
+		result[resultLen] = '\0';
+	}
+
+	closedir(dir);
+	/* remove trailing newline if present */
+	if (resultLen > 0 && result[resultLen-1] == '\n') {
+		result[resultLen-1] = '\0';
+		resultLen--;
+	}
+
+	Value retval = OBJ_VAL(copyString(result, resultLen));
+	free(result);
+	return retval;
 }
 
 static void resetStack() {
@@ -70,6 +230,13 @@ void initVM() {
 	vm.initString = copyString("init", 4);
 
 	defineNative("clock", clockNative);
+	defineNative("readFile", readFileNative);
+	defineNative("writeFile", writeFileNative);
+	defineNative("appendFile", appendFileNative);
+	defineNative("deleteFile", deleteFileNative);
+	defineNative("fileExists", fileExistsNative);
+	defineNative("createDir", createDirNative);
+	defineNative("listDir", listDirNative);
 }
 
 void freeVM() {
