@@ -136,14 +136,16 @@ make
 
 ### Example files:
 ```
-8.out getting_started.lux  # START HERE - Learn the basics
-8.out demo.lux             # Simple working demo
-8.out test_concat.lux      # String concatenation examples
-8.out tests/test_fileio.lux    # File I/O examples
-8.out tests/test_fileops.lux   # Complete file operations test
-8.out tests/test_json.lux      # JSON parsing and serialization
-8.out ch29-inherit.lux     # Inheritance examples
-8.out closure.lux          # Closure examples
+8.out getting_started.lux           # START HERE - Learn the basics
+8.out demo.lux                      # Simple working demo
+8.out test_concat.lux               # String concatenation examples
+8.out tests/test_fileio.lux         # File I/O examples
+8.out tests/test_fileops.lux        # Complete file operations test
+8.out tests/test_json.lux           # JSON parsing and serialization
+8.out tests/test_http_plan9.lux     # HTTP client (Plan 9 HTTP, POSIX HTTP/HTTPS)
+posix/my_program tests/test_http.lux  # HTTP with HTTPS examples (POSIX)
+8.out ch29-inherit.lux              # Inheritance examples
+8.out closure.lux                   # Closure examples
 ```
 
 ## String Concatenation
@@ -312,6 +314,127 @@ if (loaded != nil) {
 }
 ```
 
+### HTTP Operations
+
+Lux includes HTTP client functions for making web requests on both Plan 9 and POSIX platforms.
+
+**Platform Support:**
+- **Plan 9**: HTTP only (uses native `dial()` with manual HTTP protocol)
+- **POSIX**: HTTP and HTTPS (uses libcurl)
+
+#### `httpGet(url)` → string or nil
+Makes an HTTP GET request and returns the response body as a string.
+
+```lux
+// HTTPS example (POSIX only)
+var response = httpGet("https://api.example.com/data");
+if (response != nil) {
+    print "Received: " + response;
+    
+    // Parse JSON responses
+    var data = parseJSON(response);
+    if (data != nil) {
+        print "Status: " + data.status;
+    }
+} else {
+    print "Request failed";
+}
+
+// HTTP example (both Plan 9 and POSIX)
+var httpResp = httpGet("http://httpbin.org/get");
+if (httpResp != nil) {
+    var data = parseJSON(httpResp);
+    print "URL: " + data.url;
+}
+```
+
+#### `httpPost(url, body)` → string or nil
+Makes an HTTP POST request with JSON body and returns the response.
+
+```lux
+class User {
+    init(name, email) {
+        this.name = name;
+        this.email = email;
+    }
+}
+
+var user = User("Alice", "alice@example.com");
+var jsonBody = toJSON(user);
+
+if (jsonBody != nil) {
+    var response = httpPost("https://api.example.com/users", jsonBody);
+    if (response != nil) {
+        print "User created!";
+        var result = parseJSON(response);
+        if (result != nil) {
+            print "ID: " + result.id;
+        }
+    }
+}
+```
+
+#### `httpPut(url, body)` → string or nil
+Makes an HTTP PUT request with JSON body and returns the response.
+
+```lux
+class UpdateData {
+    init(status) {
+        this.status = status;
+    }
+}
+
+var update = UpdateData("active");
+var jsonBody = toJSON(update);
+
+if (jsonBody != nil) {
+    var response = httpPut("https://api.example.com/resource/123", jsonBody);
+    if (response != nil) {
+        print "Resource updated!";
+    }
+}
+```
+
+**Practical Example: Fetch and Process API Data**
+```lux
+// Fetch user data from API
+var response = httpGet("https://jsonplaceholder.typicode.com/users/1");
+if (response != nil) {
+    var user = parseJSON(response);
+    if (user != nil) {
+        print "Name: " + user.name;
+        print "Email: " + user.email;
+        print "City: " + user.address.city;
+        
+        // Save locally
+        writeFile("user_" + user.id + ".json", response);
+    }
+}
+
+// Post analysis results
+class AnalysisResult {
+    init(userId, score, status) {
+        this.userId = userId;
+        this.score = score;
+        this.status = status;
+    }
+}
+
+var result = AnalysisResult(1, 95, "passed");
+var json = toJSON(result);
+if (json != nil) {
+    var postResp = httpPost("https://api.example.com/results", json);
+    if (postResp != nil) {
+        print "Results submitted successfully";
+    }
+}
+```
+
+**Implementation Notes:**
+- **Plan 9**: Uses native `dial()` system call with manual HTTP/1.0 protocol. Supports HTTP only (port 80). HTTPS requires adding encryption layer.
+- **POSIX**: Uses libcurl library with full HTTP/1.1 and HTTPS support, automatic redirects, and robust error handling.
+- **Both**: 30-second timeouts, automatic `Content-Type: application/json` header, returns `nil` on failure.
+
 ## Performance
 
 NaN boxing is enabled by default for better performance. This uses a clever bit manipulation technique to store type information within IEEE 754 double values, reducing memory usage and improving cache performance.
@@ -326,13 +449,14 @@ To disable NaN boxing, edit `common.h` and comment out:
 1. **Flexible concatenation**: Mix any type with strings using `+` (automatic conversion)
 2. **File I/O**: Use built-in functions for reading/writing files and managing directories
 3. **JSON support**: Parse and serialize JSON for data persistence and configuration files
-4. **Error handling**: File and JSON operations return `nil` or `false` on failure - always check return values
-5. **Array access**: JSON arrays become objects with numeric string keys - access with `arr.0`, `arr.1`, etc.
-6. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
-7. **No exceptions**: Use return values to indicate success/failure
-8. **Global scope**: All functions and classes are global
-9. **Numeric addition**: `+` performs addition when both operands are numbers
-10. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
+4. **HTTP client**: Make GET/POST/PUT requests to APIs and web services (both platforms; HTTPS on POSIX only)
+5. **Error handling**: File, JSON, and HTTP operations return `nil` or `false` on failure - always check return values
+6. **Array access**: JSON arrays become objects with numeric string keys - access with `arr.0`, `arr.1`, etc.
+7. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
+8. **No exceptions**: Use return values to indicate success/failure
+9. **Global scope**: All functions and classes are global
+10. **Numeric addition**: `+` performs addition when both operands are numbers
+11. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
 
 ## Example Programs
 

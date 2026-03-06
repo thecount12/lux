@@ -1,6 +1,7 @@
 # Define compiler and flags
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g
+LDFLAGS = -lcurl
 
 # Define the executable name
 TARGET = my_program
@@ -19,7 +20,7 @@ all: $(TARGET)
 
 # Rule to link the object files into the executable
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Pattern rule to compile .c files into .o files
 # Dependencies on header files are explicitly listed
