@@ -1,0 +1,293 @@
+// Lux Language Tutorial - Comprehensive Feature Demo
+// Based on Chapters 1-30 of Crafting Interpreters
+
+print "=== Welcome to Lux! ===";
+print "";
+
+// ============================================
+// 1. VARIABLES AND BASIC TYPES
+// ============================================
+print "--- Variables and Types ---";
+var name = "Lux";
+var version = 1.0;
+var isAwesome = true;
+var nothing = nil;
+
+print "Language: " + name;
+print "Version: " + version;
+print "Awesome: " + isAwesome;
+print "";
+
+// ============================================
+// 2. ARITHMETIC AND COMPARISONS
+// ============================================
+print "--- Math and Comparisons ---";
+var x = 10;
+var y = 3;
+
+print "10 + 3 = " + (x + y);
+print "10 - 3 = " + (x - y);
+print "10 * 3 = " + (x * y);
+print "10 / 3 = " + (x / y);
+print "10 > 3: " + (x > y);
+print "10 == 3: " + (x == y);
+print "";
+
+// ============================================
+// 3. CONTROL FLOW
+// ============================================
+print "--- Control Flow ---";
+
+// If/else
+var age = 25;
+if (age >= 18) {
+    print "You are an adult";
+} else {
+    print "You are a minor";
+}
+
+// While loops
+print "Counting down:";
+var count = 3;
+while (count > 0) {
+    print count;
+    count = count - 1;
+}
+print "Blastoff!";
+
+// For loops
+print "Even numbers:";
+for (var i = 0; i < 6; i = i + 2) {
+    print i;
+}
+print "";
+
+// ============================================
+// 4. FUNCTIONS
+// ============================================
+print "--- Functions ---";
+
+fun greet(name) {
+    return "Hello, " + name + "!";
+}
+
+print greet("World");
+print greet("Lux");
+
+// Recursive function
+fun fibonacci(n) {
+    if (n <= 1) return n;
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+print "Fibonacci(10) = " + fibonacci(10);
+print "";
+
+// ============================================
+// 5. CLOSURES
+// ============================================
+print "--- Closures ---";
+
+fun makeCounter() {
+    var count = 0;
+    fun increment() {
+        count = count + 1;
+        return count;
+    }
+    return increment;
+}
+
+var counter = makeCounter();
+print "Counter: " + counter();
+print "Counter: " + counter();
+print "Counter: " + counter();
+print "";
+
+// ============================================
+// 6. CLASSES AND OBJECTS
+// ============================================
+print "--- Classes and Objects ---";
+
+class Person {
+    init(name, age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    introduce() {
+        return "Hi, I'm " + this.name + " and I'm " + this.age + " years old.";
+    }
+
+    birthday() {
+        this.age = this.age + 1;
+        print this.name + " is now " + this.age + "!";
+    }
+}
+
+var alice = Person("Alice", 30);
+print alice.introduce();
+alice.birthday();
+print "";
+
+// ============================================
+// 7. INHERITANCE
+// ============================================
+print "--- Inheritance ---";
+
+class Animal {
+    init(name) {
+        this.name = name;
+    }
+
+    speak() {
+        return this.name + " makes a sound";
+    }
+}
+
+class Dog < Animal {
+    speak() {
+        return this.name + " barks!";
+    }
+
+    fetch() {
+        return this.name + " fetches the ball!";
+    }
+}
+
+class Cat < Animal {
+    speak() {
+        return this.name + " meows!";
+    }
+
+    scratch() {
+        return this.name + " scratches the furniture!";
+    }
+}
+
+var buddy = Dog("Buddy");
+var whiskers = Cat("Whiskers");
+
+print buddy.speak();
+print buddy.fetch();
+print whiskers.speak();
+print whiskers.scratch();
+print "";
+
+// ============================================
+// 8. PRACTICAL EXAMPLE: TODO LIST
+// ============================================
+print "--- Practical Example: Todo List ---";
+
+class TodoList {
+    init(owner) {
+        this.owner = owner;
+        this.count = 0;
+    }
+
+    add(task) {
+        this.count = this.count + 1;
+        print "[" + this.count + "] Added: " + task;
+    }
+
+    summary() {
+        print this.owner + "'s list has " + this.count + " items";
+    }
+}
+
+var myTodos = TodoList("Alice");
+myTodos.add("Learn Lux");
+myTodos.add("Build something cool");
+myTodos.add("Take a break");
+myTodos.summary();
+print "";
+
+// ============================================
+// 9. ADVANCED: CALCULATOR CLASS
+// ============================================
+print "--- Calculator Class ---";
+
+class Calculator {
+    init() {
+        this.result = 0;
+    }
+
+    add(n) {
+        this.result = this.result + n;
+        return this;
+    }
+
+    multiply(n) {
+        this.result = this.result * n;
+        return this;
+    }
+
+    divide(n) {
+        this.result = this.result / n;
+        return this;
+    }
+
+    getResult() {
+        return this.result;
+    }
+
+    reset() {
+        this.result = 0;
+        return this;
+    }
+}
+
+var calc = Calculator();
+calc.add(10);
+calc.multiply(5);
+print "10 * 5 = " + calc.getResult();
+calc.reset();
+calc.add(100);
+calc.divide(4);
+print "100 / 4 = " + calc.getResult();
+print "";
+
+// ============================================
+// 10. HIGHER-ORDER FUNCTIONS
+// ============================================
+print "--- Higher-Order Functions ---";
+
+fun twice(fn, value) {
+    return fn(fn(value));
+}
+
+fun addTwo(n) {
+    return n + 2;
+}
+
+print "twice(addTwo, 5) = " + twice(addTwo, 5);
+print "";
+
+// ============================================
+// 11. TIMER EXAMPLE
+// ============================================
+print "--- Timer Example ---";
+
+class Timer {
+    init(name) {
+        this.name = name;
+        this.elapsed = 0;
+    }
+
+    tick() {
+        this.elapsed = this.elapsed + 1;
+    }
+
+    report() {
+        print this.name + ": " + this.elapsed + " ticks";
+    }
+}
+
+var gameTimer = Timer("Game");
+for (var i = 0; i < 5; i = i + 1) {
+    gameTimer.tick();
+}
+gameTimer.report();
+print "";
+
+print "=== Tutorial Complete! ===";
+print "You now know: variables, functions, classes, inheritance, and closures!";

@@ -1,5 +1,4 @@
 #include "lux.h"
-#include "types.h"
 #include "common.h"
 #include "value.h"
 #include "chunk.h"
@@ -7,6 +6,7 @@
 #include "memory.h"
 #include "object.h"
 
+#ifndef NAN_BOXING
 Value
 obj_val(Obj* object)
 {
@@ -42,6 +42,7 @@ number_val(double number)
 	v.as.number = number;
 	return v;
 }
+#endif
 
 void
 initValueArray(ValueArray* array)
@@ -77,6 +78,17 @@ freeValueArray(ValueArray* array)
 
 void 
 printValue(Value value) {
+#ifdef NAN_BOXING
+	if (IS_BOOL(value)) {
+		print(AS_BOOL(value) ? "true" : "false");
+	} else if (IS_NIL(value)) {
+		print("nil");
+	} else if (IS_NUMBER(value)) {
+		print("%g", AS_NUMBER(value));
+	} else if (IS_OBJ(value)) {
+		printObject(value);
+	}
+#else
 	switch (value.type) {
 		case VAL_BOOL:
 			print(AS_BOOL(value) ? "true" : "false");
@@ -85,10 +97,17 @@ printValue(Value value) {
 		case VAL_NUMBER: print("%g", AS_NUMBER(value)); break;
 		case VAL_OBJ: printObject(value); break;
 	}
+#endif
 }
 
 bool 
 valuesEqual(Value a, Value b) {
+#ifdef NAN_BOXING
+	if (IS_NUMBER(a) && IS_NUMBER(b)) {
+		return AS_NUMBER(a) == AS_NUMBER(b);
+	}
+	return  a == b;
+#else
 	if (a.type != b.type) return false;
 	
 	switch (a.type) {
@@ -98,4 +117,5 @@ valuesEqual(Value a, Value b) {
 		case VAL_OBJ: return AS_OBJ(a) == AS_OBJ(b);
 		default: return false;
 	}
+#endif
 }

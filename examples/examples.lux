@@ -1,0 +1,295 @@
+// Practical Lux Examples
+// Real-world patterns and usage
+
+// ============================================
+// EXAMPLE 1: Bank Account System
+// ============================================
+print "=== Bank Account System ===";
+
+class BankAccount {
+    init(owner, balance) {
+        this.owner = owner;
+        this.balance = balance;
+        this.transactions = 0;
+    }
+
+    deposit(amount) {
+        if (amount > 0) {
+            this.balance = this.balance + amount;
+            this.transactions = this.transactions + 1;
+            print this.owner + " deposited $" + amount;
+            return true;
+        }
+        print "Invalid deposit amount";
+        return false;
+    }
+
+    withdraw(amount) {
+        if (amount > 0 and amount <= this.balance) {
+            this.balance = this.balance - amount;
+            this.transactions = this.transactions + 1;
+            print this.owner + " withdrew $" + amount;
+            return true;
+        }
+        print "Insufficient funds or invalid amount";
+        return false;
+    }
+
+    statement() {
+        print "--- Account Statement ---";
+        print "Owner: " + this.owner;
+        print "Balance: $" + this.balance;
+        print "Transactions: " + this.transactions;
+        print "";
+    }
+}
+
+var account = BankAccount("Alice", 1000);
+account.deposit(500);
+account.withdraw(200);
+account.withdraw(5000);  // Should fail
+account.statement();
+
+// ============================================
+// EXAMPLE 2: Simple Game Character
+// ============================================
+print "=== Game Character System ===";
+
+class Character {
+    init(name, health, attack) {
+        this.name = name;
+        this.health = health;
+        this.maxHealth = health;
+        this.attack = attack;
+        this.alive = true;
+    }
+
+    takeDamage(damage) {
+        if (this.alive) {
+            this.health = this.health - damage;
+            print this.name + " takes " + damage + " damage! (" + this.health + "/" + this.maxHealth + ")";
+            
+            if (this.health <= 0) {
+                this.health = 0;
+                this.alive = false;
+                print this.name + " has been defeated!";
+            }
+        }
+    }
+
+    attackTarget(target) {
+        if (this.alive) {
+            print this.name + " attacks " + target.name + "!";
+            target.takeDamage(this.attack);
+        }
+    }
+
+    heal(amount) {
+        if (this.alive) {
+            this.health = this.health + amount;
+            if (this.health > this.maxHealth) {
+                this.health = this.maxHealth;
+            }
+            print this.name + " heals for " + amount + "! (" + this.health + "/" + this.maxHealth + ")";
+        }
+    }
+}
+
+var hero = Character("Knight", 100, 15);
+var monster = Character("Dragon", 50, 10);
+
+hero.attackTarget(monster);
+monster.attackTarget(hero);
+hero.attackTarget(monster);
+monster.attackTarget(hero);
+hero.attackTarget(monster);
+hero.attackTarget(monster);
+hero.heal(20);
+print "";
+
+// ============================================
+// EXAMPLE 3: Stack Data Structure
+// ============================================
+print "=== Stack Data Structure ===";
+
+class Stack {
+    init() {
+        this.size = 0;
+    }
+
+    push(value) {
+        if (this.size == 0) {
+            this.item0 = value;
+        }
+        if (this.size == 1) {
+            this.item1 = value;
+        }
+        if (this.size == 2) {
+            this.item2 = value;
+        }
+        this.size = this.size + 1;
+        print "Pushed: " + value;
+    }
+
+    pop() {
+        if (this.size > 0) {
+            this.size = this.size - 1;
+            var value;
+            if (this.size == 0) {
+                value = this.item0;
+            }
+            if (this.size == 1) {
+                value = this.item1;
+            }
+            if (this.size == 2) {
+                value = this.item2;
+            }
+            print "Popped: " + value;
+            return value;
+        }
+        print "Stack is empty!";
+        return nil;
+    }
+
+    isEmpty() {
+        return this.size == 0;
+    }
+}
+
+var stack = Stack();
+stack.push(10);
+stack.push(20);
+stack.push(30);
+stack.pop();
+stack.pop();
+print "";
+
+// ============================================
+// EXAMPLE 4: Event System
+// ============================================
+print "=== Event System ===";
+
+class Event {
+    init(name) {
+        this.name = name;
+        this.listenerCount = 0;
+    }
+
+    trigger() {
+        print "Event '" + this.name + "' triggered!";
+        print "Notifying " + this.listenerCount + " listeners...";
+    }
+
+    subscribe() {
+        this.listenerCount = this.listenerCount + 1;
+        print "Subscribed to " + this.name;
+    }
+}
+
+var onPlayerJoin = Event("PlayerJoin");
+onPlayerJoin.subscribe();
+onPlayerJoin.subscribe();
+onPlayerJoin.subscribe();
+onPlayerJoin.trigger();
+print "";
+
+// ============================================
+// EXAMPLE 5: Factory Pattern
+// ============================================
+print "=== Factory Pattern ===";
+
+class Weapon {
+    init(name, damage, type) {
+        this.name = name;
+        this.damage = damage;
+        this.type = type;
+    }
+
+    describe() {
+        print this.type + ": " + this.name + " (Damage: " + this.damage + ")";
+    }
+}
+
+fun createSword() {
+    return Weapon("Iron Sword", 25, "Melee");
+}
+
+fun createBow() {
+    return Weapon("Longbow", 15, "Ranged");
+}
+
+fun createStaff() {
+    return Weapon("Magic Staff", 30, "Magic");
+}
+
+var weapon1 = createSword();
+var weapon2 = createBow();
+var weapon3 = createStaff();
+
+weapon1.describe();
+weapon2.describe();
+weapon3.describe();
+print "";
+
+// ============================================
+// EXAMPLE 6: Simple State Machine
+// ============================================
+print "=== State Machine ===";
+
+class Door {
+    init() {
+        this.isOpen = false;
+        this.isLocked = false;
+    }
+
+    open() {
+        if (this.isLocked) {
+            print "Door is locked!";
+            return;
+        }
+        if (this.isOpen) {
+            print "Door is already open";
+            return;
+        }
+        this.isOpen = true;
+        print "Door opened";
+    }
+
+    close() {
+        if (!this.isOpen) {
+            print "Door is already closed";
+            return;
+        }
+        this.isOpen = false;
+        print "Door closed";
+    }
+
+    lock() {
+        if (this.isOpen) {
+            print "Cannot lock an open door!";
+            return;
+        }
+        this.isLocked = true;
+        print "Door locked";
+    }
+
+    unlock() {
+        if (!this.isLocked) {
+            print "Door is not locked";
+            return;
+        }
+        this.isLocked = false;
+        print "Door unlocked";
+    }
+}
+
+var frontDoor = Door();
+frontDoor.open();
+frontDoor.close();
+frontDoor.lock();
+frontDoor.open();  // Should fail
+frontDoor.unlock();
+frontDoor.open();
+print "";
+
+print "=== Examples Complete! ===";

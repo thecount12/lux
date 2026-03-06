@@ -1,5 +1,4 @@
 #include "lux.h"
-#include "types.h"
 #include "common.h"
 #include "value.h"
 #include "chunk.h"
@@ -470,15 +469,26 @@ run(void)
 			break;
 
 		case OP_ADD:
-			if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
-				concatenate();
-			} else if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+			if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
+				/* Both are numbers, add them numerically */
 				b = pop();
 				a = pop();
 				push(NUMBER_VAL(AS_NUMBER(a) + AS_NUMBER(b)));
 			} else {
-				runtimeError("Operands must be two numbers or two strings.");
-				return INTERPRET_RUNTIME_ERROR;
+				/* At least one is not a number, convert both to strings and concatenate */
+				b = pop();
+				a = pop();
+				ObjString* bStr = valueToString(b);
+				ObjString* aStr = valueToString(a);
+				
+				int length = aStr->length + bStr->length;
+				char* chars = ALLOCATE(char, length + 1);
+				memcpy(chars, aStr->chars, aStr->length);
+				memcpy(chars + aStr->length, bStr->chars, bStr->length);
+				chars[length] = '\0';
+				
+				ObjString* result = takeString(chars, length);
+				push(OBJ_VAL(result));
 			}
 			break;	
 

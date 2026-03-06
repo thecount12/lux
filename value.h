@@ -5,6 +5,7 @@
  * representation for all translation units. This header provides the APIs that
  * operate on those types. */
 
+#ifndef NAN_BOXING
 Value obj_val(Obj* v);
 
 /* Cast to double handles union initialization for either field */
@@ -16,6 +17,7 @@ Value number_val(double v);
 #define NIL_VAL     (nil_val())
 #define NUMBER_VAL(v) (number_val(v))
 #define OBJ_VAL(object) (obj_val((Obj*)(object)))
+#endif
 
 bool valuesEqual(Value a, Value b);
 void initValueArray(ValueArray* array);
