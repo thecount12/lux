@@ -139,6 +139,8 @@ make
 8.out getting_started.lux  # START HERE - Learn the basics
 8.out demo.lux             # Simple working demo
 8.out test_concat.lux      # String concatenation examples
+8.out tests/test_fileio.lux    # File I/O examples
+8.out tests/test_fileops.lux   # Complete file operations test
 8.out ch29-inherit.lux     # Inheritance examples
 8.out closure.lux          # Closure examples
 ```
@@ -153,6 +155,86 @@ Lux now supports **automatic type conversion** with the `+` operator:
 
 Any type (number, boolean, nil) is automatically converted to string when used with `+` and at least one string operand.
 
+## Built-in Functions
+
+### File Operations
+
+Lux includes native file I/O functions for both Plan 9 and POSIX systems:
+
+#### `readFile(path)` → string or nil
+Reads the entire contents of a file and returns it as a string.
+```lux
+var content = readFile("data.txt");
+if (content != nil) {
+    print content;
+} else {
+    print "Failed to read file";
+}
+```
+
+#### `writeFile(path, content)` → bool
+Writes content to a file, creating it if it doesn't exist or truncating if it does.
+```lux
+if (writeFile("output.txt", "Hello, World!")) {
+    print "File written successfully";
+}
+```
+
+#### `appendFile(path, content)` → bool
+Appends content to the end of an existing file.
+```lux
+if (appendFile("log.txt", "New log entry\n")) {
+    print "Log updated";
+}
+```
+
+#### `deleteFile(path)` → bool
+Deletes a file from the filesystem.
+```lux
+if (deleteFile("temp.txt")) {
+    print "File deleted";
+}
+```
+
+#### `fileExists(path)` → bool
+Checks if a file exists.
+```lux
+if (fileExists("config.txt")) {
+    var config = readFile("config.txt");
+}
+```
+
+### Directory Operations
+
+#### `createDir(path)` → bool
+Creates a new directory.
+```lux
+if (createDir("data")) {
+    print "Directory created";
+}
+```
+
+#### `listDir(path)` → string or nil
+Lists directory contents as a newline-separated string.
+```lux
+var files = listDir(".");
+if (files != nil) {
+    print "Files in current directory:";
+    print files;
+}
+```
+
+### Time Function
+
+#### `clock()` → number
+Returns the current time in seconds (useful for benchmarking).
+```lux
+var start = clock();
+// ... some code ...
+var elapsed = clock() - start;
+print "Elapsed: " + elapsed + " seconds";
+```
+
 ## Performance
 
 NaN boxing is enabled by default for better performance. This uses a clever bit manipulation technique to store type information within IEEE 754 double values, reducing memory usage and improving cache performance.
@@ -165,11 +247,13 @@ To disable NaN boxing, edit `common.h` and comment out:
 ## Usage Tips
 
 1. **Flexible concatenation**: Mix any type with strings using `+` (automatic conversion)
-2. **No built-in collections**: Use object properties or create your own linked structures
-3. **No exceptions**: Use return values to indicate success/failure
-4. **Global scope**: All functions and classes are global
-5. **Numeric addition**: `+` performs addition when both operands are numbers
-6. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
+2. **File I/O**: Use built-in functions for reading/writing files and managing directories
+3. **Error handling**: File operations return `nil` or `false` on failure - always check return values
+4. **No built-in collections**: Use object properties or create your own linked structures
+5. **No exceptions**: Use return values to indicate success/failure
+6. **Global scope**: All functions and classes are global
+7. **Numeric addition**: `+` performs addition when both operands are numbers
+8. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
 
 ## Example Programs
 
@@ -207,6 +291,34 @@ class Counter {
 
 var c = Counter();
 print c.add(5).add(3).get();  // 8
+```
+
+### File I/O Example
+```lux
+// Write data to a file
+var data = "User: Alice\nScore: 100\n";
+if (writeFile("score.txt", data)) {
+    print "Score saved!";
+}
+
+// Read it back
+var saved = readFile("score.txt");
+if (saved != nil) {
+    print "Loaded data:";
+    print saved;
+}
+
+// Append more data
+appendFile("score.txt", "User: Bob\nScore: 95\n");
+
+// List files in directory
+createDir("saves");
+writeFile("saves/game1.txt", "Level 1 complete");
+writeFile("saves/game2.txt", "Level 2 complete");
+
+var files = listDir("saves");
+print "Save files:";
+print files;
 ```
 
 ## Learning Resources

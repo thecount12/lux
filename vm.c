@@ -27,6 +27,246 @@ clockNative(int argCount, Value* args)
     return NUMBER_VAL((double)nsec() / 1000000000.0);
 }
 
+/* Native function to read a file: readFile(path) -> string */
+static Value 
+readFileNative(int argCount, Value* args)
+{
+	int fd;
+	long len;
+	char *buf;
+	Dir *d;
+	long bytesRead;
+	Value result;
+
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	char* path = AS_CSTRING(args[0]);
+	
+	/* open() returns a file descriptor integer */
+	fd = open(path, OREAD);
+	if(fd < 0)
+		return NIL_VAL;
+
+	/* dirfstat is the Plan 9 way to get file metadata like length */
+	d = dirfstat(fd);
+	if(d == nil) {
+		close(fd);
+		return NIL_VAL;
+	}
+	len = d->length;
+	free(d);
+
+	buf = malloc(len + 1);
+	if(buf == nil) {
+		close(fd);
+		return NIL_VAL;
+	}
+
+	bytesRead = read(fd, buf, len);
+	if(bytesRead < 0) {
+		free(buf);
+		close(fd);
+		return NIL_VAL;
+	}
+	
+	buf[bytesRead] = '\0';
+	close(fd);
+
+	/* Wrap the raw C string into a Lux Value */
+	result = OBJ_VAL(copyString(buf, (int)bytesRead));
+	free(buf);
+	return result;
+}
+
+/* Native function to write a file: writeFile(path, content) -> bool */
+static Value 
+writeFileNative(int argCount, Value* args)
+{
+	int fd;
+	char* path;
+	char* content;
+	int contentLen;
+	long bytesWritten;
+
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return BOOL_VAL(false);
+
+	path = AS_CSTRING(args[0]);
+	content = AS_CSTRING(args[1]);
+	contentLen = AS_STRING(args[1])->length;
+
+	/* create() with OWRITE creates or truncates the file */
+	fd = create(path, OWRITE, 0666);
+	if(fd < 0)
+		return BOOL_VAL(false);
+
+	bytesWritten = write(fd, content, contentLen);
+	close(fd);
+
+	if(bytesWritten != contentLen)
+		return BOOL_VAL(false);
+
+	return BOOL_VAL(true);
+}
+
+/* Native function to append to a file: appendFile(path, content) -> bool */
+static Value 
+appendFileNative(int argCount, Value* args)
+{
+	int fd;
+	char* path;
+	char* content;
+	int contentLen;
+	long bytesWritten;
+
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return BOOL_VAL(false);
+
+	path = AS_CSTRING(args[0]);
+	content = AS_CSTRING(args[1]);
+	contentLen = AS_STRING(args[1])->length;
+
+	/* open with OWRITE, file must exist */
+	fd = open(path, OWRITE);
+	if(fd < 0)
+		return BOOL_VAL(false);
+
+	/* seek to end of file */
+	seek(fd, 0, 2);
+
+	bytesWritten = write(fd, content, contentLen);
+	close(fd);
+
+	if(bytesWritten != contentLen)
+		return BOOL_VAL(false);
+
+	return BOOL_VAL(true);
+}
+
+/* Native function to delete a file: deleteFile(path) -> bool */
+static Value 
+deleteFileNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return BOOL_VAL(false);
+
+	char* path = AS_CSTRING(args[0]);
+	
+	/* remove() works for files and empty directories */
+	if(remove(path) < 0)
+		return BOOL_VAL(false);
+
+	return BOOL_VAL(true);
+}
+
+/* Native function to check if file exists: fileExists(path) -> bool */
+static Value 
+fileExistsNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return BOOL_VAL(false);
+
+	char* path = AS_CSTRING(args[0]);
+	
+	/* access() with AEXIST checks if file exists */
+	if(access(path, AEXIST) == 0)
+		return BOOL_VAL(true);
+	
+	return BOOL_VAL(false);
+}
+
+/* Native function to create a directory: createDir(path) -> bool */
+static Value 
+createDirNative(int argCount, Value* args)
+{
+	int fd;
+
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return BOOL_VAL(false);
+
+	char* path = AS_CSTRING(args[0]);
+	
+	/* create with DMDIR flag creates a directory */
+	fd = create(path, OREAD, DMDIR | 0775);
+	if(fd < 0)
+		return BOOL_VAL(false);
+
+	close(fd);
+	return BOOL_VAL(true);
+}
+
+/* Native function to list directory contents: listDir(path) -> string */
+static Value 
+listDirNative(int argCount, Value* args)
+{
+	int fd, n, i;
+	Dir *dirs;
+	char* path;
+	char* result;
+	int resultLen, resultCap;
+	Value retval;
+
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	path = AS_CSTRING(args[0]);
+	
+	/* open directory for reading */
+	fd = open(path, OREAD);
+	if(fd < 0)
+		return NIL_VAL;
+
+	/* allocate buffer for result string */
+	resultCap = 1024;
+	result = malloc(resultCap);
+	if(result == nil) {
+		close(fd);
+		return NIL_VAL;
+	}
+	resultLen = 0;
+	result[0] = '\0';
+
+	/* read directory entries */
+	while((n = dirread(fd, &dirs)) > 0) {
+		for(i = 0; i < n; i++) {
+			int nameLen = strlen(dirs[i].name);
+			
+			/* ensure buffer is large enough */
+			while(resultLen + nameLen + 2 > resultCap) {
+				resultCap *= 2;
+				char* newResult = realloc(result, resultCap);
+				if(newResult == nil) {
+					free(dirs);
+					free(result);
+					close(fd);
+					return NIL_VAL;
+				}
+				result = newResult;
+			}
+			
+			/* append name and newline */
+			strcpy(result + resultLen, dirs[i].name);
+			resultLen += nameLen;
+			result[resultLen++] = '\n';
+			result[resultLen] = '\0';
+		}
+		free(dirs);
+	}
+
+	close(fd);
+
+	/* remove trailing newline if present */
+	if(resultLen > 0 && result[resultLen-1] == '\n') {
+		result[resultLen-1] = '\0';
+		resultLen--;
+	}
+
+	retval = OBJ_VAL(copyString(result, resultLen));
+	free(result);
+	return retval;
+}
+
 
 static void 
 resetStack(void)
@@ -97,6 +337,13 @@ initVM(void)
 	vm.initString = copyString("init", 4);
 
 	defineNative("clock", clockNative);
+	defineNative("readFile", readFileNative);
+	defineNative("writeFile", writeFileNative);
+	defineNative("appendFile", appendFileNative);
+	defineNative("deleteFile", deleteFileNative);
+	defineNative("fileExists", fileExistsNative);
+	defineNative("createDir", createDirNative);
+	defineNative("listDir", listDirNative);
 }
 
 void 
