@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <curl/curl.h>
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
@@ -515,6 +516,156 @@ static Value toJSONNative(int argCount, Value* args) {
 	return result;
 }
 
+/* HTTP support using libcurl */
+typedef struct {
+	char* data;
+	size_t size;
+} HttpResponse;
+
+static size_t writeCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+	size_t realsize = size * nmemb;
+	HttpResponse* resp = (HttpResponse*)userp;
+	
+	char* ptr = realloc(resp->data, resp->size + realsize + 1);
+	if (ptr == NULL) {
+		return 0; /* out of memory */
+	}
+	
+	resp->data = ptr;
+	memcpy(&(resp->data[resp->size]), contents, realsize);
+	resp->size += realsize;
+	resp->data[resp->size] = '\0';
+	
+	return realsize;
+}
+
+/* httpGet(url) -> string or nil */
+static Value httpGetNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0])) {
+		return NIL_VAL;
+	}
+	
+	char* url = AS_CSTRING(args[0]);
+	CURL* curl = curl_easy_init();
+	if (!curl) {
+		return NIL_VAL;
+	}
+	
+	HttpResponse resp = {0};
+	resp.data = malloc(1);
+	resp.size = 0;
+	
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&resp);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "lux/1.0");
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+	
+	CURLcode res = curl_easy_perform(curl);
+	curl_easy_cleanup(curl);
+	
+	if (res != CURLE_OK) {
+		free(resp.data);
+		return NIL_VAL;
+	}
+	
+	Value result = OBJ_VAL(copyString(resp.data, (int)resp.size));
+	free(resp.data);
+	return result;
+}
+
+/* httpPost(url, body) -> string or nil */
+static Value httpPostNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1])) {
+		return NIL_VAL;
+	}
+	
+	char* url = AS_CSTRING(args[0]);
+	char* body = AS_CSTRING(args[1]);
+	
+	CURL* curl = curl_easy_init();
+	if (!curl) {
+		return NIL_VAL;
+	}
+	
+	HttpResponse resp = {0};
+	resp.data = malloc(1);
+	resp.size = 0;
+	
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&resp);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "lux/1.0");
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+	
+	/* Set Content-Type header for JSON */
+	struct curl_slist* headers = NULL;
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	
+	CURLcode res = curl_easy_perform(curl);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	
+	if (res != CURLE_OK) {
+		free(resp.data);
+		return NIL_VAL;
+	}
+	
+	Value result = OBJ_VAL(copyString(resp.data, (int)resp.size));
+	free(resp.data);
+	return result;
+}
+
+/* httpPut(url, body) -> string or nil */
+static Value httpPutNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1])) {
+		return NIL_VAL;
+	}
+	
+	char* url = AS_CSTRING(args[0]);
+	char* body = AS_CSTRING(args[1]);
+	
+	CURL* curl = curl_easy_init();
+	if (!curl) {
+		return NIL_VAL;
+	}
+	
+	HttpResponse resp = {0};
+	resp.data = malloc(1);
+	resp.size = 0;
+	
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&resp);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "lux/1.0");
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+	
+	/* Set Content-Type header for JSON */
+	struct curl_slist* headers = NULL;
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	
+	CURLcode res = curl_easy_perform(curl);
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	
+	if (res != CURLE_OK) {
+		free(resp.data);
+		return NIL_VAL;
+	}
+	
+	Value result = OBJ_VAL(copyString(resp.data, (int)resp.size));
+	free(resp.data);
+	return result;
+}
+
 static void resetStack() {
 	vm.stackTop = vm.stack;
 	vm.frameCount = 0;
@@ -579,6 +730,9 @@ void initVM() {
 	defineNative("listDir", listDirNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
+	defineNative("httpGet", httpGetNative);
+	defineNative("httpPost", httpPostNative);
+	defineNative("httpPut", httpPutNative);
 }
 
 void freeVM() {

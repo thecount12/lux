@@ -1,0 +1,89 @@
+// HTTP Test - works on both Plan 9 and POSIX
+// Plan 9: HTTP only (no HTTPS support yet)
+// POSIX: Both HTTP and HTTPS via libcurl
+
+print "=== HTTP Test (Cross-Platform) ===";
+print "";
+
+// Test 1: Simple HTTP GET (works on both platforms)
+print "Test 1: HTTP GET request";
+var response = httpGet("http://httpbin.org/get");
+if (response != nil) {
+    print "✓ GET request successful";
+    var data = parseJSON(response);
+    if (data != nil) {
+        print "✓ Response parsed as JSON";
+        print "  URL: " + data.url;
+    }
+} else {
+    print "✗ GET request failed";
+}
+print "";
+
+// Test 2: HTTP POST (works on both platforms)
+print "Test 2: HTTP POST request";
+class TestData {
+    init(name, value) {
+        this.name = name;
+        this.value = value;
+    }
+}
+
+var payload = TestData("plan9-test", 42);
+var jsonBody = toJSON(payload);
+if (jsonBody != nil) {
+    var postResp = httpPost("http://httpbin.org/post", jsonBody);
+    if (postResp != nil) {
+        print "✓ POST request successful";
+        var postData = parseJSON(postResp);
+        if (postData != nil) {
+            print "✓ Response parsed as JSON";
+            var sentData = parseJSON(postData.data);
+            if (sentData != nil) {
+                print "  Echoed name: " + sentData.name;
+                print "  Echoed value: " + sentData.value;
+            }
+        }
+    } else {
+        print "✗ POST request failed";
+    }
+}
+print "";
+
+// Test 3: HTTP PUT (works on both platforms)
+print "Test 3: HTTP PUT request";
+class UpdateData {
+    init(id, status) {
+        this.id = id;
+        this.status = status;
+    }
+}
+
+var updatePayload = UpdateData(999, "plan9-active");
+var updateJson = toJSON(updatePayload);
+if (updateJson != nil) {
+    var putResp = httpPut("http://httpbin.org/put", updateJson);
+    if (putResp != nil) {
+        print "✓ PUT request successful";
+        var putData = parseJSON(putResp);
+        if (putData != nil) {
+            print "✓ Response parsed as JSON";
+            var sentData = parseJSON(putData.data);
+            if (sentData != nil) {
+                print "  Updated ID: " + sentData.id;
+                print "  New status: " + sentData.status;
+            }
+        }
+    } else {
+        print "✗ PUT request failed";
+    }
+}
+print "";
+
+print "=== HTTP Test Complete ===";
+print "";
+print "Implementation notes:";
+print "- Plan 9: Uses dial() with manual HTTP protocol";
+print "- Plan 9: HTTP only (port 80), HTTPS requires encryption layer";
+print "- POSIX: Uses libcurl with full HTTP/HTTPS support";
+print "- Both: 30-second timeouts, automatic JSON content-type";

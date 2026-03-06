@@ -449,7 +449,10 @@ static Value parseJsonObject(JsonParser* parser) {
 			skipWhitespace(parser);
 			Value value = parseJsonValue(parser);
 			
+			/* Protect value from GC during tableSet */
+			push(value);
 			tableSet(&instance->fields, key, value);
+			pop();
 			pop(); /* key */
 			
 			skipWhitespace(parser);
@@ -608,6 +611,332 @@ toJSONNative(int argCount, Value* args)
 	return result;
 }
 
+/* HTTP support for Plan 9 using dial() and manual HTTP protocol */
+
+/* Parse URL and extract host, port, path, and https flag */
+typedef struct {
+	char host[256];
+	char port[16];
+	char path[1024];
+	int ishttps;
+} UrlParts;
+
+static int
+parseUrl(char* url, UrlParts* parts)
+{
+	char* p = url;
+	
+	/* Check for https:// or http:// */
+	if (strncmp(p, "https://", 8) == 0) {
+		parts->ishttps = 1;
+		p += 8;
+		strcpy(parts->port, "443");
+	} else if (strncmp(p, "http://", 7) == 0) {
+		parts->ishttps = 0;
+		p += 7;
+		strcpy(parts->port, "80");
+	} else {
+		return -1;
+	}
+	
+	/* Extract host (up to : or /) */
+	char* hostEnd = p;
+	while (*hostEnd && *hostEnd != ':' && *hostEnd != '/')
+		hostEnd++;
+	
+	int hostLen = hostEnd - p;
+	if (hostLen >= 256) return -1;
+	strncpy(parts->host, p, hostLen);
+	parts->host[hostLen] = '\0';
+	
+	/* Check for explicit port */
+	if (*hostEnd == ':') {
+		p = hostEnd + 1;
+		char* portEnd = p;
+		while (*portEnd && *portEnd != '/')
+			portEnd++;
+		int portLen = portEnd - p;
+		if (portLen >= 16) return -1;
+		strncpy(parts->port, p, portLen);
+		parts->port[portLen] = '\0';
+		hostEnd = portEnd;
+	}
+	
+	/* Extract path */
+	if (*hostEnd == '/') {
+		strncpy(parts->path, hostEnd, 1023);
+		parts->path[1023] = '\0';
+	} else {
+		strcpy(parts->path, "/");
+	}
+	
+	return 0;
+}
+
+/* Read HTTP response and extract body */
+static char*
+readHttpResponse(int fd, int* outLen)
+{
+	int cap = 4096;
+	int len = 0;
+	char* buffer = malloc(cap);
+	if (buffer == nil) return nil;
+	
+	/* Read response */
+	while (1) {
+		if (len >= cap - 1) {
+			cap *= 2;
+			char* newbuf = realloc(buffer, cap);
+			if (newbuf == nil) {
+				free(buffer);
+				return nil;
+			}
+			buffer = newbuf;
+		}
+		
+		int n = read(fd, buffer + len, cap - len - 1);
+		if (n <= 0) break;
+		len += n;
+		
+		/* Check if we have complete headers (look for \r\n\r\n or \n\n) */
+		if (len >= 4 && strstr(buffer, "\r\n\r\n") != nil)
+			break;
+		if (len >= 2 && strstr(buffer, "\n\n") != nil)
+			break;
+	}
+	
+	buffer[len] = '\0';
+	
+	/* Find start of body (after headers) */
+	char* bodyStart = strstr(buffer, "\r\n\r\n");
+	if (bodyStart != nil) {
+		bodyStart += 4;
+	} else {
+		bodyStart = strstr(buffer, "\n\n");
+		if (bodyStart != nil)
+			bodyStart += 2;
+		else
+			bodyStart = buffer; /* No headers? */
+	}
+	
+	/* Continue reading body if Content-Length specified */
+	/* For simplicity, we'll read until connection closes */
+	int bodyOffset = bodyStart - buffer;
+	while (1) {
+		if (len >= cap - 1) {
+			cap *= 2;
+			char* newbuf = realloc(buffer, cap);
+			if (newbuf == nil) {
+				free(buffer);
+				return nil;
+			}
+			buffer = newbuf;
+			bodyStart = buffer + bodyOffset;
+		}
+		
+		int n = read(fd, buffer + len, cap - len - 1);
+		if (n <= 0) break;
+		len += n;
+	}
+	
+	buffer[len] = '\0';
+	
+	/* Extract just the body */
+	bodyStart = buffer + bodyOffset;
+	int bodyLen = len - bodyOffset;
+	char* body = malloc(bodyLen + 1);
+	if (body == nil) {
+		free(buffer);
+		return nil;
+	}
+	memcpy(body, bodyStart, bodyLen);
+	body[bodyLen] = '\0';
+	
+	*outLen = bodyLen;
+	free(buffer);
+	return body;
+}
+
+/* httpGet(url) -> string or nil */
+static Value 
+httpGetNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+	
+	char* url = AS_CSTRING(args[0]);
+	UrlParts parts;
+	
+	if (parseUrl(url, &parts) < 0)
+		return NIL_VAL;
+	
+	if (parts.ishttps) {
+		fprint(2, "HTTPS not yet supported on Plan 9 (use http://)\n");
+		return NIL_VAL;
+	}
+	
+	/* Dial format: "tcp!host!port" */
+	char dialAddr[512];
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
+	
+	int fd = dial(dialAddr, nil, nil, nil);
+	if (fd < 0)
+		return NIL_VAL;
+	
+	/* Send HTTP GET request */
+	char request[2048];
+	snprint(request, sizeof(request),
+		"GET %s HTTP/1.0\r\n"
+		"Host: %s\r\n"
+		"User-Agent: lux/1.0\r\n"
+		"Connection: close\r\n"
+		"\r\n",
+		parts.path, parts.host);
+	
+	if (write(fd, request, strlen(request)) < 0) {
+		close(fd);
+		return NIL_VAL;
+	}
+	
+	/* Read response */
+	int bodyLen;
+	char* body = readHttpResponse(fd, &bodyLen);
+	close(fd);
+	
+	if (body == nil)
+		return NIL_VAL;
+	
+	Value result = OBJ_VAL(copyString(body, bodyLen));
+	free(body);
+	return result;
+}
+
+/* httpPost(url, body) -> string or nil */
+static Value 
+httpPostNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	
+	char* url = AS_CSTRING(args[0]);
+	char* postBody = AS_CSTRING(args[1]);
+	int postBodyLen = strlen(postBody);
+	
+	UrlParts parts;
+	if (parseUrl(url, &parts) < 0)
+		return NIL_VAL;
+	
+	if (parts.ishttps) {
+		fprint(2, "HTTPS not yet supported on Plan 9 (use http://)\n");
+		return NIL_VAL;
+	}
+	
+	/* Dial */
+	char dialAddr[512];
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
+	
+	int fd = dial(dialAddr, nil, nil, nil);
+	if (fd < 0)
+		return NIL_VAL;
+	
+	/* Send HTTP POST request */
+	char request[4096];
+	int reqLen = snprint(request, sizeof(request),
+		"POST %s HTTP/1.0\r\n"
+		"Host: %s\r\n"
+		"User-Agent: lux/1.0\r\n"
+		"Content-Type: application/json\r\n"
+		"Content-Length: %d\r\n"
+		"Connection: close\r\n"
+		"\r\n",
+		parts.path, parts.host, postBodyLen);
+	
+	if (write(fd, request, reqLen) < 0) {
+		close(fd);
+		return NIL_VAL;
+	}
+	
+	if (write(fd, postBody, postBodyLen) < 0) {
+		close(fd);
+		return NIL_VAL;
+	}
+	
+	/* Read response */
+	int bodyLen;
+	char* respBody = readHttpResponse(fd, &bodyLen);
+	close(fd);
+	
+	if (respBody == nil)
+		return NIL_VAL;
+	
+	Value result = OBJ_VAL(copyString(respBody, bodyLen));
+	free(respBody);
+	return result;
+}
+
+/* httpPut(url, body) -> string or nil */
+static Value 
+httpPutNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	
+	char* url = AS_CSTRING(args[0]);
+	char* putBody = AS_CSTRING(args[1]);
+	int putBodyLen = strlen(putBody);
+	
+	UrlParts parts;
+	if (parseUrl(url, &parts) < 0)
+		return NIL_VAL;
+	
+	if (parts.ishttps) {
+		fprint(2, "HTTPS not yet supported on Plan 9 (use http://)\n");
+		return NIL_VAL;
+	}
+	
+	/* Dial */
+	char dialAddr[512];
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
+	
+	int fd = dial(dialAddr, nil, nil, nil);
+	if (fd < 0)
+		return NIL_VAL;
+	
+	/* Send HTTP PUT request */
+	char request[4096];
+	int reqLen = snprint(request, sizeof(request),
+		"PUT %s HTTP/1.0\r\n"
+		"Host: %s\r\n"
+		"User-Agent: lux/1.0\r\n"
+		"Content-Type: application/json\r\n"
+		"Content-Length: %d\r\n"
+		"Connection: close\r\n"
+		"\r\n",
+		parts.path, parts.host, putBodyLen);
+	
+	if (write(fd, request, reqLen) < 0) {
+		close(fd);
+		return NIL_VAL;
+	}
+	
+	if (write(fd, putBody, putBodyLen) < 0) {
+		close(fd);
+		return NIL_VAL;
+	}
+	
+	/* Read response */
+	int bodyLen;
+	char* respBody = readHttpResponse(fd, &bodyLen);
+	close(fd);
+	
+	if (respBody == nil)
+		return NIL_VAL;
+	
+	Value result = OBJ_VAL(copyString(respBody, bodyLen));
+	free(respBody);
+	return result;
+}
+
 
 static void 
 resetStack(void)
@@ -687,6 +1016,9 @@ initVM(void)
 	defineNative("listDir", listDirNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
+	defineNative("httpGet", httpGetNative);
+	defineNative("httpPost", httpPostNative);
+	defineNative("httpPut", httpPutNative);
 }
 
 void 
