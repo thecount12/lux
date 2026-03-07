@@ -850,6 +850,7 @@ ParseRule rules[] = {
 	{nil,      nil,    PREC_NONE},       /* TOKEN_FOR */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_FUN */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_IF */
+	{nil,      nil,    PREC_NONE},       /* TOKEN_IMPORT */
 	{literal,  nil,    PREC_NONE},       /* TOKEN_NIL */
 	{nil,      or_,    PREC_OR},       /* TOKEN_OR */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_PRINT */
