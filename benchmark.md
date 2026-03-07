@@ -104,6 +104,20 @@ Modern clang keeps the loop counter entirely in a register across function calls
 
 This explains why **Plan 9 C (8.3 ms) is ~4100× slower than macOS POSIX C (2 μs)** in the harness, despite being "native" code—the compiler itself is the limiting factor.
 
+**Optimization Attempt: Register Hints**
+
+Created `fib_bench_plan9_opt.c` with explicit `register` keywords on loop counter and accumulator:
+
+```c
+register uvlong checksum = 0;
+register int i;
+for (i = 0; i < ROUNDS; i++) {
+    checksum += fib_fast(N);
+}
+```
+
+Result: **6.7 ms** (down from 8.3 ms, ~19% improvement). The hints reduced spilling somewhat but 6c still performs stack operations across call boundaries due to its ABI prologue/epilogue requirements. The improvement plateaus because the `register` keyword is merely a hint; 6c's architecture doesn't allow true interprocedural register preservation within its calling convention.
+
 ## Benchmark Files
 
 - `benchmark/fib_bench.py`
