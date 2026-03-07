@@ -23,6 +23,7 @@ typedef int bool;
 typedef struct VM VM;
 typedef struct Obj Obj;
 typedef struct ObjString ObjString;
+typedef struct ObjArray ObjArray;
 typedef struct ObjUpvalue ObjUpvalue;
 typedef struct ObjClosure ObjClosure;
 typedef struct ObjBoundMethod ObjBoundMethod;
@@ -154,7 +155,10 @@ typedef enum {
     OP_RETURN,
 	OP_CLASS,
 	OP_INHERIT,
-	OP_METHOD
+	OP_METHOD,
+	OP_ARRAY,
+	OP_INDEX_SUBSCR,
+	OP_STORE_SUBSCR
 } OpCode;
 
 /* Chunk struct */
@@ -203,6 +207,7 @@ struct VM {
 
 /* Object types */
 typedef enum {
+	OBJ_ARRAY,
 	OBJ_BOUND_METHOD,
 	OBJ_CLASS,
 	OBJ_CLOSURE,
@@ -241,6 +246,13 @@ struct ObjString {
     int length;
     char* chars;
 	unsigned long hash;
+};
+
+struct ObjArray {
+	Obj obj;
+	int count;
+	int capacity;
+	Value* elements;
 };
 
 struct ObjUpvalue {

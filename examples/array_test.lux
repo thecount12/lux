@@ -1,0 +1,15 @@
+// Simple array test
+print "Testing arrays...";
+
+var arr = [1, 2, 3];
+print "Array created";
+print "First: " + arr[0];
+print "Length: " + arr.length;
+
+var i = 0;
+while (i < arr.length) {
+    print arr[i];
+    i = i + 1;
+}
+
+print "Test complete";

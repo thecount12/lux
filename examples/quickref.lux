@@ -196,8 +196,11 @@ print "";
 // ============================================
 print "--- Syntax Notes ---";
 
-// 1. No arrays/lists built-in
-//    Use properties with numbered names or linked structures
+// 1. Arrays are supported with bracket syntax
+var arr = [1, 2, 3, 4, 5];
+print "Array: " + arr;
+print "First element: " + arr[0];
+print "Array length: " + arr.length;
 
 // 2. No hash maps built-in
 //    Use object properties for key-value storage
@@ -212,6 +215,8 @@ print "--- Syntax Notes ---";
 // 6. No exception handling - use return values for errors
 
 print "Key Points:";
+print "- Arrays support indexing with []";
+print "- Use .length property to get array size";
 print "- Use + to concatenate any types";
 print "- Closures capture outer variables";
 print "- Classes support single inheritance";

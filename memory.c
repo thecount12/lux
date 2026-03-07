@@ -107,6 +107,16 @@ blackenObject(Obj* object)
 #endif
 
 	switch (object->type) {
+		case OBJ_ARRAY: {
+			ObjArray* array;
+			int i;
+			
+			array = (ObjArray*)object;
+			for (i = 0; i < array->count; i++) {
+				markValue(array->elements[i]);
+			}
+			break;
+		}
 		case OBJ_BOUND_METHOD: {
 			ObjBoundMethod* bound = (ObjBoundMethod*)object;
 			markValue(bound->receiver);
@@ -120,10 +130,13 @@ blackenObject(Obj* object)
 			break;
 		}		
 		case OBJ_CLOSURE: {
-			ObjClosure* closure = (ObjClosure*)object;
+			ObjClosure* closure;
+			int i;
+			
+			closure = (ObjClosure*)object;
 			markObject((Obj*)closure->function);
 			if (closure->upvalues != nil) {
-				for (int i = 0; i < closure->upvalueCount; i++) 			{
+				for (i = 0; i < closure->upvalueCount; i++) 			{
 					markObject((Obj*)closure->upvalues[i]);
 				}
 			}
@@ -158,6 +171,12 @@ freeObject(Obj* object)
 #endif
 
 	switch (object->type) {
+		case OBJ_ARRAY: {
+			ObjArray* array = (ObjArray*)object;
+			reallocate(array->elements, sizeof(Value) * array->capacity, 0);
+			reallocate(object, sizeof(ObjArray), 0);
+			break;
+		}
 		case OBJ_BOUND_METHOD:
 			//FREE(ObjBoundMethod, object);
 			reallocate(object, sizeof(ObjBoundMethod), 0);

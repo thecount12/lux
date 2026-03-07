@@ -554,6 +554,45 @@ literal(bool canAssign)
 }
 
 static void
+array(bool canAssign)
+{
+	int itemCount = 0;
+	
+	if (!check(TOKEN_RIGHT_BRACKET)) {
+		do {
+			if (check(TOKEN_RIGHT_BRACKET)) {
+				/* Trailing comma case */
+				break;
+			}
+			
+			expression();
+			
+			if (itemCount == 255) {
+				error("Cannot have more than 255 items in array literal.");
+			}
+			itemCount++;
+		} while (match(TOKEN_COMMA));
+	}
+	
+	consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array elements.");
+	emitBytes(OP_ARRAY, (uchar)itemCount);
+}
+
+static void
+subscript(bool canAssign)
+{
+	expression();
+	consume(TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
+	
+	if (canAssign && match(TOKEN_EQUAL)) {
+		expression();
+		emitByte(OP_STORE_SUBSCR);
+	} else {
+		emitByte(OP_INDEX_SUBSCR);
+	}
+}
+
+static void
 grouping(bool canAssign)
 {
 	expression();
@@ -752,6 +791,8 @@ ParseRule rules[] = {
 	{nil,      nil,    PREC_NONE},       /* TOKEN_RIGHT_PAREN */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_LEFT_BRACE */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_RIGHT_BRACE */
+	{array,    subscript, PREC_CALL},    /* TOKEN_LEFT_BRACKET */
+	{nil,      nil,    PREC_NONE},       /* TOKEN_RIGHT_BRACKET */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_COMMA */
 	{nil,      dot,    PREC_CALL},       /* TOKEN_DOT */
 	{unary,    binary, PREC_TERM},       /* TOKEN_MINUS */

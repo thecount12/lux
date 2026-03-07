@@ -213,6 +213,34 @@ var calc = Builder();
 calc.add(5).add(3).multiply(2).result();
 print "";
 
+// ============================================
+// 11. Arrays
+// ============================================
+print "--- Arrays ---";
+
+var nums = [10, 20, 30, 40, 50];
+print "Created array";
+print "First: " + nums[0];
+print "Last: " + nums[4];
+print "Length: " + nums.length;
+
+// Modify element
+nums[2] = 999;
+print "Changed middle to: " + nums[2];
+
+// Iterate
+print "All elements:";
+var j = 0;
+while (j < nums.length) {
+    print "  [" + j + "] = " + nums[j];
+    j = j + 1;
+}
+
+// 2D array
+var grid = [[1, 2], [3, 4]];
+print "Grid[0][1] = " + grid[0][1];
+print "";
+
 print "=== Demo Complete! ===";
 print "Key Features Shown:";
 print "- Variables and types";

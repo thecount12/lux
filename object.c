@@ -52,13 +52,16 @@ newClass(ObjString* name)
 ObjClosure* 
 newClosure(ObjFunction* function) 
 {
-	ObjClosure* closure = ALLOCATE_OBJ(ObjClosure, OBJ_CLOSURE);
+	ObjClosure* closure;
+	int i;
+	
+	closure = ALLOCATE_OBJ(ObjClosure, OBJ_CLOSURE);
 	closure->function = function;
 	closure->upvalueCount = function->upvalueCount;
 	closure->upvalues = nil; /* Initialize to nil before allocation */
 	
 	closure->upvalues = ALLOCATE(ObjUpvalue*, function->upvalueCount);
-	for (int i = 0; i < closure->upvalueCount; i++) {
+	for (i = 0; i < closure->upvalueCount; i++) {
 		closure->upvalues[i] = nil;
 	}
 	
@@ -91,6 +94,34 @@ newNative(NativeFn function)
 	ObjNative* native = ALLOCATE_OBJ(ObjNative, OBJ_NATIVE);
 	native->function = function;
 	return native;
+}
+
+ObjArray*
+newArray(void)
+{
+	ObjArray* array = ALLOCATE_OBJ(ObjArray, OBJ_ARRAY);
+	array->count = 0;
+	array->capacity = 0;
+	array->elements = nil;
+	return array;
+}
+
+void
+writeArray(ObjArray* array, Value value)
+{
+	int oldCapacity;
+	Value* newElements;
+	
+	if (array->capacity < array->count + 1) {
+		oldCapacity = array->capacity;
+		array->capacity = oldCapacity < 8 ? 8 : oldCapacity * 2;
+		newElements = (Value*)reallocate(array->elements, 
+			sizeof(Value) * oldCapacity, 
+			sizeof(Value) * array->capacity);
+		array->elements = newElements;
+	}
+	array->elements[array->count] = value;
+	array->count++;
 }
 
 static ObjString* 
@@ -188,7 +219,20 @@ printFunction(ObjFunction* function)
 
 void printObject(Value value) 
 {
+	int i;
 	switch (OBJ_TYPE(value)) {
+		case OBJ_ARRAY: {
+			ObjArray* array = AS_ARRAY(value);
+			print("[");
+			for (i = 0; i < array->count; i++) {
+				printValue(array->elements[i]);
+				if (i < array->count - 1) {
+					print(", ");
+				}
+			}
+			print("]");
+			break;
+		}
 		case OBJ_BOUND_METHOD:
 			printFunction(AS_BOUND_METHOD(value)->method->function);
 			break;

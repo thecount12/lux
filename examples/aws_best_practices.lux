@@ -1,0 +1,266 @@
+// AWS S3 Best Practices Example
+// Shows secure credential management and common S3 patterns
+
+// BEST PRACTICE: Load credentials from config file instead of hardcoding
+fun loadAwsConfig(configFile) {
+    var configStr = readFile(configFile)
+    if (configStr == nil) {
+        print "Error: Could not read config file: " + configFile
+        return nil
+    }
+    
+    var config = parseJSON(configStr)
+    if (config == nil) {
+        print "Error: Invalid JSON in config file"
+        return nil
+    }
+    
+    // Validate required fields
+    if (config.bucket == nil or config.accessKey == nil or 
+        config.secretKey == nil or config.region == nil) {
+        print "Error: Config missing required fields (bucket, accessKey, secretKey, region)"
+        return nil
+    }
+    
+    return config
+}
+
+// Example config.json structure:
+// {
+//   "bucket": "my-bucket",
+//   "accessKey": "AKIAIOSFODNN7EXAMPLE",
+//   "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+//   "region": "us-east-1",
+//   "sessionToken": ""
+// }
+
+print "=== AWS S3 Best Practices Demo ==="
+print ""
+
+// Load configuration
+var config = loadAwsConfig("aws_config.json")
+if (config == nil) {
+    print "Failed to load AWS configuration"
+    print "Create aws_config.json with your credentials"
+}
+
+// Pattern 1: Safe S3 operations with credential validation
+fun s3ListSafe(config, prefix) {
+    if (config == nil) {
+        return nil
+    }
+    
+    if (config.sessionToken != nil and config.sessionToken != "") {
+        return s3ListObjects(config.bucket, config.accessKey, config.secretKey, 
+                            config.region, prefix, config.sessionToken)
+    } else {
+        return s3ListObjects(config.bucket, config.accessKey, config.secretKey, 
+                            config.region, prefix)
+    }
+}
+
+fun s3GetSafe(config, key) {
+    if (config == nil) {
+        return nil
+    }
+    
+    if (config.sessionToken != nil and config.sessionToken != "") {
+        return s3GetObject(config.bucket, key, config.accessKey, config.secretKey,
+                          config.region, config.sessionToken)
+    } else {
+        return s3GetObject(config.bucket, key, config.accessKey, config.secretKey,
+                          config.region)
+    }
+}
+
+fun s3PutSafe(config, key, content) {
+    if (config == nil) {
+        return false
+    }
+    
+    if (config.sessionToken != nil and config.sessionToken != "") {
+        return s3PutObject(config.bucket, key, content, config.accessKey, 
+                          config.secretKey, config.region, config.sessionToken)
+    } else {
+        return s3PutObject(config.bucket, key, content, config.accessKey,
+                          config.secretKey, config.region)
+    }
+}
+
+// Pattern 2: Backup local files to S3
+fun backupToS3(localFile, s3Key, config) {
+    print "Backing up: " + localFile + " -> s3://" + config.bucket + "/" + s3Key
+    
+    var content = readFile(localFile)
+    if (content == nil) {
+        print "  Error: Could not read local file"
+        return false
+    }
+    
+    var success = s3PutSafe(config, s3Key, content)
+    if (success) {
+        print "  Success: File backed up"
+        return true
+    } else {
+        print "  Error: Upload failed"
+        return false
+    }
+}
+
+// Pattern 3: Restore files from S3
+fun restoreFromS3(s3Key, localFile, config) {
+    print "Restoring: s3://" + config.bucket + "/" + s3Key + " -> " + localFile
+    
+    var content = s3GetSafe(config, s3Key)
+    if (content == nil) {
+        print "  Error: Could not download from S3"
+        return false
+    }
+    
+    var success = writeFile(localFile, content)
+    if (success) {
+        print "  Success: File restored"
+        return true
+    } else {
+        print "  Error: Could not write local file"
+        return false
+    }
+}
+
+// Pattern 4: Sync configuration across systems
+fun syncConfig(config) {
+    var configKey = "config/app_config.json"
+    
+    // Upload current config
+    print "Syncing configuration to S3..."
+    
+    class AppConfig {
+        init(version, environment, features) {
+            this.version = version
+            this.environment = environment
+            this.features = features
+            this.lastUpdated = clock()
+        }
+    }
+    
+    var appConfig = AppConfig("1.0.0", "production", ["feature1", "feature2"])
+    var configJson = toJSON(appConfig)
+    
+    if (configJson != nil) {
+        var uploaded = s3PutSafe(config, configKey, configJson)
+        if (uploaded) {
+            print "  Configuration uploaded"
+            
+            // Download and verify
+            var downloaded = s3GetSafe(config, configKey)
+            if (downloaded != nil) {
+                var verified = parseJSON(downloaded)
+                if (verified != nil) {
+                    print "  Verified version: " + verified.version
+                    print "  Environment: " + verified.environment
+                }
+            }
+        }
+    }
+}
+
+// Pattern 5: Process batch of files from S3
+fun processBatch(config, prefix) {
+    print "Processing files with prefix: " + prefix
+    
+    // List all files
+    var listResponse = s3ListSafe(config, prefix)
+    if (listResponse == nil) {
+        print "  Error: Could not list objects"
+        return
+    }
+    
+    print "  Listed objects successfully"
+    print "  Response length: " + len(listResponse)
+    
+    // In production, you would parse the XML response to extract keys
+    // For now, we'll demonstrate processing a known file
+    var testFile = prefix + "data.json"
+    var content = s3GetSafe(config, testFile)
+    
+    if (content != nil) {
+        print "  Processing: " + testFile
+        var data = parseJSON(content)
+        if (data != nil) {
+            print "  Parsed JSON successfully"
+            
+            // Process and save results
+            class ProcessResult {
+                init(source, timestamp, status) {
+                    this.source = source
+                    this.timestamp = timestamp
+                    this.status = status
+                }
+            }
+            
+            var result = ProcessResult(testFile, clock(), "completed")
+            var resultJson = toJSON(result)
+            
+            if (resultJson != nil) {
+                var resultKey = "results/" + testFile
+                var success = s3PutSafe(config, resultKey, resultJson)
+                if (success) {
+                    print "  Results saved to: " + resultKey
+                }
+            }
+        }
+    }
+}
+
+// Run examples if config is loaded
+if (config != nil) {
+    print "Configuration loaded successfully"
+    print "Bucket: " + config.bucket
+    print "Region: " + config.region
+    print ""
+    
+    // Example 1: List objects
+    print "Example 1: List all objects"
+    var allObjects = s3ListSafe(config, "")
+    if (allObjects != nil) {
+        print "Success - " + len(allObjects) + " bytes received"
+    }
+    print ""
+    
+    // Example 2: Upload and download
+    print "Example 2: Upload test file"
+    var testContent = "Test content from Lux: " + clock()
+    var uploaded = s3PutSafe(config, "test/demo.txt", testContent)
+    if (uploaded) {
+        print "Upload successful"
+        
+        print "Downloading back..."
+        var downloaded = s3GetSafe(config, "test/demo.txt")
+        if (downloaded != nil) {
+            print "Downloaded: " + downloaded
+        }
+    }
+    print ""
+    
+    // Example 3: JSON workflow
+    print "Example 3: JSON data workflow"
+    class Sample {
+        init(id, value) {
+            this.id = id
+            this.value = value
+            this.timestamp = clock()
+        }
+    }
+    
+    var sample = Sample(123, 456)
+    var json = toJSON(sample)
+    if (json != nil) {
+        var key = "data/sample.json"
+        if (s3PutSafe(config, key, json)) {
+            print "JSON uploaded to " + key
+        }
+    }
+}
+
+print ""
+print "=== Demo Complete ==="

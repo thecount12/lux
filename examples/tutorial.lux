@@ -174,7 +174,61 @@ print whiskers.scratch();
 print "";
 
 // ============================================
-// 8. PRACTICAL EXAMPLE: TODO LIST
+// 8. ARRAYS
+// ============================================
+print "--- Arrays ---";
+
+// Create arrays with bracket syntax
+var numbers = [10, 20, 30, 40, 50];
+var names = ["Alice", "Bob", "Charlie"];
+var mixed = [42, "hello", true, nil];
+
+print "Created array with 5 numbers";
+print "First number: " + numbers[0];
+print "Last number: " + numbers[4];
+print "Array length: " + numbers.length;
+
+// Modify array elements
+numbers[0] = 100;
+print "Updated first: " + numbers[0];
+
+// Iterate over arrays
+print "All names:";
+var i = 0;
+while (i < names.length) {
+    print "  - " + names[i];
+    i = i + 1;
+}
+
+// Nested arrays (multi-dimensional)
+var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+print "Matrix[1][2] = " + matrix[1][2];  // 6
+
+// Build an array dynamically
+var scores = [];
+scores[0] = 95;
+scores[1] = 87;
+scores[2] = 92;
+print "Built array with 3 scores";
+print "Average score: " + ((scores[0] + scores[1] + scores[2]) / scores.length);
+
+// Array as function argument
+fun sum(arr) {
+    var total = 0;
+    var j = 0;
+    while (j < arr.length) {
+        total = total + arr[j];
+        j = j + 1;
+    }
+    return total;
+}
+
+var values = [5, 10, 15, 20];
+print "Sum of values: " + sum(values);
+print "";
+
+// ============================================
+// 9. PRACTICAL EXAMPLE: TODO LIST
 // ============================================
 print "--- Practical Example: Todo List ---";
 
@@ -201,93 +255,11 @@ myTodos.add("Take a break");
 myTodos.summary();
 print "";
 
-// ============================================
-// 9. ADVANCED: CALCULATOR CLASS
-// ============================================
-print "--- Calculator Class ---";
 
-class Calculator {
-    init() {
-        this.result = 0;
-    }
 
-    add(n) {
-        this.result = this.result + n;
-        return this;
-    }
 
-    multiply(n) {
-        this.result = this.result * n;
-        return this;
-    }
 
-    divide(n) {
-        this.result = this.result / n;
-        return this;
-    }
 
-    getResult() {
-        return this.result;
-    }
-
-    reset() {
-        this.result = 0;
-        return this;
-    }
-}
-
-var calc = Calculator();
-calc.add(10);
-calc.multiply(5);
-print "10 * 5 = " + calc.getResult();
-calc.reset();
-calc.add(100);
-calc.divide(4);
-print "100 / 4 = " + calc.getResult();
-print "";
-
-// ============================================
-// 10. HIGHER-ORDER FUNCTIONS
-// ============================================
-print "--- Higher-Order Functions ---";
-
-fun twice(fn, value) {
-    return fn(fn(value));
-}
-
-fun addTwo(n) {
-    return n + 2;
-}
-
-print "twice(addTwo, 5) = " + twice(addTwo, 5);
-print "";
-
-// ============================================
-// 11. TIMER EXAMPLE
-// ============================================
-print "--- Timer Example ---";
-
-class Timer {
-    init(name) {
-        this.name = name;
-        this.elapsed = 0;
-    }
-
-    tick() {
-        this.elapsed = this.elapsed + 1;
-    }
-
-    report() {
-        print this.name + ": " + this.elapsed + " ticks";
-    }
-}
-
-var gameTimer = Timer("Game");
-for (var i = 0; i < 5; i = i + 1) {
-    gameTimer.tick();
-}
-gameTimer.report();
-print "";
 
 print "=== Tutorial Complete! ===";
 print "You now know: variables, functions, classes, inheritance, and closures!";
