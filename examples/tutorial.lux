@@ -21,16 +21,13 @@ print "";
 // ============================================
 // 2. ARITHMETIC AND COMPARISONS
 // ============================================
-print "--- Math and Comparisons ---";
+print "--- Math ---";
 var x = 10;
 var y = 3;
 
-print "10 + 3 = " + (x + y);
-print "10 - 3 = " + (x - y);
-print "10 * 3 = " + (x * y);
-print "10 / 3 = " + (x / y);
-print "10 > 3: " + (x > y);
-print "10 == 3: " + (x == y);
+print "Sum: " + (x + y);
+print "Product: " + (x * y);
+print "x > y: " + (x > y);
 print "";
 
 // ============================================
@@ -38,27 +35,14 @@ print "";
 // ============================================
 print "--- Control Flow ---";
 
-// If/else
-var age = 25;
-if (age >= 18) {
-    print "You are an adult";
-} else {
-    print "You are a minor";
+if (x > 5) {
+    print "x is big";
 }
 
-// While loops
-print "Counting down:";
 var count = 3;
 while (count > 0) {
     print count;
     count = count - 1;
-}
-print "Blastoff!";
-
-// For loops
-print "Even numbers:";
-for (var i = 0; i < 6; i = i + 2) {
-    print i;
 }
 print "";
 
@@ -68,19 +52,17 @@ print "";
 print "--- Functions ---";
 
 fun greet(name) {
-    return "Hello, " + name + "!";
+    return "Hello, " + name;
 }
 
 print greet("World");
-print greet("Lux");
 
-// Recursive function
-fun fibonacci(n) {
+fun fib(n) {
     if (n <= 1) return n;
-    return fibonacci(n - 1) + fibonacci(n - 2);
+    return fib(n - 1) + fib(n - 2);
 }
 
-print "Fibonacci(10) = " + fibonacci(10);
+print "Fib(10) = " + fib(10);
 print "";
 
 // ============================================
@@ -106,7 +88,7 @@ print "";
 // ============================================
 // 6. CLASSES AND OBJECTS
 // ============================================
-print "--- Classes and Objects ---";
+print "--- Classes ---";
 
 class Person {
     init(name, age) {
@@ -114,19 +96,13 @@ class Person {
         this.age = age;
     }
 
-    introduce() {
-        return "Hi, I'm " + this.name + " and I'm " + this.age + " years old.";
-    }
-
-    birthday() {
-        this.age = this.age + 1;
-        print this.name + " is now " + this.age + "!";
+    greet() {
+        print "Hi, I'm " + this.name;
     }
 }
 
 var alice = Person("Alice", 30);
-print alice.introduce();
-alice.birthday();
+alice.greet();
 print "";
 
 // ============================================
@@ -148,29 +124,10 @@ class Dog < Animal {
     speak() {
         return this.name + " barks!";
     }
-
-    fetch() {
-        return this.name + " fetches the ball!";
-    }
-}
-
-class Cat < Animal {
-    speak() {
-        return this.name + " meows!";
-    }
-
-    scratch() {
-        return this.name + " scratches the furniture!";
-    }
 }
 
 var buddy = Dog("Buddy");
-var whiskers = Cat("Whiskers");
-
 print buddy.speak();
-print buddy.fetch();
-print whiskers.speak();
-print whiskers.scratch();
 print "";
 
 // ============================================
@@ -178,88 +135,30 @@ print "";
 // ============================================
 print "--- Arrays ---";
 
-// Create arrays with bracket syntax
 var numbers = [10, 20, 30, 40, 50];
 var names = ["Alice", "Bob", "Charlie"];
-var mixed = [42, "hello", true, nil];
 
-print "Created array with 5 numbers";
-print "First number: " + numbers[0];
-print "Last number: " + numbers[4];
-print "Array length: " + numbers.length;
+print "Array created";
+print "First: " + numbers[0];
+print "Last: " + numbers[4];
+print "Length: " + numbers.length;
 
-// Modify array elements
+// Modify elements
 numbers[0] = 100;
 print "Updated first: " + numbers[0];
 
-// Iterate over arrays
-print "All names:";
+// Iterate
+print "Names:";
 var i = 0;
 while (i < names.length) {
-    print "  - " + names[i];
+    print "  " + names[i];
     i = i + 1;
 }
 
-// Nested arrays (multi-dimensional)
-var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
-print "Matrix[1][2] = " + matrix[1][2];  // 6
-
-// Build an array dynamically
-var scores = [];
-scores[0] = 95;
-scores[1] = 87;
-scores[2] = 92;
-print "Built array with 3 scores";
-print "Average score: " + ((scores[0] + scores[1] + scores[2]) / scores.length);
-
-// Array as function argument
-fun sum(arr) {
-    var total = 0;
-    var j = 0;
-    while (j < arr.length) {
-        total = total + arr[j];
-        j = j + 1;
-    }
-    return total;
-}
-
-var values = [5, 10, 15, 20];
-print "Sum of values: " + sum(values);
+// Nested arrays
+var matrix = [[1, 2, 3], [4, 5, 6]];
+print "Matrix[1][2] = " + matrix[1][2];
 print "";
-
-// ============================================
-// 9. PRACTICAL EXAMPLE: TODO LIST
-// ============================================
-print "--- Practical Example: Todo List ---";
-
-class TodoList {
-    init(owner) {
-        this.owner = owner;
-        this.count = 0;
-    }
-
-    add(task) {
-        this.count = this.count + 1;
-        print "[" + this.count + "] Added: " + task;
-    }
-
-    summary() {
-        print this.owner + "'s list has " + this.count + " items";
-    }
-}
-
-var myTodos = TodoList("Alice");
-myTodos.add("Learn Lux");
-myTodos.add("Build something cool");
-myTodos.add("Take a break");
-myTodos.summary();
-print "";
-
-
-
-
-
-
 
 print "=== Tutorial Complete! ===";
-print "You now know: variables, functions, classes, inheritance, and closures!";
+

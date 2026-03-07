@@ -1,6 +1,6 @@
 # Lux Programming Language
 
-A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features: Arrays, File IO, Json serialization, HTTP/HTTPS client functionality (GET, POST and PUT), HTTP server capabilities, and AWS S3 integration.
+A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features: Arrays, modules via import statements, File IO, Json serialization, HTTP/HTTPS client functionality (GET, POST and PUT), HTTP server capabilities, and AWS S3 integration.
 
 ## Features
 
@@ -9,6 +9,7 @@ A dynamically-typed scripting language based on the Lox language from "Crafting 
 - **Closures** - Functions can capture and remember their surrounding scope
 - **Classes and inheritance** - Object-oriented programming with single inheritance
 - **Arrays** - Native array support with bracket syntax and dynamic sizing
+- **Modules** - Split code across files using `import "path.lux";`
 - **Automatic memory management** - Mark-and-sweep garbage collector
 - **NaN boxing** - Optional performance optimization for value representation
 
@@ -116,13 +117,12 @@ buddy.speak();  // Buddy barks!
 var numbers = [1, 2, 3, 4, 5];
 var names = ["Alice", "Bob", "Charlie"];
 var mixed = [42, "hello", true, nil];
-var empty = [];
 
 // Access elements by index (0-based)
 print numbers[0];     // 1
 print names[2];       // Charlie
 
-// Modify elements
+// Modify existing elements
 numbers[0] = 100;
 print numbers[0];     // 100
 
@@ -136,12 +136,18 @@ while (i < names.length) {
     i = i + 1;
 }
 
-// Arrays are dynamic - grow as needed
-var data = [];
-data[0] = "first";
-data[1] = "second";
-data[2] = "third";
-print data.length;    // 3
+// IMPORTANT: Arrays have fixed size after creation
+// You can only modify existing indices, not add new ones
+var data = [1, 2, 3];
+data[0] = 10;         // ✓ Works - index 0 exists
+data[5] = 50;         // ✗ Error - index 5 doesn't exist
+
+// To build arrays dynamically, pre-allocate with nil
+var buffer = [nil, nil, nil, nil, nil];
+buffer[0] = "first";
+buffer[1] = "second";
+buffer[2] = "third";
+print buffer.length;  // 5
 
 // Nested arrays
 var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
@@ -153,6 +159,44 @@ var xmlResponse = parseXml("<items><item>A</item><item>B</item></items>");
 for (var j = 0; j < xmlResponse.length; j = j + 1) {
     print xmlResponse[j];
 }
+```
+
+### Modules and Imports
+```lux
+// Import code from other files to organize your programs
+// Paths are relative to the current working directory
+
+// math_utils.lux:
+fun add(a, b) {
+    return a + b;
+}
+
+fun multiply(a, b) {
+    return a * b;
+}
+
+// main.lux:
+import "math_utils.lux";
+
+print(add(5, 3));        // 8
+print(multiply(4, 7));   // 28
+
+// Features:
+// - Imported files are executed once (cached to prevent duplicates)
+// - All definitions go into global scope
+// - Circular imports are prevented automatically
+// - Import paths are relative to where you run the program
+
+// Example directory structure:
+// project/
+//   main.lux
+//   utils/
+//     math.lux
+//     string.lux
+
+// From project/ directory:
+import "utils/math.lux";
+import "utils/string.lux";
 ```
 
 ## Building
@@ -775,7 +819,7 @@ To disable NaN boxing, edit `common.h` and comment out:
 5. **HTTP server**: Start a basic HTTP server with `httpServer(port)` for local development and testing
 6. **AWS S3 integration**: Direct S3 access with `s3ListObjects`, `s3GetObject`, `s3PutObject` using AWS credentials or STS tokens
 7. **Error handling**: File, JSON, HTTP, and S3 operations return `nil` or `false` on failure - always check return values
-8. **Arrays**: Native array support with bracket syntax - create with `[1, 2, 3]`, access with `arr[0]`, get size with `arr.length`
+8. **Arrays**: Native array support with bracket syntax - create with `[1, 2, 3]`, access with `arr[0]`, get size with `arr.length`. **Important**: Arrays have fixed size - you can only modify existing indices, not add new ones. To build arrays dynamically, pre-allocate with nil values.
 9. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
 10. **No exceptions**: Use return values to indicate success/failure
 11. **Global scope**: All functions and classes are global

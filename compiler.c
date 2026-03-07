@@ -230,22 +230,32 @@ emitReturn(void)
 	emitByte(OP_RETURN);
 }
 
-static uchar
+static int
 makeConstant(Value value)
 {
 	int constant = addConstant(currentChunk(), value);
-	if(constant > 255){
+	if(constant > 0xFFFFFF){
 		error("Too many constants in one chunk.");
 		return 0;
 	}
 
-	return (uchar)constant;
+	return constant;
 }
 
 static void
 emitConstant(Value value)
 {
-	emitBytes(OP_CONSTANT, makeConstant(value));
+	int constant;
+	constant = makeConstant(value);
+	
+	if(constant < 256){
+		emitBytes(OP_CONSTANT, (uchar)constant);
+	} else {
+		emitByte(OP_CONSTANT_LONG);
+		emitByte((constant >> 16) & 0xff);
+		emitByte((constant >> 8) & 0xff);
+		emitByte(constant & 0xff);
+	}
 }
 
 static void 
@@ -334,10 +344,16 @@ static void declaration(void);
 static ParseRule* getRule(TokenType type);
 static void parsePrecedence(Precedence precedence);
 
-static unsigned long 
+static int
 identifierConstant(Token* name)
 {
-	return makeConstant(OBJ_VAL(copyString(name->start, name-> length)));
+	int constant;
+	constant = makeConstant(OBJ_VAL(copyString(name->start, name-> length)));
+	if(constant > 255){
+		error("Too many unique identifiers in one chunk.");
+		return 0;
+	}
+	return constant;
 }
 
 static bool
@@ -605,6 +621,22 @@ printStatement(void)
 	expression();
 	consume(TOKEN_SEMICOLON, "Expect ';' after value.");
 	emitByte(OP_PRINT);
+}
+
+static void
+importStatement(void)
+{
+	int constant;
+	consume(TOKEN_STRING, "Expect filename string after 'import'.");
+	constant = makeConstant(OBJ_VAL(copyString(parser.previous.start + 1, 
+	                                            parser.previous.length - 2)));
+	if(constant > 255){
+		error("Too many constants for import statement.");
+		return;
+	}
+	emitBytes(OP_IMPORT, (uchar)constant);
+	emitByte(OP_POP);
+	consume(TOKEN_SEMICOLON, "Expect ';' after import statement.");
 }
 
 static void 
@@ -1093,6 +1125,8 @@ statement()
 {
 	if (match(TOKEN_PRINT)) {
 		printStatement();
+	} else if (match(TOKEN_IMPORT)) {
+		importStatement();
 	} else if (match(TOKEN_FOR)) {
 		forStatement();
 	} else if (match(TOKEN_IF)) {

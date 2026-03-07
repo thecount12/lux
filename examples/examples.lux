@@ -114,11 +114,17 @@ print "=== Stack Data Structure ===";
 
 class Stack {
     init() {
-        this.items = [];
+        // Pre-allocate array with some capacity
+        this.items = [nil, nil, nil, nil, nil, nil, nil, nil, nil, nil];
         this.size = 0;
+        this.capacity = 10;
     }
 
     push(value) {
+        if (this.size >= this.capacity) {
+            print "Stack is full!";
+            return;
+        }
         this.items[this.size] = value;
         this.size = this.size + 1;
         print "Pushed: " + value;
