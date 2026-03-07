@@ -483,7 +483,7 @@ static void serializeJsonValue(Value value, char** buffer, int* len, int* cap) {
 		appendToBuffer(buffer, len, cap, "null");
 	} else if (IS_NUMBER(value)) {
 		char numBuf[64];
-		snprintf(numBuf, sizeof(numBuf), "%g", AS_NUMBER(value));
+		snprintf(numBuf, sizeof(numBuf), "%.15g", AS_NUMBER(value));
 		appendToBuffer(buffer, len, cap, numBuf);
 	} else if (IS_STRING(value)) {
 		appendChar(buffer, len, cap, '"');
@@ -2075,9 +2075,28 @@ static InterpretResult run() {
 				int idx = (int)AS_NUMBER(index);
 				ObjArray* arr = AS_ARRAY(array);
 				
-				if (idx < 0 || idx >= arr->count) {
+				if (idx < 0) {
 					runtimeError("Array index out of bounds.");
 					return INTERPRET_RUNTIME_ERROR;
+				}
+
+				if (idx >= arr->count) {
+					int oldCount = arr->count;
+					int requiredCount = idx + 1;
+					int oldCapacity = arr->capacity;
+
+					while (arr->capacity < requiredCount) {
+						arr->capacity = GROW_CAPACITY(arr->capacity);
+					}
+
+					if (arr->capacity != oldCapacity) {
+						arr->elements = GROW_ARRAY(Value, arr->elements, oldCapacity, arr->capacity);
+					}
+
+					for (int i = oldCount; i < requiredCount; i++) {
+						arr->elements[i] = NIL_VAL;
+					}
+					arr->count = requiredCount;
 				}
 				
 				arr->elements[idx] = value;

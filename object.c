@@ -187,7 +187,7 @@ valueToString(Value value)
 		return copyString("nil", 3);
 	} else if (IS_NUMBER(value)) {
 		char buffer[32];
-		int length = snprint(buffer, sizeof(buffer), "%g", AS_NUMBER(value));
+		int length = snprint(buffer, sizeof(buffer), "%.15g", AS_NUMBER(value));
 		return copyString(buffer, length);
 	} else if (IS_STRING(value)) {
 		return AS_STRING(value);

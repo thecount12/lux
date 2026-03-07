@@ -577,7 +577,7 @@ static void serializeJsonValue(Value value, char** buffer, int* len, int* cap) {
 		appendToBuffer(buffer, len, cap, "null");
 	} else if (IS_NUMBER(value)) {
 		char numBuf[64];
-		sprint(numBuf, "%g", AS_NUMBER(value));
+		sprint(numBuf, "%.15g", AS_NUMBER(value));
 		appendToBuffer(buffer, len, cap, numBuf);
 	} else if (IS_STRING(value)) {
 		appendChar(buffer, len, cap, '"');
