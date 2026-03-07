@@ -12,8 +12,19 @@ fun fibFast(n) {
     return b;
 }
 
+var N = 50;
+var ROUNDS = 200000;
+var checksum = 0;
+
 var start = clock();
-var result = fibFast(50;
+var i = 0;
+while (i < ROUNDS) {
+    checksum = checksum + fibFast(N);
+    i = i + 1;
+}
 var elapsed = clock() - start;
-print "Fibonacci(50) = " + result;
-print "Time Elapsed: " + elapsed + " seconds";
+
+print "N=" + N;
+print "ROUNDS=" + ROUNDS;
+print "CHECKSUM=" + checksum;
+print "BENCH_TIME=" + elapsed;
