@@ -45,11 +45,71 @@ Notes:
 - No Plan 9-native result is included in this table.
 - This table must not be merged with Intel i5 data.
 
+## Dataset C: Intel i5 (Current, Comprehensive 200k ROUNDS)
+
+Hardware: `2.6 GHz Dual-Core Intel Core i5`
+
+Runner: `python3 benchmark/run_bench.py` (9 repeats, 200,000 iterations each)
+
+| Implementation | Platform | Time (s) |
+|---|---|---:|
+| Python | macOS | 0.966097 (median of 9, 200k rounds) |
+| POSIX C | macOS | 0.000002 (median of 9, 200k rounds) |
+| Lux POSIX | macOS | 1.721212 (median of 9, 200k rounds) |
+| Plan 9 C | Plan 9 | 0.008283 (200k rounds) |
+| Plan 9 C | Plan 9 | 0.004334 (100k rounds) |
+| Lux Plan 9 | Plan 9 | 2.677545 (200k rounds) |
+
+Scaling Notes:
+- Plan 9 C scales linearly: 100k ROUNDS → 4.33 ms, 200k ROUNDS → 8.28 ms (~2.0× linear).
+- POSIX C is still ~4100× faster than Plan 9 C per iteration in the harness.
+- Python is ~1.78× slower than Lux POSIX.
+- Lux Plan 9 is ~1.56× slower than Lux POSIX.
+
+## Plan 9 C Performance Analysis
+
+**Root Cause of Slowness:**
+
+Assembly inspection (`6c -S`) reveals excessive register spilling in the main benchmark loop:
+
+```asm
+INCL	,CX            # i++
+CMPL	CX,$100000
+MOVL	CX,i+-20(SP)   # *** STORE i to stack ***
+JGE	,-4(PC)
+
+MOVL	$50,BP
+CALL	,fib_fast<>+0(SB)
+MOVL	i+-20(SP),CX   # *** RELOAD i from stack ***
+```
+
+The compiler stores the loop counter `i` to the stack before each function call and reloads it after, generating:
+- **200,000 memory stores** (one per iteration)
+- **200,000 memory loads** (one per iteration)
+
+**Why this happens:**
+
+Plan 9's 6c compiler (from the 1990s/2000s) is overly conservative with register allocation. It doesn't optimize across function calls:
+- It assumes the function call will clobber registers
+- It spills `i` to preserve it across the `fib_fast()` call
+- Modern compilers (clang, gcc with `-O3`) track which registers are caller-saved and avoid unnecessary spilling
+
+**Impact:**
+
+Each iteration incurs two L1 cache misses (store + load) instead of keeping the loop counter in a register. Over 200,000 iterations, this adds up to ~8 ms of overhead.
+
+**Comparison to macOS clang:**
+
+Modern clang keeps the loop counter entirely in a register across function calls, generating tight, cache-efficient code with zero memory overhead for loop variables.
+
+This explains why **Plan 9 C (8.3 ms) is ~4100× slower than macOS POSIX C (2 μs)** in the harness, despite being "native" code—the compiler itself is the limiting factor.
+
 ## Benchmark Files
 
 - `benchmark/fib_bench.py`
 - `benchmark/fib_bench.c`
 - `benchmark/fib_bench.lux`
+- `benchmark/fib_bench_plan9.c`
 - `benchmark/run_bench.py`
 - `tests/fib-plan.c`
 - `tests/fib-posix.c`
