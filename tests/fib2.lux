@@ -13,7 +13,7 @@ fun fibFast(n) {
 }
 
 var start = clock();
-var result = fibFast(50;
+var result = fibFast(50);
 var elapsed = clock() - start;
 print "Fibonacci(50) = " + result;
 print "Time Elapsed: " + elapsed + " seconds";
