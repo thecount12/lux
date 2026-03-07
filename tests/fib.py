@@ -10,7 +10,7 @@ def fibonacci(n):
 start_time = time.perf_counter()
 
 # 2. Run algorithm
-n = 35
+n = 50
 result = fibonacci(n)
 
 # 3. End clock

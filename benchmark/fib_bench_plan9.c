@@ -1,6 +1,9 @@
 #include <u.h>
 #include <libc.h>
 
+#define N 50
+#define ROUNDS 200000
+
 static uvlong
 fib_fast(int n)
 {
@@ -9,13 +12,11 @@ fib_fast(int n)
 
 	uvlong a = 0;
 	uvlong b = 1;
-	int i = 2;
 
-	while (i <= n) {
+	for (int i = 2; i <= n; i++) {
 		uvlong next = a + b;
 		a = b;
 		b = next;
-		i++;
 	}
 
 	return b;
@@ -24,14 +25,20 @@ fib_fast(int n)
 void
 main(void)
 {
-	int n = 50;
 	vlong start = nsec();
-	uvlong result = fib_fast(n);
+	uvlong checksum = 0;
+
+	for (int i = 0; i < ROUNDS; i++) {
+		checksum += fib_fast(N);
+	}
+
 	vlong end = nsec();
 	double elapsed = (double)(end - start) / 1000000000.0;
 
-	print("Fibonacci(%d) = %llud\n", n, result);
-	print("Time Elapsed: %.6f seconds\n", elapsed);
+	print("N=%d\n", N);
+	print("ROUNDS=%d\n", ROUNDS);
+	print("CHECKSUM=%llud\n", checksum);
+	print("BENCH_TIME=%.9f\n", elapsed);
 
 	exits(nil);
 }

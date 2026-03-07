@@ -1,5 +1,8 @@
 import time
 
+N = 50
+ROUNDS = 200000
+
 
 def fib_fast(n: int) -> int:
     if n < 2:
@@ -16,7 +19,11 @@ def fib_fast(n: int) -> int:
 
 
 start = time.perf_counter()
-result = fib_fast(50)
+checksum = 0
+for _ in range(ROUNDS):
+    checksum += fib_fast(N)
 elapsed = time.perf_counter() - start
-print(f"Fibonacci(50) = {result}")
-print(f"Time Elapsed: {elapsed:.6f} seconds")
+print(f"N={N}")
+print(f"ROUNDS={ROUNDS}")
+print(f"CHECKSUM={checksum}")
+print(f"BENCH_TIME={elapsed:.9f}")
