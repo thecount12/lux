@@ -34,7 +34,7 @@ void printValue(Value value) {
 	} else if (IS_NIL(value)) {
 		printf("nil");
 	} else if (IS_NUMBER(value)) {
-		printf("%g", AS_NUMBER(value));
+		printf("%.15g", AS_NUMBER(value));
 	} else if (IS_OBJ(value)) {
 		printObject(value);
 	}
@@ -44,7 +44,7 @@ void printValue(Value value) {
 			printf(AS_BOOL(value) ? "true" : "false");
 			break;
 		case VAL_NIL: printf("nil"); break;
-		case VAL_NUMBER: printf("%g", AS_NUMBER(value)); break;
+		case VAL_NUMBER: printf("%.15g", AS_NUMBER(value)); break;
 		case VAL_OBJ: printObject(value); break;
 	}
 #endif

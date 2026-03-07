@@ -84,7 +84,7 @@ printValue(Value value) {
 	} else if (IS_NIL(value)) {
 		print("nil");
 	} else if (IS_NUMBER(value)) {
-		print("%g", AS_NUMBER(value));
+		print("%.15g", AS_NUMBER(value));
 	} else if (IS_OBJ(value)) {
 		printObject(value);
 	}
@@ -94,7 +94,7 @@ printValue(Value value) {
 			print(AS_BOOL(value) ? "true" : "false");
 			break;
 		case VAL_NIL: print("nil"); break;
-		case VAL_NUMBER: print("%g", AS_NUMBER(value)); break;
+		case VAL_NUMBER: print("%.15g", AS_NUMBER(value)); break;
 		case VAL_OBJ: printObject(value); break;
 	}
 #endif
