@@ -136,18 +136,12 @@ while (i < names.length) {
     i = i + 1;
 }
 
-// IMPORTANT: Arrays have fixed size after creation
-// You can only modify existing indices, not add new ones
+// Arrays grow dynamically when assigning past current length
 var data = [1, 2, 3];
-data[0] = 10;         // ✓ Works - index 0 exists
-data[5] = 50;         // ✗ Error - index 5 doesn't exist
-
-// To build arrays dynamically, pre-allocate with nil
-var buffer = [nil, nil, nil, nil, nil];
-buffer[0] = "first";
-buffer[1] = "second";
-buffer[2] = "third";
-print buffer.length;  // 5
+data[0] = 10;         // Overwrite existing index
+data[5] = 50;         // Auto-grows array
+print data.length;    // 6
+print data[3];        // nil (gap values are filled with nil)
 
 // Nested arrays
 var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];

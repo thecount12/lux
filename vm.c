@@ -2547,6 +2547,10 @@ run(void)
 			Value index;
 			Value array;
 			int idx;
+			int oldCount;
+			int requiredCount;
+			int oldCapacity;
+			int i;
 			ObjArray* arr;
 			
 			value = pop();
@@ -2566,9 +2570,30 @@ run(void)
 			idx = (int)AS_NUMBER(index);
 			arr = AS_ARRAY(array);
 			
-			if (idx < 0 || idx >= arr->count) {
+			if (idx < 0) {
 				runtimeError("Array index out of bounds.");
 				return INTERPRET_RUNTIME_ERROR;
+			}
+
+			if (idx >= arr->count) {
+				oldCount = arr->count;
+				requiredCount = idx + 1;
+				oldCapacity = arr->capacity;
+
+				while (arr->capacity < requiredCount) {
+					arr->capacity = GROW_CAPACITY(arr->capacity);
+				}
+
+				if (arr->capacity != oldCapacity) {
+					arr->elements = (Value*)reallocate(arr->elements,
+						sizeof(Value) * oldCapacity,
+						sizeof(Value) * arr->capacity);
+				}
+
+				for (i = oldCount; i < requiredCount; i++) {
+					arr->elements[i] = NIL_VAL;
+				}
+				arr->count = requiredCount;
 			}
 			
 			arr->elements[idx] = value;
