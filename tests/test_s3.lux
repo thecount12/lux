@@ -1,0 +1,51 @@
+// AWS S3 Integration Test
+// Demonstrates S3 operations with AWS Signature V4 and optional STS tokens
+
+// Configure your AWS credentials
+var bucket = "abcbucket";
+var accessKey = "abc1234";
+var secretKey = "xxxx/xxxx/xxx";
+var region = "us-west-2";
+
+// Optional: For STS temporary credentials
+var sessionToken = "";  // Leave empty if using permanent credentials
+// var sessionToken = "YOUR_SESSION_TOKEN";  // Uncomment and set if using STS
+
+print "=== AWS S3 Integration Test ===";
+print "";
+
+// Test 1: List objects in bucket
+print "Listing objects in bucket: " + bucket;
+print "";
+
+var listResult = nil;
+if (sessionToken == "") {
+    listResult = s3ListObjects(bucket, accessKey, secretKey, region);
+} else {
+    listResult = s3ListObjects(bucket, accessKey, secretKey, region, "", sessionToken);
+}
+
+if (listResult == nil) {
+    print "Error: Could not list objects";
+} else {
+    // Parse the XML response to extract object information
+    var keys = parseXml(listResult, "Key");
+    var sizes = parseXml(listResult, "Size");
+    var modified = parseXml(listResult, "LastModified");
+    
+    print "Found " + keys.length + " object(s):";
+    print "";
+    
+    // Display all objects using array indexing
+    var i = 0;
+    while (i < keys.length) {
+        print "  [" + i + "] " + keys[i];
+        print "      Size: " + sizes[i] + " bytes";
+        print "      Modified: " + modified[i];
+        print "";
+        i = i + 1;
+    }
+}
+
+print "";
+print "=== Test Complete ===";

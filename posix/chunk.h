@@ -42,7 +42,10 @@ typedef enum {
 	OP_RETURN,
 	OP_CLASS,
 	OP_INHERIT,
-	OP_METHOD
+	OP_METHOD,
+	OP_ARRAY,
+	OP_INDEX_SUBSCR,
+	OP_STORE_SUBSCR
 } OpCode;
 
 /* dynamic array of instructions, we don't know the size yet

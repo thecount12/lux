@@ -8,6 +8,7 @@
 
 #define OBJ_TYPE(value) 	(AS_OBJ(value)->type)
 
+#define IS_ARRAY(value)    isObjType(value, OBJ_ARRAY)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_INSTANCE(value) isObjType(value, OBJ_INSTANCE)
 #define IS_NATIVE(value)	isObjType(value, OBJ_NATIVE)
@@ -22,11 +23,13 @@
 #define AS_CLOSURE(value) 	((ObjClosure*)AS_OBJ(value))
 #define AS_FUNCTION(value) 	((ObjFunction*)AS_OBJ(value))
 #define AS_INSTANCE(value)  ((ObjInstance*)AS_OBJ(value))
+#define AS_ARRAY(value)     ((ObjArray*)AS_OBJ(value))
 #define AS_NATIVE(value) 	(((ObjNative*)AS_OBJ(value))->function)
 #define AS_STRING(value)	((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value)	(((ObjString*)AS_OBJ(value))->chars)
 
 typedef enum {
+	OBJ_ARRAY,
 	OBJ_BOUND_METHOD,
 	OBJ_CLASS,
 	OBJ_CLOSURE,
@@ -64,6 +67,13 @@ struct ObjString {
 	char* chars;
 	uint32_t hash;
 };
+
+typedef struct {
+	Obj obj;
+	int count;
+	int capacity;
+	Value* elements;
+} ObjArray;
 
 typedef struct ObjUpvalue {
 	Obj obj;
@@ -103,6 +113,8 @@ ObjClosure* newClosure(ObjFunction* function);
 ObjFunction* newFunction();
 ObjInstance* newInstance(ObjClass* klass);
 ObjNative* newNative(NativeFn function);
+ObjArray* newArray(void);
+void writeArray(ObjArray* array, Value value);
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
 ObjString* valueToString(Value value);

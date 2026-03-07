@@ -108,25 +108,18 @@ hero.heal(20);
 print "";
 
 // ============================================
-// EXAMPLE 3: Stack Data Structure
+// EXAMPLE 3: Stack Data Structure (Using Arrays)
 // ============================================
 print "=== Stack Data Structure ===";
 
 class Stack {
     init() {
+        this.items = [];
         this.size = 0;
     }
 
     push(value) {
-        if (this.size == 0) {
-            this.item0 = value;
-        }
-        if (this.size == 1) {
-            this.item1 = value;
-        }
-        if (this.size == 2) {
-            this.item2 = value;
-        }
+        this.items[this.size] = value;
         this.size = this.size + 1;
         print "Pushed: " + value;
     }
@@ -134,20 +127,18 @@ class Stack {
     pop() {
         if (this.size > 0) {
             this.size = this.size - 1;
-            var value;
-            if (this.size == 0) {
-                value = this.item0;
-            }
-            if (this.size == 1) {
-                value = this.item1;
-            }
-            if (this.size == 2) {
-                value = this.item2;
-            }
+            var value = this.items[this.size];
             print "Popped: " + value;
             return value;
         }
         print "Stack is empty!";
+        return nil;
+    }
+
+    peek() {
+        if (this.size > 0) {
+            return this.items[this.size - 1];
+        }
         return nil;
     }
 
@@ -160,8 +151,10 @@ var stack = Stack();
 stack.push(10);
 stack.push(20);
 stack.push(30);
+print "Top item: " + stack.peek();
 stack.pop();
 stack.pop();
+print "After popping, top: " + stack.peek();
 print "";
 
 // ============================================
@@ -290,6 +283,44 @@ frontDoor.lock();
 frontDoor.open();  // Should fail
 frontDoor.unlock();
 frontDoor.open();
+print "";
+
+// ============================================
+// EXAMPLE 7: Simple Array Operations
+// ============================================
+print "=== Array Operations ===";
+
+var nums = [64, 34, 25, 12, 22];
+print "Created array with 5 numbers";
+
+// Find minimum
+fun findMin(arr) {
+    var min = arr[0];
+    var i = 1;
+    while (i < arr.length) {
+        if (arr[i] < min) {
+            min = arr[i];
+        }
+        i = i + 1;
+    }
+    return min;
+}
+
+// Find maximum
+fun findMax(arr) {
+    var max = arr[0];
+    var i = 1;
+    while (i < arr.length) {
+        if (arr[i] > max) {
+            max = arr[i];
+        }
+        i = i + 1;
+    }
+    return max;
+}
+
+print "Minimum: " + findMin(nums);
+print "Maximum: " + findMax(nums);
 print "";
 
 print "=== Examples Complete! ===";

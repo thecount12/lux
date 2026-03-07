@@ -74,6 +74,24 @@ ObjNative* newNative(NativeFn function) {
 	return native;
 }
 
+ObjArray* newArray(void) {
+	ObjArray* array = ALLOCATE_OBJ(ObjArray, OBJ_ARRAY);
+	array->count = 0;
+	array->capacity = 0;
+	array->elements = NULL;
+	return array;
+}
+
+void writeArray(ObjArray* array, Value value) {
+	if (array->capacity < array->count + 1) {
+		int oldCapacity = array->capacity;
+		array->capacity = oldCapacity < 8 ? 8 : oldCapacity * 2;
+		array->elements = GROW_ARRAY(Value, array->elements, oldCapacity, array->capacity);
+	}
+	array->elements[array->count] = value;
+	array->count++;
+}
+
 static ObjString* allocateString(char* chars, int length, uint32_t hash) {
 	ObjString* string = ALLOCATE_OBJ(ObjString, OBJ_STRING);
 	string->length = length;
@@ -154,6 +172,18 @@ static void printFunction(ObjFunction* function) {
 
 void printObject(Value value) {
 	switch (OBJ_TYPE(value)) {
+		case OBJ_ARRAY: {
+			ObjArray* array = AS_ARRAY(value);
+			printf("[");
+			for (int i = 0; i < array->count; i++) {
+				printValue(array->elements[i]);
+				if (i < array->count - 1) {
+					printf(", ");
+				}
+			}
+			printf("]");
+			break;
+		}
 		case OBJ_BOUND_METHOD:
 			printFunction(AS_BOUND_METHOD(value)->method->function);
 			break;

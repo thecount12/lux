@@ -10,6 +10,11 @@
 #include "table.h"
 #include <libsec.h>
 
+/* SHA-256 produces 32 bytes */
+#ifndef SHA2_256dlen
+#define SHA2_256dlen 32
+#endif
+
 VM vm;
 
 /* posix linux only 
@@ -612,6 +617,65 @@ toJSONNative(int argCount, Value* args)
 	return result;
 }
 
+/* parseXml(xmlString, tagName) -> object with numeric keys (like JSON arrays) */
+static Value
+parseXmlNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	
+	char* xml = AS_CSTRING(args[0]);
+	char* tagName = AS_CSTRING(args[1]);
+	
+	/* Build open and close tags */
+	char openTag[256];
+	char closeTag[256];
+	snprint(openTag, sizeof(openTag), "<%s>", tagName);
+	snprint(closeTag, sizeof(closeTag), "</%s>", tagName);
+	int openLen = strlen(openTag);
+	int closeLen = strlen(closeTag);
+	
+	/* Create result array */
+	ObjArray* result = newArray();
+	push(OBJ_VAL(result));
+	
+	char* search = xml;
+	
+	/* Find all occurrences of the tag */
+	while (1) {
+		/* Find opening tag */
+		char* openPos = strstr(search, openTag);
+		if (openPos == nil)
+			break;
+		
+		/* Find closing tag after opening */
+		char* closePos = strstr(openPos + openLen, closeTag);
+		if (closePos == nil)
+			break;
+		
+		/* Extract content between tags */
+		int contentLen = closePos - (openPos + openLen);
+		char* content = malloc(contentLen + 1);
+		if (content == nil)
+			break;
+		
+		memcpy(content, openPos + openLen, contentLen);
+		content[contentLen] = '\0';
+		
+		/* Add to result array */
+		Value value = OBJ_VAL(copyString(content, contentLen));
+		free(content);
+		
+		writeArray(result, value);
+		
+		/* Move search position past this closing tag */
+		search = closePos + closeLen;
+	}
+	
+	pop();
+	return OBJ_VAL(result);
+}
+
 /* HTTP support for Plan 9 using dial() and manual HTTP protocol */
 
 /* Parse URL and extract host, port, path, and https flag */
@@ -1077,6 +1141,472 @@ sendHttpResponse(int fd, int statusCode, char* statusText, char* body)
 	write(fd, response, len);
 }
 
+/* ========== AWS Signature V4 Implementation ========== */
+
+/* Helper: hex encode bytes */
+static void
+hexEncode(uchar* bytes, int len, char* out)
+{
+	static char hex[] = "0123456789abcdef";
+	for (int i = 0; i < len; i++) {
+		out[i*2] = hex[bytes[i] >> 4];
+		out[i*2+1] = hex[bytes[i] & 0xf];
+	}
+	out[len*2] = '\0';
+}
+
+/* Helper: HMAC-SHA256 */
+static void
+hmacSha256(uchar* key, int keyLen, uchar* data, int dataLen, uchar* out)
+{
+	hmac_sha2_256(data, dataLen, key, keyLen, out, nil);
+}
+
+/* Helper: SHA256 hash */
+static void
+sha256Hash(uchar* data, int dataLen, uchar* out)
+{
+	sha2_256(data, dataLen, out, nil);
+}
+
+/* Get AWS signing key */
+static void
+getAwsSigningKey(char* secretKey, char* dateStamp, char* region, char* service, uchar* signingKey)
+{
+	uchar kDate[SHA2_256dlen];
+	uchar kRegion[SHA2_256dlen];
+	uchar kService[SHA2_256dlen];
+	
+	char keyWithPrefix[256];
+	snprint(keyWithPrefix, sizeof(keyWithPrefix), "AWS4%s", secretKey);
+	
+	hmacSha256((uchar*)keyWithPrefix, strlen(keyWithPrefix), (uchar*)dateStamp, strlen(dateStamp), kDate);
+	hmacSha256(kDate, SHA2_256dlen, (uchar*)region, strlen(region), kRegion);
+	hmacSha256(kRegion, SHA2_256dlen, (uchar*)service, strlen(service), kService);
+	hmacSha256(kService, SHA2_256dlen, (uchar*)"aws4_request", 12, signingKey);
+}
+
+/* Create AWS Signature V4 */
+static void
+createAwsSignature(char* method, char* host, char* uri, char* queryString,
+		char* payloadHash, char* accessKey, char* secretKey, char* region,
+		char* service, char* amzDate, char* dateStamp, char* sessionToken,
+		char* authHeader, int authHeaderLen)
+{
+	/* Canonical request */
+	char canonicalHeaders[1024];
+	snprint(canonicalHeaders, sizeof(canonicalHeaders),
+		"host:%s\nx-amz-date:%s\n", host, amzDate);
+	
+	char signedHeaders[256];
+	if (sessionToken && sessionToken[0]) {
+		/* Include session token in canonical headers */
+		char tokHeader[512];
+		snprint(tokHeader, sizeof(tokHeader), "x-amz-security-token:%s\n", sessionToken);
+		strncat(canonicalHeaders, tokHeader, sizeof(canonicalHeaders) - strlen(canonicalHeaders) - 1);
+		snprint(signedHeaders, sizeof(signedHeaders), "host;x-amz-date;x-amz-security-token");
+	} else {
+		snprint(signedHeaders, sizeof(signedHeaders), "host;x-amz-date");
+	}
+	
+	char canonicalRequest[4096];
+	snprint(canonicalRequest, sizeof(canonicalRequest),
+		"%s\n%s\n%s\n%s\n%s\n%s",
+		method, uri, queryString, canonicalHeaders, signedHeaders, payloadHash);
+	
+	/* Hash canonical request */
+	uchar canonicalHash[SHA2_256dlen];
+	sha256Hash((uchar*)canonicalRequest, strlen(canonicalRequest), canonicalHash);
+	char canonicalHashHex[SHA2_256dlen*2+1];
+	hexEncode(canonicalHash, SHA2_256dlen, canonicalHashHex);
+	
+	/* String to sign */
+	char credentialScope[256];
+	snprint(credentialScope, sizeof(credentialScope),
+		"%s/%s/%s/aws4_request", dateStamp, region, service);
+	
+	char stringToSign[4096];
+	snprint(stringToSign, sizeof(stringToSign),
+		"AWS4-HMAC-SHA256\n%s\n%s\n%s",
+		amzDate, credentialScope, canonicalHashHex);
+	
+	/* Calculate signature */
+	uchar signingKey[SHA2_256dlen];
+	getAwsSigningKey(secretKey, dateStamp, region, service, signingKey);
+	
+	uchar signature[SHA2_256dlen];
+	hmacSha256(signingKey, SHA2_256dlen, (uchar*)stringToSign, strlen(stringToSign), signature);
+	
+	char signatureHex[SHA2_256dlen*2+1];
+	hexEncode(signature, SHA2_256dlen, signatureHex);
+	
+	/* Create authorization header */
+	snprint(authHeader, authHeaderLen,
+		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		accessKey, credentialScope, signedHeaders, signatureHex);
+}
+
+/* s3ListObjects(bucket, accessKey, secretKey, region, [prefix], [sessionToken]) -> JSON string or nil */
+static Value
+s3ListObjectsNative(int argCount, Value* args)
+{
+	if (argCount < 4 || argCount > 6)
+		return NIL_VAL;
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || 
+	    !IS_STRING(args[2]) || !IS_STRING(args[3]))
+		return NIL_VAL;
+	
+	char* bucket = AS_CSTRING(args[0]);
+	char* accessKey = AS_CSTRING(args[1]);
+	char* secretKey = AS_CSTRING(args[2]);
+	char* region = AS_CSTRING(args[3]);
+	char* prefix = (argCount >= 5 && IS_STRING(args[4])) ? AS_CSTRING(args[4]) : "";
+	char* sessionToken = (argCount >= 6 && IS_STRING(args[5])) ? AS_CSTRING(args[5]) : nil;
+	
+	/* Get current time (UTC for AWS) */
+	Tm* tm = gmtime(time(0));
+	char amzDate[32];
+	char dateStamp[16];
+	snprint(amzDate, sizeof(amzDate), "%04d%02d%02dT%02d%02d%02dZ",
+		tm->year+1900, tm->mon+1, tm->mday, tm->hour, tm->min, tm->sec);
+	snprint(dateStamp, sizeof(dateStamp), "%04d%02d%02d",
+		tm->year+1900, tm->mon+1, tm->mday);
+	
+	/* Build host and URI */
+	char host[256];
+	snprint(host, sizeof(host), "%s.s3.%s.amazonaws.com", bucket, region);
+	
+	char queryString[512];
+	if (prefix && prefix[0]) {
+		char encodedPrefix[256];
+		/* Simple URL encoding for prefix */
+		int j = 0;
+		for (int i = 0; prefix[i] && j < sizeof(encodedPrefix)-4; i++) {
+			char c = prefix[i];
+			if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
+			    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+				encodedPrefix[j++] = c;
+			} else {
+				snprint(encodedPrefix+j, 4, "%%%02X", (unsigned char)c);
+				j += 3;
+			}
+		}
+		encodedPrefix[j] = '\0';
+		snprint(queryString, sizeof(queryString), "list-type=2&prefix=%s", encodedPrefix);
+	} else {
+		snprint(queryString, sizeof(queryString), "list-type=2");
+	}
+	
+	/* Empty payload hash (GET request) */
+	char payloadHash[SHA2_256dlen*2+1];
+	uchar emptyHash[SHA2_256dlen];
+	sha256Hash((uchar*)"", 0, emptyHash);
+	hexEncode(emptyHash, SHA2_256dlen, payloadHash);
+	
+	/* Create signature */
+	char authHeader[512];
+	createAwsSignature("GET", host, "/", queryString, payloadHash,
+		accessKey, secretKey, region, "s3", amzDate, dateStamp,
+		sessionToken, authHeader, sizeof(authHeader));
+	
+	/* Make HTTPS request */
+	char dialAddr[512];
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!443", host);
+	
+	int fd = dial(dialAddr, nil, nil, nil);
+	if (fd < 0)
+		return NIL_VAL;
+	
+	TLSconn conn;
+	memset(&conn, 0, sizeof(conn));
+	conn.serverName = host;
+	fd = tlsClient(fd, &conn);
+	if (fd < 0)
+		return NIL_VAL;
+	
+	/* Send request */
+	char request[4096];
+	int reqLen;
+	if (sessionToken && sessionToken[0]) {
+		reqLen = snprint(request, sizeof(request),
+			"GET /?%s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"Authorization: %s\r\n"
+			"x-amz-date: %s\r\n"
+			"x-amz-content-sha256: %s\r\n"
+			"x-amz-security-token: %s\r\n"
+			"Connection: close\r\n"
+			"\r\n",
+			queryString, host, authHeader, amzDate, payloadHash, sessionToken);
+	} else {
+		reqLen = snprint(request, sizeof(request),
+			"GET /?%s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"Authorization: %s\r\n"
+			"x-amz-date: %s\r\n"
+			"x-amz-content-sha256: %s\r\n"
+			"Connection: close\r\n"
+			"\r\n",
+			queryString, host, authHeader, amzDate, payloadHash);
+	}
+	
+	write(fd, request, reqLen);
+	
+	/* Read response */
+	int bodyLen;
+	char* respBody = readHttpResponse(fd, &bodyLen);
+	
+	free(conn.cert);
+	close(fd);
+	
+	if (respBody == nil)
+		return NIL_VAL;
+	
+	Value result = OBJ_VAL(copyString(respBody, bodyLen));
+	free(respBody);
+	return result;
+}
+
+/* s3GetObject(bucket, key, accessKey, secretKey, region, [sessionToken]) -> string or nil */
+static Value
+s3GetObjectNative(int argCount, Value* args)
+{
+	if (argCount < 5 || argCount > 6)
+		return NIL_VAL;
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_STRING(args[2]) ||
+	    !IS_STRING(args[3]) || !IS_STRING(args[4]))
+		return NIL_VAL;
+	
+	char* bucket = AS_CSTRING(args[0]);
+	char* key = AS_CSTRING(args[1]);
+	char* accessKey = AS_CSTRING(args[2]);
+	char* secretKey = AS_CSTRING(args[3]);
+	char* region = AS_CSTRING(args[4]);
+	char* sessionToken = (argCount >= 6 && IS_STRING(args[5])) ? AS_CSTRING(args[5]) : nil;
+	
+	/* Get current time (UTC for AWS) */
+	Tm* tm = gmtime(time(0));
+	char amzDate[32];
+	char dateStamp[16];
+	snprint(amzDate, sizeof(amzDate), "%04d%02d%02dT%02d%02d%02dZ",
+		tm->year+1900, tm->mon+1, tm->mday, tm->hour, tm->min, tm->sec);
+	snprint(dateStamp, sizeof(dateStamp), "%04d%02d%02d",
+		tm->year+1900, tm->mon+1, tm->mday);
+	
+	/* Build host and URI */
+	char host[256];
+	snprint(host, sizeof(host), "%s.s3.%s.amazonaws.com", bucket, region);
+	
+	/* URL encode the key */
+	char uri[512] = "/";
+	int uriPos = 1;
+	for (int i = 0; key[i] && uriPos < sizeof(uri)-4; i++) {
+		char c = key[i];
+		if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
+		    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+			uri[uriPos++] = c;
+		} else {
+			snprint(uri+uriPos, 4, "%%%02X", (unsigned char)c);
+			uriPos += 3;
+		}
+	}
+	uri[uriPos] = '\0';
+	
+	/* Empty payload hash */
+	char payloadHash[SHA2_256dlen*2+1];
+	uchar emptyHash[SHA2_256dlen];
+	sha256Hash((uchar*)"", 0, emptyHash);
+	hexEncode(emptyHash, SHA2_256dlen, payloadHash);
+	
+	/* Create signature */
+	char authHeader[512];
+	createAwsSignature("GET", host, uri, "", payloadHash,
+		accessKey, secretKey, region, "s3", amzDate, dateStamp,
+		sessionToken, authHeader, sizeof(authHeader));
+	
+	/* Make HTTPS request */
+	char dialAddr[512];
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!443", host);
+	
+	int fd = dial(dialAddr, nil, nil, nil);
+	if (fd < 0)
+		return NIL_VAL;
+	
+	TLSconn conn;
+	memset(&conn, 0, sizeof(conn));
+	conn.serverName = host;
+	fd = tlsClient(fd, &conn);
+	if (fd < 0)
+		return NIL_VAL;
+	
+	/* Send request */
+	char request[2048];
+	int reqLen;
+	if (sessionToken && sessionToken[0]) {
+		reqLen = snprint(request, sizeof(request),
+			"GET %s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"Authorization: %s\r\n"
+			"x-amz-date: %s\r\n"
+			"x-amz-content-sha256: %s\r\n"
+			"x-amz-security-token: %s\r\n"
+			"Connection: close\r\n"
+			"\r\n",
+			uri, host, authHeader, amzDate, payloadHash, sessionToken);
+	} else {
+		reqLen = snprint(request, sizeof(request),
+			"GET %s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"Authorization: %s\r\n"
+			"x-amz-date: %s\r\n"
+			"x-amz-content-sha256: %s\r\n"
+			"Connection: close\r\n"
+			"\r\n",
+			uri, host, authHeader, amzDate, payloadHash);
+	}
+	
+	write(fd, request, reqLen);
+	
+	/* Read response */
+	int bodyLen;
+	char* respBody = readHttpResponse(fd, &bodyLen);
+	
+	free(conn.cert);
+	close(fd);
+	
+	if (respBody == nil)
+		return NIL_VAL;
+	
+	Value result = OBJ_VAL(copyString(respBody, bodyLen));
+	free(respBody);
+	return result;
+}
+
+/* s3PutObject(bucket, key, content, accessKey, secretKey, region, [sessionToken]) -> true/false */
+static Value
+s3PutObjectNative(int argCount, Value* args)
+{
+	if (argCount < 6 || argCount > 7)
+		return BOOL_VAL(false);
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_STRING(args[2]) ||
+	    !IS_STRING(args[3]) || !IS_STRING(args[4]) || !IS_STRING(args[5]))
+		return BOOL_VAL(false);
+	
+	char* bucket = AS_CSTRING(args[0]);
+	char* key = AS_CSTRING(args[1]);
+	char* content = AS_CSTRING(args[2]);
+	int contentLen = strlen(content);
+	char* accessKey = AS_CSTRING(args[3]);
+	char* secretKey = AS_CSTRING(args[4]);
+	char* region = AS_CSTRING(args[5]);
+	char* sessionToken = (argCount >= 7 && IS_STRING(args[6])) ? AS_CSTRING(args[6]) : nil;
+	
+	/* Get current time (UTC for AWS) */
+	Tm* tm = gmtime(time(0));
+	char amzDate[32];
+	char dateStamp[16];
+	snprint(amzDate, sizeof(amzDate), "%04d%02d%02dT%02d%02d%02dZ",
+		tm->year+1900, tm->mon+1, tm->mday, tm->hour, tm->min, tm->sec);
+	snprint(dateStamp, sizeof(dateStamp), "%04d%02d%02d",
+		tm->year+1900, tm->mon+1, tm->mday);
+	
+	/* Build host and URI */
+	char host[256];
+	snprint(host, sizeof(host), "%s.s3.%s.amazonaws.com", bucket, region);
+	
+	/* URL encode the key */
+	char uri[512] = "/";
+	int uriPos = 1;
+	for (int i = 0; key[i] && uriPos < sizeof(uri)-4; i++) {
+		char c = key[i];
+		if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
+		    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+			uri[uriPos++] = c;
+		} else {
+			snprint(uri+uriPos, 4, "%%%02X", (unsigned char)c);
+			uriPos += 3;
+		}
+	}
+	uri[uriPos] = '\0';
+	
+	/* Hash the payload */
+	char payloadHash[SHA2_256dlen*2+1];
+	uchar contentHash[SHA2_256dlen];
+	sha256Hash((uchar*)content, contentLen, contentHash);
+	hexEncode(contentHash, SHA2_256dlen, payloadHash);
+	
+	/* Create signature */
+	char authHeader[512];
+	createAwsSignature("PUT", host, uri, "", payloadHash,
+		accessKey, secretKey, region, "s3", amzDate, dateStamp,
+		sessionToken, authHeader, sizeof(authHeader));
+	
+	/* Make HTTPS request */
+	char dialAddr[512];
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!443", host);
+	
+	int fd = dial(dialAddr, nil, nil, nil);
+	if (fd < 0)
+		return BOOL_VAL(false);
+	
+	TLSconn conn;
+	memset(&conn, 0, sizeof(conn));
+	conn.serverName = host;
+	fd = tlsClient(fd, &conn);
+	if (fd < 0)
+		return BOOL_VAL(false);
+	
+	/* Send request */
+	char request[2048];
+	int reqLen;
+	if (sessionToken && sessionToken[0]) {
+		reqLen = snprint(request, sizeof(request),
+			"PUT %s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"Authorization: %s\r\n"
+			"x-amz-date: %s\r\n"
+			"x-amz-content-sha256: %s\r\n"
+			"x-amz-security-token: %s\r\n"
+			"Content-Length: %d\r\n"
+			"Connection: close\r\n"
+			"\r\n",
+			uri, host, authHeader, amzDate, payloadHash, sessionToken, contentLen);
+	} else {
+		reqLen = snprint(request, sizeof(request),
+			"PUT %s HTTP/1.1\r\n"
+			"Host: %s\r\n"
+			"Authorization: %s\r\n"
+			"x-amz-date: %s\r\n"
+			"x-amz-content-sha256: %s\r\n"
+			"Content-Length: %d\r\n"
+			"Connection: close\r\n"
+			"\r\n",
+			uri, host, authHeader, amzDate, payloadHash, contentLen);
+	}
+	
+	write(fd, request, reqLen);
+	write(fd, content, contentLen);
+	
+	/* Read response */
+	int bodyLen;
+	char* respBody = readHttpResponse(fd, &bodyLen);
+	
+	free(conn.cert);
+	close(fd);
+	
+	if (respBody == nil)
+		return BOOL_VAL(false);
+	
+	/* Check if successful (2xx status code) */
+	int success = (respBody[9] == '2');
+	free(respBody);
+	
+	return BOOL_VAL(success);
+}
+
 /* httpServer(port, handler) -> starts server, handler gets (method, path, body) */
 static Value 
 httpServerNative(int argCount, Value* args)
@@ -1273,10 +1803,14 @@ initVM(void)
 	defineNative("listDir", listDirNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
+	defineNative("parseXml", parseXmlNative);
 	defineNative("httpGet", httpGetNative);
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
 	defineNative("httpServer", httpServerNative);
+	defineNative("s3ListObjects", s3ListObjectsNative);
+	defineNative("s3GetObject", s3GetObjectNative);
+	defineNative("s3PutObject", s3PutObjectNative);
 }
 
 void 
@@ -1488,7 +2022,6 @@ run(void)
 	uchar instruction;
 	Value a, b, constant;
 	double da, db;
-	Value *slot;
 
 #define READ_BYTE() (*frame->ip++)
 
@@ -1578,6 +2111,21 @@ run(void)
 		}
 
 		case OP_GET_PROPERTY: {
+			ObjString* name = READ_STRING();
+			
+			/* Handle array.length */
+			if (IS_ARRAY(peek(0))) {
+				ObjArray* array = AS_ARRAY(peek(0));
+				if (strcmp(name->chars, "length") == 0) {
+					pop(); /* Array */
+					push(NUMBER_VAL((double)array->count));
+					break;
+				} else {
+					runtimeError("Arrays only have 'length' property.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+			}
+			
 			if (!IS_INSTANCE(peek(0))) {
 				runtimeError("Only instances have properties.");
 				return INTERPRET_RUNTIME_ERROR;
@@ -1585,7 +2133,6 @@ run(void)
 
 
 			ObjInstance* instance = AS_INSTANCE(peek(0));
-			ObjString* name = READ_STRING();
 
 			Value value;
 			if (tableGet(&instance->fields, name, &value)) {
@@ -1823,6 +2370,107 @@ run(void)
 		case OP_METHOD:
 			defineMethod(READ_STRING());
 			break;
+		case OP_ARRAY: {
+			int count;
+			ObjArray* array;
+			int i;
+			
+			count = READ_BYTE();
+			array = newArray();
+			
+			/* Allocate space for all elements (might trigger GC) */
+			if (count > 0) {
+				/* Push array for GC protection before allocating elements */
+				push(OBJ_VAL(array));
+				
+				array->elements = ALLOCATE(Value, count);
+				array->capacity = count;
+				array->count = count;
+				
+				/* Copy elements from stack 
+				 * Stack is now: [e0, e1, ..., e(n-1), array]
+				 * We want e0 at index 0, so peek(count) for e0
+				 */
+				for (i = 0; i < count; i++) {
+					array->elements[i] = peek(count - i);
+				}
+				
+				/* Pop array temporarily */
+				pop();
+			}
+			
+			/* Pop all element values from stack */
+			for (i = 0; i < count; i++) {
+				pop();
+			}
+			
+			/* Push the array onto the stack */
+			push(OBJ_VAL(array));
+			break;
+		}
+		case OP_INDEX_SUBSCR: {
+			Value index;
+			Value array;
+			int idx;
+			ObjArray* arr;
+			
+			index = pop();
+			array = pop();
+			
+			if (!IS_ARRAY(array)) {
+				runtimeError("Can only index arrays.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			
+			if (!IS_NUMBER(index)) {
+				runtimeError("Array index must be a number.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			
+			idx = (int)AS_NUMBER(index);
+			arr = AS_ARRAY(array);
+			
+			if (idx < 0 || idx >= arr->count) {
+				runtimeError("Array index out of bounds.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			
+			push(arr->elements[idx]);
+			break;
+		}
+		case OP_STORE_SUBSCR: {
+			Value value;
+			Value index;
+			Value array;
+			int idx;
+			ObjArray* arr;
+			
+			value = pop();
+			index = pop();
+			array = pop();
+			
+			if (!IS_ARRAY(array)) {
+				runtimeError("Can only index arrays.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			
+			if (!IS_NUMBER(index)) {
+				runtimeError("Array index must be a number.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			
+			idx = (int)AS_NUMBER(index);
+			arr = AS_ARRAY(array);
+			
+			if (idx < 0 || idx >= arr->count) {
+				runtimeError("Array index out of bounds.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			
+			arr->elements[idx] = value;
+			push(value);
+			break;
+		}
 	  }
 	}
 

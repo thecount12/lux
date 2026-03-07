@@ -165,6 +165,12 @@ int disassembleInstruction(Chunk* chunk, int offset)
 			return simpleInstruction("OP_INHERIT", offset);
 		case OP_METHOD:
 			return constantInstruction("OP_METHOD", chunk, offset);
+		case OP_ARRAY:
+			return byteInstruction("OP_ARRAY", chunk, offset);
+		case OP_INDEX_SUBSCR:
+			return simpleInstruction("OP_INDEX_SUBSCR", offset);
+		case OP_STORE_SUBSCR:
+			return simpleInstruction("OP_STORE_SUBSCR", offset);
         default:
             print("Unknown opcode %d\n", instruction);
             return offset + 1;

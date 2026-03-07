@@ -10,6 +10,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <openssl/hmac.h>
+#include <openssl/sha.h>
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
@@ -519,6 +521,63 @@ static Value toJSONNative(int argCount, Value* args) {
 	return result;
 }
 
+/* parseXml(xmlString, tagName) -> object with numeric keys (like JSON arrays) */
+static Value parseXmlNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	
+	char* xml = AS_CSTRING(args[0]);
+	char* tagName = AS_CSTRING(args[1]);
+	
+	/* Build open and close tags */
+	char openTag[256];
+	char closeTag[256];
+	snprintf(openTag, sizeof(openTag), "<%s>", tagName);
+	snprintf(closeTag, sizeof(closeTag), "</%s>", tagName);
+	int openLen = strlen(openTag);
+	int closeLen = strlen(closeTag);
+	
+	/* Create result array */
+	ObjArray* result = newArray();
+	push(OBJ_VAL(result));
+	
+	char* search = xml;
+	
+	/* Find all occurrences of the tag */
+	while (1) {
+		/* Find opening tag */
+		char* openPos = strstr(search, openTag);
+		if (openPos == NULL)
+			break;
+		
+		/* Find closing tag after opening */
+		char* closePos = strstr(openPos + openLen, closeTag);
+		if (closePos == NULL)
+			break;
+		
+		/* Extract content between tags */
+		int contentLen = closePos - (openPos + openLen);
+		char* content = malloc(contentLen + 1);
+		if (content == NULL)
+			break;
+		
+		memcpy(content, openPos + openLen, contentLen);
+		content[contentLen] = '\0';
+		
+		/* Add to result array */
+		Value value = OBJ_VAL(copyString(content, contentLen));
+		free(content);
+		
+		writeArray(result, value);
+		
+		/* Move search position past this closing tag */
+		search = closePos + closeLen;
+	}
+	
+	pop();
+	return OBJ_VAL(result);
+}
+
 /* HTTP support using libcurl */
 typedef struct {
 	char* data;
@@ -740,6 +799,452 @@ static void sendHttpResponse(int fd, int statusCode, const char* statusText, con
 	write(fd, response, len);
 }
 
+/* ========== AWS Signature V4 Implementation ========== */
+
+/* Helper: hex encode bytes */
+static void hexEncode(unsigned char* bytes, int len, char* out) {
+	static char hex[] = "0123456789abcdef";
+	for (int i = 0; i < len; i++) {
+		out[i*2] = hex[bytes[i] >> 4];
+		out[i*2+1] = hex[bytes[i] & 0xf];
+	}
+	out[len*2] = '\0';
+}
+
+/* Helper: HMAC-SHA256 using OpenSSL */
+static void hmacSha256(unsigned char* key, int keyLen, unsigned char* data, int dataLen, unsigned char* out) {
+	unsigned int outLen;
+	HMAC(EVP_sha256(), key, keyLen, data, dataLen, out, &outLen);
+}
+
+/* Helper: SHA256 hash */
+static void sha256Hash(unsigned char* data, int dataLen, unsigned char* out) {
+	SHA256(data, dataLen, out);
+}
+
+/* Get AWS signing key */
+static void getAwsSigningKey(char* secretKey, char* dateStamp, char* region, char* service, unsigned char* signingKey) {
+	unsigned char kDate[SHA256_DIGEST_LENGTH];
+	unsigned char kRegion[SHA256_DIGEST_LENGTH];
+	unsigned char kService[SHA256_DIGEST_LENGTH];
+	
+	char keyWithPrefix[256];
+	snprintf(keyWithPrefix, sizeof(keyWithPrefix), "AWS4%s", secretKey);
+	
+	hmacSha256((unsigned char*)keyWithPrefix, strlen(keyWithPrefix), (unsigned char*)dateStamp, strlen(dateStamp), kDate);
+	hmacSha256(kDate, SHA256_DIGEST_LENGTH, (unsigned char*)region, strlen(region), kRegion);
+	hmacSha256(kRegion, SHA256_DIGEST_LENGTH, (unsigned char*)service, strlen(service), kService);
+	hmacSha256(kService, SHA256_DIGEST_LENGTH, (unsigned char*)"aws4_request", 12, signingKey);
+}
+
+/* Create AWS Signature V4 */
+static void createAwsSignature(char* method, char* host, char* uri, char* queryString,
+		char* payloadHash, char* accessKey, char* secretKey, char* region,
+		char* service, char* amzDate, char* dateStamp, char* sessionToken,
+		char* authHeader, int authHeaderLen) {
+	/* Canonical request */
+	char canonicalHeaders[1024];
+	snprintf(canonicalHeaders, sizeof(canonicalHeaders),
+		"host:%s\nx-amz-date:%s\n", host, amzDate);
+	
+	char signedHeaders[256];
+	if (sessionToken && sessionToken[0]) {
+		char tokHeader[512];
+		snprintf(tokHeader, sizeof(tokHeader), "x-amz-security-token:%s\n", sessionToken);
+		strncat(canonicalHeaders, tokHeader, sizeof(canonicalHeaders) - strlen(canonicalHeaders) - 1);
+		snprintf(signedHeaders, sizeof(signedHeaders), "host;x-amz-date;x-amz-security-token");
+	} else {
+		snprintf(signedHeaders, sizeof(signedHeaders), "host;x-amz-date");
+	}
+	
+	char canonicalRequest[4096];
+	snprintf(canonicalRequest, sizeof(canonicalRequest),
+		"%s\n%s\n%s\n%s\n%s\n%s",
+		method, uri, queryString, canonicalHeaders, signedHeaders, payloadHash);
+	
+	/* Hash canonical request */
+	unsigned char canonicalHash[SHA256_DIGEST_LENGTH];
+	sha256Hash((unsigned char*)canonicalRequest, strlen(canonicalRequest), canonicalHash);
+	char canonicalHashHex[SHA256_DIGEST_LENGTH*2+1];
+	hexEncode(canonicalHash, SHA256_DIGEST_LENGTH, canonicalHashHex);
+	
+	/* String to sign */
+	char credentialScope[256];
+	snprintf(credentialScope, sizeof(credentialScope),
+		"%s/%s/%s/aws4_request", dateStamp, region, service);
+	
+	char stringToSign[4096];
+	snprintf(stringToSign, sizeof(stringToSign),
+		"AWS4-HMAC-SHA256\n%s\n%s\n%s",
+		amzDate, credentialScope, canonicalHashHex);
+	
+	/* Calculate signature */
+	unsigned char signingKey[SHA256_DIGEST_LENGTH];
+	getAwsSigningKey(secretKey, dateStamp, region, service, signingKey);
+	
+	unsigned char signature[SHA256_DIGEST_LENGTH];
+	hmacSha256(signingKey, SHA256_DIGEST_LENGTH, (unsigned char*)stringToSign, strlen(stringToSign), signature);
+	
+	char signatureHex[SHA256_DIGEST_LENGTH*2+1];
+	hexEncode(signature, SHA256_DIGEST_LENGTH, signatureHex);
+	
+	/* Create authorization header */
+	snprintf(authHeader, authHeaderLen,
+		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		accessKey, credentialScope, signedHeaders, signatureHex);
+}
+
+/* Helper for S3 HTTPS requests using libcurl */
+struct MemoryStruct {
+	char* memory;
+	size_t size;
+};
+
+static size_t WriteMemoryCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+	size_t realsize = size * nmemb;
+	struct MemoryStruct* mem = (struct MemoryStruct*)userp;
+	
+	char* ptr = realloc(mem->memory, mem->size + realsize + 1);
+	if (ptr == NULL) {
+		fprintf(stderr, "Not enough memory\n");
+		return 0;
+	}
+	
+	mem->memory = ptr;
+	memcpy(&(mem->memory[mem->size]), contents, realsize);
+	mem->size += realsize;
+	mem->memory[mem->size] = 0;
+	
+	return realsize;
+}
+
+/* s3ListObjects(bucket, accessKey, secretKey, region, [prefix], [sessionToken]) -> JSON string or nil */
+static Value s3ListObjectsNative(int argCount, Value* args) {
+	if (argCount < 4 || argCount > 6)
+		return NIL_VAL;
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || 
+	    !IS_STRING(args[2]) || !IS_STRING(args[3]))
+		return NIL_VAL;
+	
+	char* bucket = AS_CSTRING(args[0]);
+	char* accessKey = AS_CSTRING(args[1]);
+	char* secretKey = AS_CSTRING(args[2]);
+	char* region = AS_CSTRING(args[3]);
+	char* prefix = (argCount >= 5 && IS_STRING(args[4])) ? AS_CSTRING(args[4]) : "";
+	char* sessionToken = (argCount >= 6 && IS_STRING(args[5])) ? AS_CSTRING(args[5]) : NULL;
+	
+	/* Get current time in UTC */
+	time_t now = time(NULL);
+	struct tm* tm = gmtime(&now);
+	char amzDate[32];
+	char dateStamp[16];
+	snprintf(amzDate, sizeof(amzDate), "%04d%02d%02dT%02d%02d%02dZ",
+		tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+	snprintf(dateStamp, sizeof(dateStamp), "%04d%02d%02d",
+		tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+	
+	/* Build host and URL */
+	char host[256];
+	snprintf(host, sizeof(host), "%s.s3.%s.amazonaws.com", bucket, region);
+	
+	/* URL encode prefix using libcurl */
+	char* encodedPrefix = NULL;
+	if (prefix && prefix[0]) {
+		encodedPrefix = curl_easy_escape(NULL, prefix, strlen(prefix));
+	}
+	
+	char queryString[512];
+	if (encodedPrefix) {
+		snprintf(queryString, sizeof(queryString), "list-type=2&prefix=%s", encodedPrefix);
+		curl_free(encodedPrefix);
+	} else {
+		snprintf(queryString, sizeof(queryString), "list-type=2");
+	}
+	
+	/* Empty payload hash */
+	char payloadHash[SHA256_DIGEST_LENGTH*2+1];
+	unsigned char emptyHash[SHA256_DIGEST_LENGTH];
+	sha256Hash((unsigned char*)"", 0, emptyHash);
+	hexEncode(emptyHash, SHA256_DIGEST_LENGTH, payloadHash);
+	
+	/* Create signature */
+	char authHeader[512];
+	createAwsSignature("GET", host, "/", queryString, payloadHash,
+		accessKey, secretKey, region, "s3", amzDate, dateStamp,
+		sessionToken, authHeader, sizeof(authHeader));
+	
+	/* Build full URL */
+	char url[1024];
+	snprintf(url, sizeof(url), "https://%s/?%s", host, queryString);
+	
+	/* Setup libcurl */
+	CURL* curl = curl_easy_init();
+	if (!curl)
+		return NIL_VAL;
+	
+	struct MemoryStruct chunk;
+	chunk.memory = malloc(1);
+	chunk.size = 0;
+	
+	/* Set headers */
+	struct curl_slist* headers = NULL;
+	char authHdr[1024];
+	snprintf(authHdr, sizeof(authHdr), "Authorization: %s", authHeader);
+	headers = curl_slist_append(headers, authHdr);
+	
+	char dateHdr[128];
+	snprintf(dateHdr, sizeof(dateHdr), "x-amz-date: %s", amzDate);
+	headers = curl_slist_append(headers, dateHdr);
+	
+	char shaHdr[256];
+	snprintf(shaHdr, sizeof(shaHdr), "x-amz-content-sha256: %s", payloadHash);
+	headers = curl_slist_append(headers, shaHdr);
+	
+	if (sessionToken && sessionToken[0]) {
+		char tokenHdr[1024];
+		snprintf(tokenHdr, sizeof(tokenHdr), "x-amz-security-token: %s", sessionToken);
+		headers = curl_slist_append(headers, tokenHdr);
+	}
+	
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&chunk);
+	
+	/* Perform request */
+	CURLcode res = curl_easy_perform(curl);
+	
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	
+	if (res != CURLE_OK) {
+		free(chunk.memory);
+		return NIL_VAL;
+	}
+	
+	Value result = OBJ_VAL(copyString(chunk.memory, chunk.size));
+	free(chunk.memory);
+	return result;
+}
+
+/* s3GetObject(bucket, key, accessKey, secretKey, region, [sessionToken]) -> string or nil */
+static Value s3GetObjectNative(int argCount, Value* args) {
+	if (argCount < 5 || argCount > 6)
+		return NIL_VAL;
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_STRING(args[2]) ||
+	    !IS_STRING(args[3]) || !IS_STRING(args[4]))
+		return NIL_VAL;
+	
+	char* bucket = AS_CSTRING(args[0]);
+	char* key = AS_CSTRING(args[1]);
+	char* accessKey = AS_CSTRING(args[2]);
+	char* secretKey = AS_CSTRING(args[3]);
+	char* region = AS_CSTRING(args[4]);
+	char* sessionToken = (argCount >= 6 && IS_STRING(args[5])) ? AS_CSTRING(args[5]) : NULL;
+	
+	/* Get current time in UTC */
+	time_t now = time(NULL);
+	struct tm* tm = gmtime(&now);
+	char amzDate[32];
+	char dateStamp[16];
+	snprintf(amzDate, sizeof(amzDate), "%04d%02d%02dT%02d%02d%02dZ",
+		tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+	snprintf(dateStamp, sizeof(dateStamp), "%04d%02d%02d",
+		tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+	
+	/* Build host and URI */
+	char host[256];
+	snprintf(host, sizeof(host), "%s.s3.%s.amazonaws.com", bucket, region);
+	
+	/* URL encode the key */
+	char* encodedKey = curl_easy_escape(NULL, key, strlen(key));
+	if (!encodedKey)
+		return NIL_VAL;
+	
+	char uri[512];
+	snprintf(uri, sizeof(uri), "/%s", encodedKey);
+	
+	/* Empty payload hash */
+	char payloadHash[SHA256_DIGEST_LENGTH*2+1];
+	unsigned char emptyHash[SHA256_DIGEST_LENGTH];
+	sha256Hash((unsigned char*)"", 0, emptyHash);
+	hexEncode(emptyHash, SHA256_DIGEST_LENGTH, payloadHash);
+	
+	/* Create signature */
+	char authHeader[512];
+	createAwsSignature("GET", host, uri, "", payloadHash,
+		accessKey, secretKey, region, "s3", amzDate, dateStamp,
+		sessionToken, authHeader, sizeof(authHeader));
+	
+	/* Build full URL */
+	char url[1024];
+	snprintf(url, sizeof(url), "https://%s%s", host, uri);
+	curl_free(encodedKey);
+	
+	/* Setup libcurl */
+	CURL* curl = curl_easy_init();
+	if (!curl)
+		return NIL_VAL;
+	
+	struct MemoryStruct chunk;
+	chunk.memory = malloc(1);
+	chunk.size = 0;
+	
+	/* Set headers */
+	struct curl_slist* headers = NULL;
+	char authHdr[1024];
+	snprintf(authHdr, sizeof(authHdr), "Authorization: %s", authHeader);
+	headers = curl_slist_append(headers, authHdr);
+	
+	char dateHdr[128];
+	snprintf(dateHdr, sizeof(dateHdr), "x-amz-date: %s", amzDate);
+	headers = curl_slist_append(headers, dateHdr);
+	
+	char shaHdr[256];
+	snprintf(shaHdr, sizeof(shaHdr), "x-amz-content-sha256: %s", payloadHash);
+	headers = curl_slist_append(headers, shaHdr);
+	
+	if (sessionToken && sessionToken[0]) {
+		char tokenHdr[1024];
+		snprintf(tokenHdr, sizeof(tokenHdr), "x-amz-security-token: %s", sessionToken);
+		headers = curl_slist_append(headers, tokenHdr);
+	}
+	
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&chunk);
+	
+	/* Perform request */
+	CURLcode res = curl_easy_perform(curl);
+	
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	
+	if (res != CURLE_OK) {
+		free(chunk.memory);
+		return NIL_VAL;
+	}
+	
+	Value result = OBJ_VAL(copyString(chunk.memory, chunk.size));
+	free(chunk.memory);
+	return result;
+}
+
+/* s3PutObject(bucket, key, content, accessKey, secretKey, region, [sessionToken]) -> true/false */
+static Value s3PutObjectNative(int argCount, Value* args) {
+	if (argCount < 6 || argCount > 7)
+		return BOOL_VAL(false);
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_STRING(args[2]) ||
+	    !IS_STRING(args[3]) || !IS_STRING(args[4]) || !IS_STRING(args[5]))
+		return BOOL_VAL(false);
+	
+	char* bucket = AS_CSTRING(args[0]);
+	char* key = AS_CSTRING(args[1]);
+	char* content = AS_CSTRING(args[2]);
+	int contentLen = strlen(content);
+	char* accessKey = AS_CSTRING(args[3]);
+	char* secretKey = AS_CSTRING(args[4]);
+	char* region = AS_CSTRING(args[5]);
+	char* sessionToken = (argCount >= 7 && IS_STRING(args[6])) ? AS_CSTRING(args[6]) : NULL;
+	
+	/* Get current time in UTC */
+	time_t now = time(NULL);
+	struct tm* tm = gmtime(&now);
+	char amzDate[32];
+	char dateStamp[16];
+	snprintf(amzDate, sizeof(amzDate), "%04d%02d%02dT%02d%02d%02dZ",
+		tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+	snprintf(dateStamp, sizeof(dateStamp), "%04d%02d%02d",
+		tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+	
+	/* Build host and URI */
+	char host[256];
+	snprintf(host, sizeof(host), "%s.s3.%s.amazonaws.com", bucket, region);
+	
+	/* URL encode the key */
+	char* encodedKey = curl_easy_escape(NULL, key, strlen(key));
+	if (!encodedKey)
+		return BOOL_VAL(false);
+	
+	char uri[512];
+	snprintf(uri, sizeof(uri), "/%s", encodedKey);
+	
+	/* Hash the payload */
+	char payloadHash[SHA256_DIGEST_LENGTH*2+1];
+	unsigned char contentHash[SHA256_DIGEST_LENGTH];
+	sha256Hash((unsigned char*)content, contentLen, contentHash);
+	hexEncode(contentHash, SHA256_DIGEST_LENGTH, payloadHash);
+	
+	/* Create signature */
+	char authHeader[512];
+	createAwsSignature("PUT", host, uri, "", payloadHash,
+		accessKey, secretKey, region, "s3", amzDate, dateStamp,
+		sessionToken, authHeader, sizeof(authHeader));
+	
+	/* Build full URL */
+	char url[1024];
+	snprintf(url, sizeof(url), "https://%s%s", host, uri);
+	curl_free(encodedKey);
+	
+	/* Setup libcurl */
+	CURL* curl = curl_easy_init();
+	if (!curl)
+		return BOOL_VAL(false);
+	
+	struct MemoryStruct chunk;
+	chunk.memory = malloc(1);
+	chunk.size = 0;
+	
+	/* Set headers */
+	struct curl_slist* headers = NULL;
+	char authHdr[1024];
+	snprintf(authHdr, sizeof(authHdr), "Authorization: %s", authHeader);
+	headers = curl_slist_append(headers, authHdr);
+	
+	char dateHdr[128];
+	snprintf(dateHdr, sizeof(dateHdr), "x-amz-date: %s", amzDate);
+	headers = curl_slist_append(headers, dateHdr);
+	
+	char shaHdr[256];
+	snprintf(shaHdr, sizeof(shaHdr), "x-amz-content-sha256: %s", payloadHash);
+	headers = curl_slist_append(headers, shaHdr);
+	
+	if (sessionToken && sessionToken[0]) {
+		char tokenHdr[1024];
+		snprintf(tokenHdr, sizeof(tokenHdr), "x-amz-security-token: %s", sessionToken);
+		headers = curl_slist_append(headers, tokenHdr);
+	}
+	
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+	curl_easy_setopt(curl, CURLOPT_READDATA, NULL);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, content);
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)contentLen);
+	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&chunk);
+	
+	/* Perform request */
+	CURLcode res = curl_easy_perform(curl);
+	
+	long response_code;
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+	
+	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	free(chunk.memory);
+	
+	if (res != CURLE_OK)
+		return BOOL_VAL(false);
+	
+	return BOOL_VAL(response_code >= 200 && response_code < 300);
+}
+
 /* httpServer(port) -> starts server */
 static Value httpServerNative(int argCount, Value* args) {
 	if (argCount != 1 || !IS_NUMBER(args[0]))
@@ -936,10 +1441,14 @@ void initVM() {
 	defineNative("listDir", listDirNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
+	defineNative("parseXml", parseXmlNative);
 	defineNative("httpGet", httpGetNative);
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
 	defineNative("httpServer", httpServerNative);
+	defineNative("s3ListObjects", s3ListObjectsNative);
+	defineNative("s3GetObject", s3GetObjectNative);
+	defineNative("s3PutObject", s3PutObjectNative);
 }
 
 void freeVM() {
@@ -1211,13 +1720,27 @@ static InterpretResult run() {
 				break;
 			}
 			case OP_GET_PROPERTY: {
+				ObjString* name = READ_STRING();
+				
+				/* Handle array.length */
+				if (IS_ARRAY(peek(0))) {
+					ObjArray* array = AS_ARRAY(peek(0));
+					if (strcmp(name->chars, "length") == 0) {
+						pop(); /* Array */
+						push(NUMBER_VAL((double)array->count));
+						break;
+					} else {
+						runtimeError("Arrays only have 'length' property.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+				}
+				
 				if (!IS_INSTANCE(peek(0))) {
 					runtimeError("Only instances have properties.");
 					return INTERPRET_RUNTIME_ERROR;
 				}
 
 				ObjInstance* instance = AS_INSTANCE(peek(0));
-				ObjString* name = READ_STRING();
 
 				Value value;
 				if (tableGet(&instance->fields, name, &value)) {
@@ -1397,6 +1920,89 @@ static InterpretResult run() {
 			case OP_METHOD:
 				defineMethod(READ_STRING());
 				break;
+			case OP_ARRAY: {
+				int count = READ_BYTE();
+				ObjArray* array = newArray();
+				
+				if (count > 0) {
+					/* Push array for GC protection before allocating */
+					push(OBJ_VAL(array));
+					
+					/* Allocate space for all elements at once */
+					array->elements = ALLOCATE(Value, count);
+					array->capacity = count;
+					array->count = count;
+					
+					/* Copy elements from stack (they're at peek(count), peek(count-1), ..., peek(1)) */
+					for (int i = 0; i < count; i++) {
+						array->elements[i] = peek(count - i);
+					}
+					
+					/* Pop array temporarily */
+					pop();
+				}
+				
+				/* Pop all element values */
+				for (int i = 0; i < count; i++) {
+					pop();
+				}
+				
+				/* Push the array back onto stack */
+				push(OBJ_VAL(array));
+				break;
+			}
+			case OP_INDEX_SUBSCR: {
+				Value index = pop();
+				Value array = pop();
+				
+				if (!IS_ARRAY(array)) {
+					runtimeError("Can only index arrays.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				
+				if (!IS_NUMBER(index)) {
+					runtimeError("Array index must be a number.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				
+				int idx = (int)AS_NUMBER(index);
+				ObjArray* arr = AS_ARRAY(array);
+				
+				if (idx < 0 || idx >= arr->count) {
+					runtimeError("Array index out of bounds.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				
+				push(arr->elements[idx]);
+				break;
+			}
+			case OP_STORE_SUBSCR: {
+				Value value = pop();
+				Value index = pop();
+				Value array = pop();
+				
+				if (!IS_ARRAY(array)) {
+					runtimeError("Can only index arrays.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				
+				if (!IS_NUMBER(index)) {
+					runtimeError("Array index must be a number.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				
+				int idx = (int)AS_NUMBER(index);
+				ObjArray* arr = AS_ARRAY(array);
+				
+				if (idx < 0 || idx >= arr->count) {
+					runtimeError("Array index out of bounds.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				
+				arr->elements[idx] = value;
+				push(value);
+				break;
+			}
 		}
 	}
 

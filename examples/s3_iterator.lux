@@ -1,0 +1,144 @@
+// AWS S3 Iterator - Similar to 'aws s3 ls' command
+// This example shows how to list and iterate through S3 objects
+
+// AWS Configuration
+var bucket = "your-bucket-name"
+var accessKey = "YOUR_ACCESS_KEY_ID"
+var secretKey = "YOUR_SECRET_ACCESS_KEY"
+var region = "us-east-1"
+var sessionToken = ""  // Optional: set if using STS temporary credentials
+
+// Helper function to parse S3 ListObjectsV2 XML response
+fun extractKeys(xmlResponse) {
+    var keys = []
+    
+    // Simple XML parsing for <Key> tags
+    var remaining = xmlResponse
+    var keyTag = "<Key>"
+    var closeTag = "</Key>"
+    
+    // Find all keys in the response
+    var pos = 0
+    while (true) {
+        // Find next <Key> tag
+        var startIdx = -1
+        for (var i = 0; i < len(remaining); i = i + 1) {
+            if (i + len(keyTag) <= len(remaining)) {
+                var match = true
+                for (var j = 0; j < len(keyTag); j = j + 1) {
+                    if (remaining[i] != keyTag[j]) {
+                        match = false
+                    }
+                }
+                if (match) {
+                    startIdx = i
+                }
+            }
+        }
+        
+        if (startIdx == -1) {
+            return keys
+        }
+        
+        // Extract the key value
+        var keyStart = startIdx + len(keyTag)
+        var keyEnd = -1
+        for (var i = keyStart; i < len(remaining); i = i + 1) {
+            if (i + len(closeTag) <= len(remaining)) {
+                var match = true
+                for (var j = 0; j < len(closeTag); j = j + 1) {
+                    if (remaining[i] != closeTag[j]) {
+                        match = false
+                    }
+                }
+                if (match) {
+                    keyEnd = i
+                }
+            }
+        }
+        
+        if (keyEnd == -1) {
+            return keys
+        }
+        
+        // Note: String slicing not available, so we'll just note the presence
+        // In practice, you'd extract the substring here
+        keys = keys + [1]  // Placeholder
+        
+        // Move past this key for next iteration
+        remaining = remaining  // Would slice here
+        return keys  // Simplified for now
+    }
+    
+    return keys
+}
+
+// List all objects
+print("Listing objects in s3://" + bucket + "/")
+print("")
+
+var response = nil
+if (sessionToken == "") {
+    response = s3ListObjects(bucket, accessKey, secretKey, region)
+} else {
+    response = s3ListObjects(bucket, accessKey, secretKey, region, "", sessionToken)
+}
+
+if (response == nil) {
+    print("Error: Unable to list objects")
+    print("Check your credentials and bucket name")
+} else {
+    print("Response received:")
+    print(response)
+    print("")
+    
+    // In a real implementation, you'd parse the XML to extract:
+    // - Key names
+    // - LastModified timestamps
+    // - Size
+    // - ETag
+    
+    print("To parse XML properly, you can:")
+    print("1. Use parseJSON if your response is JSON")
+    print("2. Implement XML parsing in Lux")
+    print("3. Process the response externally")
+}
+
+// List objects with a specific prefix
+print("")
+print("Listing objects with prefix 'logs/'")
+print("")
+
+if (sessionToken == "") {
+    response = s3ListObjects(bucket, accessKey, secretKey, region, "logs/")
+} else {
+    response = s3ListObjects(bucket, accessKey, secretKey, region, "logs/", sessionToken)
+}
+
+if (response != nil) {
+    print(response)
+}
+
+// Example: Download specific files
+print("")
+print("Downloading specific file: 'data/file.txt'")
+print("")
+
+var fileContent = nil
+if (sessionToken == "") {
+    fileContent = s3GetObject(bucket, "data/file.txt", accessKey, secretKey, region)
+} else {
+    fileContent = s3GetObject(bucket, "data/file.txt", accessKey, secretKey, region, sessionToken)
+}
+
+if (fileContent != nil) {
+    print("File content:")
+    print(fileContent)
+    
+    // You can now process the file content
+    writeFile("downloaded.txt", fileContent)
+    print("Saved to downloaded.txt")
+}
+
+print("")
+print("Done!")

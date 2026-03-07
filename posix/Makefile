@@ -1,7 +1,20 @@
+# Auto-detect OS
+UNAME_S := $(shell uname -s)
+
 # Define compiler and flags
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -g
-LDFLAGS = -lcurl
+
+# OS-specific flags
+ifeq ($(UNAME_S),Linux)
+    # Linux: OpenSSL typically in standard paths
+    CFLAGS = -Wall -Wextra -std=c99 -g
+    LDFLAGS = -lcurl -lcrypto
+endif
+ifeq ($(UNAME_S),Darwin)
+    # macOS: Use Homebrew OpenSSL, compile for x86_64
+    CFLAGS = -Wall -Wextra -std=c99 -g -arch x86_64 -I/usr/local/opt/openssl@3/include
+    LDFLAGS = -arch x86_64 -L/usr/local/opt/openssl@3/lib -lcurl -lcrypto
+endif
 
 # Define the executable name
 TARGET = my_program

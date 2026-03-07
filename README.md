@@ -1,6 +1,6 @@
 # Lux Programming Language
 
-A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features. File IO, Json serialization, HTTP/HTTPS client functionality (GET, POST and PUT), and HTTP server capabilities.
+A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features: Arrays, File IO, Json serialization, HTTP/HTTPS client functionality (GET, POST and PUT), HTTP server capabilities, and AWS S3 integration.
 
 ## Features
 
@@ -8,6 +8,7 @@ A dynamically-typed scripting language based on the Lox language from "Crafting 
 - **First-class functions** - Functions are values that can be passed around
 - **Closures** - Functions can capture and remember their surrounding scope
 - **Classes and inheritance** - Object-oriented programming with single inheritance
+- **Arrays** - Native array support with bracket syntax and dynamic sizing
 - **Automatic memory management** - Mark-and-sweep garbage collector
 - **NaN boxing** - Optional performance optimization for value representation
 
@@ -109,6 +110,51 @@ var buddy = Dog("Buddy");
 buddy.speak();  // Buddy barks!
 ```
 
+### Arrays
+```lux
+// Create arrays with bracket syntax
+var numbers = [1, 2, 3, 4, 5];
+var names = ["Alice", "Bob", "Charlie"];
+var mixed = [42, "hello", true, nil];
+var empty = [];
+
+// Access elements by index (0-based)
+print numbers[0];     // 1
+print names[2];       // Charlie
+
+// Modify elements
+numbers[0] = 100;
+print numbers[0];     // 100
+
+// Get array length
+print numbers.length; // 5
+
+// Iterate over arrays
+var i = 0;
+while (i < names.length) {
+    print names[i];
+    i = i + 1;
+}
+
+// Arrays are dynamic - grow as needed
+var data = [];
+data[0] = "first";
+data[1] = "second";
+data[2] = "third";
+print data.length;    // 3
+
+// Nested arrays
+var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+print matrix[1][2];   // 6
+
+// Arrays from native functions
+var xmlResponse = parseXml("<items><item>A</item><item>B</item></items>");
+// parseXml returns arrays for repeated elements
+for (var j = 0; j < xmlResponse.length; j = j + 1) {
+    print xmlResponse[j];
+}
+```
+
 ## Building
 
 ### On Plan 9:
@@ -136,19 +182,22 @@ make
 
 ### Example files:
 ```
-8.out getting_started.lux           # START HERE - Learn the basics
-8.out demo.lux                      # Simple working demo
-8.out test_concat.lux               # String concatenation examples
-8.out tests/test_fileio.lux         # File I/O examples
-8.out tests/test_fileops.lux        # Complete file operations test
-8.out tests/test_json.lux           # JSON parsing and serialization
-8.out tests/test_http_plan9.lux     # HTTP client (Plan 9 HTTP)
-8.out tests/test_https.lux          # HTTPS client with TLS (Plan 9)
-posix/my_program tests/test_http.lux  # HTTP/HTTPS examples (POSIX)
-8.out tests/test_http_server.lux    # HTTP server (both Plan 9 and POSIX)
-8.out ch29-inherit.lux              # Inheritance examples
-8.out closure.lux                   # Closure examples
+8.out examples/demo.lux                 # Simple working demo
+8.out examples/tutorial_simple.lux      # Quick tutorial (recommended)
+8.out examples/quickref.lux             # Language quick reference
+8.out examples/test_concat.lux          # String concatenation examples
+8.out tests/test_fileio.lux             # File I/O examples
+8.out tests/test_fileops.lux            # Complete file operations test
+8.out tests/test_json.lux               # JSON parsing and serialization
+8.out tests/test_http_plan9.lux         # HTTP client (Plan 9 HTTP)
+8.out tests/test_https.lux              # HTTPS client with TLS (Plan 9)
+posix/my_program tests/test_http.lux    # HTTP/HTTPS examples (POSIX)
+8.out tests/test_http_server.lux        # HTTP server (both Plan 9 and POSIX)
+8.out tests/c29-inherit.lux             # Inheritance examples
+8.out tests/closure.lux                 # Closure examples
 ```
+
+**Note**: Lux has a limit of 256 constants per source file. Very large files with many string literals may hit this limit.
 
 ## String Concatenation
 
@@ -480,6 +529,234 @@ if (json != nil) {
 - **POSIX HTTP Server**: Uses standard BSD sockets (`socket()`, `bind()`, `listen()`, `accept()`) with HTTP/1.0 protocol.
 - **HTTP Server (Both)**: Binds to all interfaces, handles Content-Length parsing, supports sequential connections, returns JSON responses.
 
+### AWS S3 Operations
+
+Lux includes native AWS S3 integration with AWS Signature Version 4 authentication. This provides boto3-like functionality for direct S3 API access using AWS credentials.
+
+**Authentication Support:**
+- ✅ Permanent credentials (AWS Access Key + Secret Key)
+- ✅ Temporary credentials (STS Session Token)
+- ✅ AWS Signature Version 4 compliant
+- ✅ All AWS regions supported
+
+**Platform Support:**
+- **Plan 9**: Uses libsec (HMAC-SHA256) with native TLS
+- **POSIX**: Uses OpenSSL (HMAC-SHA256) with libcurl
+
+#### `s3ListObjects(bucket, accessKey, secretKey, region, [prefix], [sessionToken])` → string or nil
+
+Lists objects in an S3 bucket. Returns the XML response from S3's ListObjectsV2 API.
+
+**Parameters:**
+- `bucket`: S3 bucket name
+- `accessKey`: AWS access key ID
+- `secretKey`: AWS secret access key
+- `region`: AWS region (e.g., "us-east-1", "eu-west-1")
+- `prefix` (optional): Filter objects by prefix
+- `sessionToken` (optional): STS session token for temporary credentials
+
+```lux
+// List all objects in bucket
+var bucket = "my-bucket"
+var accessKey = "AKIAIOSFODNN7EXAMPLE"
+var secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+var region = "us-east-1"
+
+var response = s3ListObjects(bucket, accessKey, secretKey, region)
+if (response != nil) {
+    print "Objects in bucket:"
+    print response
+}
+
+// List objects with prefix
+var logs = s3ListObjects(bucket, accessKey, secretKey, region, "logs/")
+if (logs != nil) {
+    print "Log files:"
+    print logs
+}
+
+// Using STS temporary credentials
+var sessionToken = "FwoGZXIvYXdzEBYaDJvZ3..."  // From STS
+var result = s3ListObjects(bucket, accessKey, secretKey, region, "", sessionToken)
+if (result != nil) {
+    print "Listed with temporary credentials"
+}
+```
+
+#### `s3GetObject(bucket, key, accessKey, secretKey, region, [sessionToken])` → string or nil
+
+Downloads an object from S3 and returns its contents as a string.
+
+**Parameters:**
+- `bucket`: S3 bucket name
+- `key`: Object key (path in bucket)
+- `accessKey`: AWS access key ID
+- `secretKey`: AWS secret access key
+- `region`: AWS region
+- `sessionToken` (optional): STS session token
+
+```lux
+// Download a file
+var content = s3GetObject(bucket, "data/file.txt", accessKey, secretKey, region)
+if (content != nil) {
+    print "File contents:"
+    print content
+    
+    // Save locally
+    writeFile("downloaded.txt", content)
+}
+
+// Download JSON configuration
+var configKey = "config/app.json"
+var configStr = s3GetObject(bucket, configKey, accessKey, secretKey, region)
+if (configStr != nil) {
+    var config = parseJSON(configStr)
+    if (config != nil) {
+        print "App version: " + config.version
+        print "Environment: " + config.environment
+    }
+}
+
+// Using temporary credentials
+var fileData = s3GetObject(bucket, "reports/report.csv", 
+                           accessKey, secretKey, region, sessionToken)
+if (fileData != nil) {
+    print "Downloaded report with STS token"
+}
+```
+
+#### `s3PutObject(bucket, key, content, accessKey, secretKey, region, [sessionToken])` → bool
+
+Uploads content to S3. Returns `true` on success, `false` on failure.
+
+**Parameters:**
+- `bucket`: S3 bucket name
+- `key`: Object key (destination path)
+- `content`: Content to upload (as string)
+- `accessKey`: AWS access key ID
+- `secretKey`: AWS secret access key
+- `region`: AWS region
+- `sessionToken` (optional): STS session token
+
+```lux
+// Upload a text file
+var content = "Hello from Lux! Timestamp: " + clock()
+var success = s3PutObject(bucket, "test/hello.txt", content, 
+                          accessKey, secretKey, region)
+if (success) {
+    print "File uploaded successfully"
+} else {
+    print "Upload failed"
+}
+
+// Upload JSON data
+class DataPoint {
+    init(timestamp, value, status) {
+        this.timestamp = timestamp
+        this.value = value
+        this.status = status
+    }
+}
+
+var data = DataPoint(clock(), 42, "active")
+var jsonStr = toJSON(data)
+if (jsonStr != nil) {
+    var uploaded = s3PutObject(bucket, "data/point.json", jsonStr,
+                               accessKey, secretKey, region)
+    if (uploaded) {
+        print "JSON data uploaded to S3"
+    }
+}
+
+// Upload with temporary credentials
+var logData = "Application log: System started\n"
+var result = s3PutObject(bucket, "logs/app.log", logData,
+                         accessKey, secretKey, region, sessionToken)
+if (result) {
+    print "Log uploaded with STS credentials"
+}
+```
+
+**Practical Example: S3 Data Pipeline**
+```lux
+// Configuration
+var bucket = "analytics-bucket"
+var accessKey = "YOUR_ACCESS_KEY"
+var secretKey = "YOUR_SECRET_KEY"
+var region = "us-west-2"
+
+// 1. Download raw data from S3
+print "Downloading raw data..."
+var rawData = s3GetObject(bucket, "input/data.json", accessKey, secretKey, region)
+if (rawData == nil) {
+    print "Error: Could not download data"
+} else {
+    // 2. Process the data
+    var data = parseJSON(rawData)
+    if (data != nil) {
+        print "Processing " + data.count + " records"
+        
+        // 3. Generate report
+        class Report {
+            init(timestamp, recordCount, status) {
+                this.timestamp = timestamp
+                this.recordCount = recordCount
+                this.status = status
+            }
+        }
+        
+        var report = Report(clock(), data.count, "completed")
+        var reportJson = toJSON(report)
+        
+        // 4. Upload results back to S3
+        if (reportJson != nil) {
+            var uploaded = s3PutObject(bucket, "output/report.json", reportJson,
+                                      accessKey, secretKey, region)
+            if (uploaded) {
+                print "Report uploaded successfully"
+            } else {
+                print "Error: Upload failed"
+            }
+        }
+    }
+}
+
+// 5. List all processed files
+print "Listing processed files..."
+var files = s3ListObjects(bucket, accessKey, secretKey, region, "output/")
+if (files != nil) {
+    print "Output files:"
+    print files
+}
+```
+
+**Use Cases:**
+- Data pipeline processing (download, transform, upload)
+- Configuration management (store/retrieve app configs)
+- Log aggregation and analysis
+- Backup and restore operations
+- File synchronization
+- Static site deployment
+- Serverless data processing
+
+**Security Best Practices:**
+- ✅ Use STS temporary credentials when possible
+- ✅ Store credentials in environment variables or config files (not in code)
+- ✅ Use IAM roles with minimum required permissions
+- ✅ Rotate access keys regularly
+- ✅ Enable S3 bucket encryption
+- ✅ Use VPC endpoints for private S3 access
+- ✅ Enable CloudTrail logging for S3 API calls
+
+**Implementation Notes:**
+- **AWS Signature V4**: Full implementation of AWS Signature Version 4 signing algorithm
+- **HMAC-SHA256**: Uses libsec (Plan 9) or OpenSSL (POSIX) for cryptographic operations
+- **URL Encoding**: Automatic URL encoding for object keys with special characters
+- **SNI Support**: Server Name Indication for TLS connections to S3 endpoints
+- **Payload Hashing**: SHA-256 hashing of request payloads for signature calculation
+- **Timestamp**: Uses UTC time in ISO8601 format for request signing
+- **Error Handling**: Returns `nil` or `false` on errors (network, auth, S3 errors)
+
 ## Performance
 
 NaN boxing is enabled by default for better performance. This uses a clever bit manipulation technique to store type information within IEEE 754 double values, reducing memory usage and improving cache performance.
@@ -496,13 +773,14 @@ To disable NaN boxing, edit `common.h` and comment out:
 3. **JSON support**: Parse and serialize JSON for data persistence and configuration files
 4. **HTTP/HTTPS client**: Make GET/POST/PUT requests to APIs and web services (both HTTP and HTTPS on both platforms)
 5. **HTTP server**: Start a basic HTTP server with `httpServer(port)` for local development and testing
-6. **Error handling**: File, JSON, and HTTP operations return `nil` or `false` on failure - always check return values
-7. **Array access**: JSON arrays become objects with numeric string keys - access with `arr.0`, `arr.1`, etc.
-8. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
-9. **No exceptions**: Use return values to indicate success/failure
-10. **Global scope**: All functions and classes are global
-11. **Numeric addition**: `+` performs addition when both operands are numbers
-12. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
+6. **AWS S3 integration**: Direct S3 access with `s3ListObjects`, `s3GetObject`, `s3PutObject` using AWS credentials or STS tokens
+7. **Error handling**: File, JSON, HTTP, and S3 operations return `nil` or `false` on failure - always check return values
+8. **Arrays**: Native array support with bracket syntax - create with `[1, 2, 3]`, access with `arr[0]`, get size with `arr.length`
+9. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
+10. **No exceptions**: Use return values to indicate success/failure
+11. **Global scope**: All functions and classes are global
+12. **Numeric addition**: `+` performs addition when both operands are numbers
+13. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
 
 ## Example Programs
 
