@@ -27,6 +27,20 @@ int constantInstruction(char* name, Chunk* chunk, int offset)
 	return offset + 2;
 }
 
+static int
+constantLongInstruction(char* name, Chunk* chunk, int offset)
+{
+	int b1, b2, b3, constant;
+	b1 = chunk->code[offset + 1];
+	b2 = chunk->code[offset + 2];
+	b3 = chunk->code[offset + 3];
+	constant = (b1 << 16) | (b2 << 8) | b3;
+	print("%-16s %4d '", name, constant);
+	printValue(chunk->constants.values[constant]);
+	print("'\n");
+	return offset + 4;
+}
+
 static int 
 invokeInstruction(const char* name, Chunk* chunk, int offset)
 {
@@ -77,6 +91,8 @@ int disassembleInstruction(Chunk* chunk, int offset)
     switch (instruction) {
 		case OP_CONSTANT:
 			return constantInstruction("OP_CONSTANT", chunk, offset);
+		case OP_CONSTANT_LONG:
+			return constantLongInstruction("OP_CONSTANT_LONG", chunk, offset);
 		case OP_NIL:
 			return simpleInstruction("OP_NIL", offset);
 		case OP_TRUE:
@@ -125,6 +141,8 @@ int disassembleInstruction(Chunk* chunk, int offset)
 			return simpleInstruction("OP_NEGATE", offset);
 		case OP_PRINT:
 			return simpleInstruction("OP_PRINT", offset);
+		case OP_IMPORT:
+			return constantInstruction("OP_IMPORT", chunk, offset);
 		case OP_JUMP:
 			return jumpInstruction("OP_JUMP", 1, chunk, offset);
 		case OP_JUMP_IF_FALSE:

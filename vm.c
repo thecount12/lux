@@ -1789,6 +1789,7 @@ initVM(void)
 
 	initTable(&vm.globals);
 	initTable(&vm.strings);
+	initTable(&vm.imports);
 
 	vm.initString = nil;
 	vm.initString = copyString("init", 4);
@@ -1818,6 +1819,7 @@ freeVM(void)
 {
 	freeTable(&vm.globals);
 	freeTable(&vm.strings);
+	freeTable(&vm.imports);
 	freeObjects();
 }
 
@@ -2015,6 +2017,85 @@ concatenate(void)
 	pop();
 	push(OBJ_VAL(result));
 }
+
+static bool
+importModule(ObjString* path)
+{
+	int fd;
+	long len;
+	char *buf;
+	Dir *d;
+	long bytesRead;
+	ObjFunction* function;
+	ObjClosure* closure;
+	Value dummy;
+	
+	/* Check if already imported */
+	if(tableGet(&vm.imports, path, &dummy)) {
+		return true;  /* Already imported, skip */
+	}
+	
+	/* Read the file */
+	fd = open(path->chars, OREAD);
+	if(fd < 0) {
+		runtimeError("Could not open import file '%s'.", path->chars);
+		return false;
+	}
+	
+	d = dirfstat(fd);
+	if(d == nil) {
+		close(fd);
+		runtimeError("Could not stat import file '%s'.", path->chars);
+		return false;
+	}
+	len = d->length;
+	free(d);
+	
+	buf = malloc(len + 1);
+	if(buf == nil) {
+		close(fd);
+		runtimeError("Out of memory reading import file '%s'.", path->chars);
+		return false;
+	}
+	
+	bytesRead = read(fd, buf, len);
+	if(bytesRead < 0) {
+		free(buf);
+		close(fd);
+		runtimeError("Could not read import file '%s'.", path->chars);
+		return false;
+	}
+	
+	buf[bytesRead] = '\0';
+	close(fd);
+	
+	/* Compile the module */
+	function = compile(buf);
+	free(buf);
+	
+	if(function == nil) {
+		runtimeError("Could not compile import file '%s'.", path->chars);
+		return false;
+	}
+	
+	/* Mark as imported before executing to prevent circular imports */
+	tableSet(&vm.imports, path, NIL_VAL);
+	
+	/* Execute the module */
+	push(OBJ_VAL(function));
+	closure = newClosure(function);
+	pop();
+	push(OBJ_VAL(closure));
+	if(!call(closure, 0)) {
+		return false;
+	}
+	
+	/* The module will be executed as part of the current call frame */
+	/* We don't need to call run() here because we're already in run() */
+	
+	return true;
+}
+
 static InterpretResult 
 run(void)
 {
@@ -2054,6 +2135,17 @@ run(void)
 			constant = READ_CONSTANT();
 			push(constant);
 			break;
+		
+		case OP_CONSTANT_LONG: {
+			uint b1, b2, b3, index;
+			b1 = READ_BYTE();
+			b2 = READ_BYTE();
+			b3 = READ_BYTE();
+			index = (b1 << 16) | (b2 << 8) | b3;
+			constant = frame->closure->function->chunk.constants.values[index];
+			push(constant);
+			break;
+		}
 
 		case OP_NIL:   push(NIL_VAL); break;
 		case OP_TRUE:  push(BOOL_VAL(1)); break;
@@ -2271,6 +2363,18 @@ run(void)
 			printValue(a);
 			print("\n");
 			break;
+		
+		case OP_IMPORT: {
+			ObjString* path;
+			uchar constIdx;
+			constIdx = READ_BYTE();
+			path = AS_STRING(frame->closure->function->chunk.constants.values[constIdx]);
+			if(!importModule(path)) {
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			frame = &vm.frames[vm.frameCount -1];
+			break;
+		}
 
 		case OP_JUMP: {
 			unsigned char offset = READ_SHORT(); // uint16_t in posix linux

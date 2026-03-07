@@ -174,18 +174,27 @@ static void emitReturn() {
 	emitByte(OP_RETURN);
 }
 
-static uint8_t makeConstant(Value value) {
+static int makeConstant(Value value) {
 	int constant = addConstant(currentChunk(), value);
-	if (constant > UINT8_MAX) {
+	if (constant > 0xFFFFFF) {
 		error("Too many constants in one chunk.");
 		return 0;
 	}
 
-	return (uint8_t)constant;
+	return constant;
 }
 
 static void emitConstant(Value value) {
-	emitBytes(OP_CONSTANT, makeConstant(value));
+	int constant = makeConstant(value);
+	
+	if (constant < 256) {
+		emitBytes(OP_CONSTANT, (uint8_t)constant);
+	} else {
+		emitByte(OP_CONSTANT_LONG);
+		emitByte((constant >> 16) & 0xff);
+		emitByte((constant >> 8) & 0xff);
+		emitByte(constant & 0xff);
+	}
 }
 
 static void patchJump(int offset) {
@@ -320,6 +329,41 @@ static void literal(bool canAssign __attribute__((unused))) {
 	}
 }
 
+static void array(bool canAssign __attribute__((unused))) {
+	int itemCount = 0;
+	
+	if (!check(TOKEN_RIGHT_BRACKET)) {
+		do {
+			if (check(TOKEN_RIGHT_BRACKET)) {
+				/* Trailing comma case */
+				break;
+			}
+			
+			expression();
+			
+			if (itemCount == 255) {
+				error("Cannot have more than 255 items in array literal.");
+			}
+			itemCount++;
+		} while (match(TOKEN_COMMA));
+	}
+	
+	consume(TOKEN_RIGHT_BRACKET, "Expect ']' after array elements.");
+	emitBytes(OP_ARRAY, (uint8_t)itemCount);
+}
+
+static void subscript(bool canAssign) {
+	expression();
+	consume(TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
+	
+	if (canAssign && match(TOKEN_EQUAL)) {
+		expression();
+		emitByte(OP_STORE_SUBSCR);
+	} else {
+		emitByte(OP_INDEX_SUBSCR);
+	}
+}
+
 static void grouping(bool canAssign __attribute__((unused))) {
 	expression();
 	consume(TOKEN_RIGHT_PAREN, "expect ')' after expression.");
@@ -329,6 +373,19 @@ static void printStatement() {
 	expression();
 	consume(TOKEN_SEMICOLON, "Expect ';' after value.");
 	emitByte(OP_PRINT);
+}
+
+static void importStatement() {
+	consume(TOKEN_STRING, "Expect filename string after 'import'.");
+	int constant = makeConstant(OBJ_VAL(copyString(parser.previous.start + 1, 
+	                                                 parser.previous.length - 2)));
+	if (constant > 255) {
+		error("Too many constants for import statement.");
+		return;
+	}
+	emitBytes(OP_IMPORT, (uint8_t)constant);
+	emitByte(OP_POP);
+	consume(TOKEN_SEMICOLON, "Expect ';' after import statement.");
 }
 
 static void returnStatement() {
@@ -503,6 +560,8 @@ ParseRule rules[] = {
 	[TOKEN_RIGHT_PAREN] 	= {NULL, NULL, PREC_NONE},
 	[TOKEN_LEFT_BRACE] 		= {NULL, NULL, PREC_NONE},
 	[TOKEN_RIGHT_BRACE] 	= {NULL, NULL, PREC_NONE},
+	[TOKEN_LEFT_BRACKET]	= {array, subscript, PREC_CALL},
+	[TOKEN_RIGHT_BRACKET]	= {NULL, NULL, PREC_NONE},
 	[TOKEN_COMMA] 			= {NULL, NULL, PREC_NONE},
 	[TOKEN_DOT] 			= {NULL, dot, PREC_CALL},
 	[TOKEN_MINUS] 			= {unary, binary, PREC_TERM},
@@ -564,7 +623,12 @@ static void parsePrecedence(Precedence precedence) {
 }
 
 static uint8_t identifierConstant(Token* name) {
-	return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
+	int constant = makeConstant(OBJ_VAL(copyString(name->start, name->length)));
+	if (constant > UINT8_MAX) {
+		error("Too many unique identifiers in one chunk.");
+		return 0;
+	}
+	return (uint8_t)constant;
 }
 
 static bool identifiersEqual(Token* a, Token* b) {
@@ -909,6 +973,8 @@ static void declaration() {
 static void statement() {
 	if (match(TOKEN_PRINT)) {
 		printStatement();
+	} else if (match(TOKEN_IMPORT)) {
+		importStatement();
 	} else if (match(TOKEN_FOR)) {
 		forStatement();
 	} else if (match(TOKEN_IF)) {

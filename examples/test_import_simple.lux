@@ -1,0 +1,13 @@
+// test_import_simple.lux - Simple import test (run from examples/ directory)
+
+print("Main file starting...");
+
+import "math_utils.lux";
+
+print("Testing imported functions:");
+print(add(5, 3));           // 8
+print(multiply(4, 7));      // 28
+print(square(5));           // 25
+print(factorial(5));        // 120
+
+print("Import test complete!");

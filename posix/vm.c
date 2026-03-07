@@ -1427,6 +1427,7 @@ void initVM() {
 
 	initTable(&vm.globals);
 	initTable(&vm.strings);
+	initTable(&vm.imports);
 
 	vm.initString = NULL;
 	vm.initString = copyString("init", 4);
@@ -1454,6 +1455,7 @@ void initVM() {
 void freeVM() {
 	freeTable(&vm.globals);
 	freeTable(&vm.strings);
+	freeTable(&vm.imports);
 	freeObjects();
 }
 
@@ -1627,6 +1629,67 @@ static void concatenate() {
 	push(OBJ_VAL(result));
 }
 
+static bool importModule(ObjString* path) {
+	Value dummy;
+	
+	/* Check if already imported */
+	if (tableGet(&vm.imports, path, &dummy)) {
+		return true;  /* Already imported, skip */
+	}
+	
+	/* Read the file */
+	FILE* file = fopen(path->chars, "rb");
+	if (file == NULL) {
+		runtimeError("Could not open import file '%s'.", path->chars);
+		return false;
+	}
+	
+	fseek(file, 0L, SEEK_END);
+	size_t fileSize = ftell(file);
+	rewind(file);
+	
+	char* buffer = (char*)malloc(fileSize + 1);
+	if (buffer == NULL) {
+		fclose(file);
+		runtimeError("Out of memory reading import file '%s'.", path->chars);
+		return false;
+	}
+	
+	size_t bytesRead = fread(buffer, sizeof(char), fileSize, file);
+	if (bytesRead < fileSize) {
+		free(buffer);
+		fclose(file);
+		runtimeError("Could not read import file '%s'.", path->chars);
+		return false;
+	}
+	
+	buffer[bytesRead] = '\0';
+	fclose(file);
+	
+	/* Compile the module */
+	ObjFunction* function = compile(buffer);
+	free(buffer);
+	
+	if (function == NULL) {
+		runtimeError("Could not compile import file '%s'.", path->chars);
+		return false;
+	}
+	
+	/* Mark as imported before executing to prevent circular imports */
+	tableSet(&vm.imports, path, NIL_VAL);
+	
+	/* Execute the module */
+	push(OBJ_VAL(function));
+	ObjClosure* closure = newClosure(function);
+	pop();
+	push(OBJ_VAL(closure));
+	if (!call(closure, 0)) {
+		return false;
+	}
+	
+	return true;
+}
+
 static InterpretResult run() {
 	CallFrame* frame = &vm.frames[vm.frameCount -1];
 
@@ -1667,6 +1730,15 @@ static InterpretResult run() {
 		switch (instruction = READ_BYTE()) {
 			case OP_CONSTANT: {
 				Value constant = READ_CONSTANT();
+				push(constant);
+				break;
+			}
+			case OP_CONSTANT_LONG: {
+				uint32_t b1 = READ_BYTE();
+				uint32_t b2 = READ_BYTE();
+				uint32_t b3 = READ_BYTE();
+				uint32_t index = (b1 << 16) | (b2 << 8) | b3;
+				Value constant = frame->closure->function->chunk.constants.values[index];
 				push(constant);
 				break;
 			}
@@ -1825,6 +1897,15 @@ static InterpretResult run() {
 			case OP_PRINT: {
 				printValue(pop());
 				printf("\n");
+				break;
+			}
+			case OP_IMPORT: {
+				uint8_t constIdx = READ_BYTE();
+				ObjString* path = AS_STRING(frame->closure->function->chunk.constants.values[constIdx]);
+				if (!importModule(path)) {
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				frame = &vm.frames[vm.frameCount -1];
 				break;
 			}
 			case OP_JUMP: {

@@ -20,6 +20,17 @@ static int constantInstruction(const char* name, Chunk* chunk, int offset) {
 	return offset +2;
 }
 
+static int constantLongInstruction(const char* name, Chunk* chunk, int offset) {
+	uint32_t b1 = chunk->code[offset + 1];
+	uint32_t b2 = chunk->code[offset + 2];
+	uint32_t b3 = chunk->code[offset + 3];
+	uint32_t constant = (b1 << 16) | (b2 << 8) | b3;
+	printf("%-16s %4d '", name, constant);
+	printValue(chunk->constants.values[constant]);
+	printf("'\n");
+	return offset + 4;
+}
+
 static int invokeInstruction(const char* name, Chunk* chunk, int offset) {
 	uint8_t constant = chunk->code[offset +1 ];
 	uint8_t argCount = chunk->code[offset +2 ];
@@ -61,6 +72,8 @@ int disassembleInstruction(Chunk* chunk, int offset) {
     switch (instruction) {
 		case OP_CONSTANT:
 			return constantInstruction("OP_CONSTANT", chunk, offset);
+		case OP_CONSTANT_LONG:
+			return constantLongInstruction("OP_CONSTANT_LONG", chunk, offset);
 		case OP_NIL:
 			return simpleInstruction("OP_NIL", offset);
 		case OP_TRUE:
@@ -109,6 +122,8 @@ int disassembleInstruction(Chunk* chunk, int offset) {
 			return simpleInstruction("OP_NEGATE", offset);
 		case OP_PRINT:
 			return simpleInstruction("OP_PRINT", offset);
+		case OP_IMPORT:
+			return constantInstruction("OP_IMPORT", chunk, offset);
 		case OP_JUMP:
 			return jumpInstruction("OP_JUMP", 1, chunk, offset);
 		case OP_JUMP_IF_FALSE:
@@ -149,6 +164,12 @@ int disassembleInstruction(Chunk* chunk, int offset) {
 			return simpleInstruction("OP_INHERIT", offset);
 		case OP_METHOD:
 			return constantInstruction("OP_METHOD", chunk, offset);
+		case OP_ARRAY:
+			return byteInstruction("OP_ARRAY", chunk, offset);
+		case OP_INDEX_SUBSCR:
+			return simpleInstruction("OP_INDEX_SUBSCR", offset);
+		case OP_STORE_SUBSCR:
+			return simpleInstruction("OP_STORE_SUBSCR", offset);
         default:
             printf("Unknown opcode %d\n", instruction);
             return offset + 1;
