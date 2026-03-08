@@ -197,6 +197,14 @@ static bool stringMatchAt(const char* text, int textLen, int index, const char* 
 	return true;
 }
 
+/* len(string) -> number */
+static Value lenNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	return NUMBER_VAL(AS_STRING(args[0])->length);
+}
+
 /* strFind(haystack, needle, [start]) -> number index or -1 */
 static Value strFindNative(int argCount, Value* args) {
 	if (argCount < 2 || argCount > 3)
@@ -1940,6 +1948,7 @@ void initVM() {
 	defineNative("fileExists", fileExistsNative);
 	defineNative("createDir", createDirNative);
 	defineNative("listDir", listDirNative);
+	defineNative("len", lenNative);
 	defineNative("strFind", strFindNative);
 	defineNative("strSlice", strSliceNative);
 	defineNative("strStartsWithAt", strStartsWithAtNative);
