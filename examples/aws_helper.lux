@@ -8,6 +8,37 @@ class AwsHeaders {
     }
 }
 
+// Generic object used as a dictionary-style container.
+class Dict {
+    init() {}
+}
+
+fun attrS(value) {
+    var attr = Dict();
+    attr.S = value;
+    return attr;
+}
+
+fun attrN(value) {
+    var attr = Dict();
+    attr.N = value;
+    return attr;
+}
+
+fun makeKey(idValue) {
+    var key = Dict();
+    key.id = attrS(idValue);
+    return key;
+}
+
+fun makeUserItem(idValue, nameValue, ageValue) {
+    var item = Dict();
+    item.id = attrS(idValue);
+    item.name = attrS(nameValue);
+    item.age = attrN(ageValue);
+    return item;
+}
+
 class AwsConfig {
     init(accessKey, secretKey, region, sessionToken) {
         this.accessKey = accessKey;
@@ -138,17 +169,17 @@ class DynamoDBClient {
     }
     
     getItem(tableName, key) {
-        return this.call(
-            "DynamoDB_20120810.GetItem",
-            {"TableName": tableName, "Key": key}
-        );
+        var payload = Dict();
+        payload.TableName = tableName;
+        payload.Key = key;
+        return this.call("DynamoDB_20120810.GetItem", payload);
     }
     
     putItem(tableName, item) {
-        return this.call(
-            "DynamoDB_20120810.PutItem",
-            {"TableName": tableName, "Item": item}
-        );
+        var payload = Dict();
+        payload.TableName = tableName;
+        payload.Item = item;
+        return this.call("DynamoDB_20120810.PutItem", payload);
     }
 }
 
@@ -183,14 +214,12 @@ print "\n\n--- DynamoDB Examples ---";
 var dynamodb = DynamoDBClient(config);
 
 print "\n1. GetItem:";
-dynamodb.getItem("Users", {"id": {"S": "user123"}});
+var getKey = makeKey("user123");
+dynamodb.getItem("Users", getKey);
 
 print "\n2. PutItem:";
-dynamodb.putItem("Users", {
-    "id": {"S": "user456"},
-    "name": {"S": "Alice"},
-    "age": {"N": "30"}
-});
+var putItem = makeUserItem("user456", "Alice", "30");
+dynamodb.putItem("Users", putItem);
 
 // Example 2: STS Temporary Credentials
 print "\n\n--- Example 2: STS Temporary Credentials ---";
@@ -209,7 +238,8 @@ stsS3.listObjects("secure-bucket", "confidential/");
 
 var stsDynamodb = DynamoDBClient(stsConfig);
 print "\nDynamoDB with temporary credentials:";
-stsDynamodb.getItem("SecureTable", {"id": {"S": "sensitive-123"}});
+var stsKey = makeKey("sensitive-123");
+stsDynamodb.getItem("SecureTable", stsKey);
 
 print "\n\n=== Complete! ===";
 print "Next steps:";
