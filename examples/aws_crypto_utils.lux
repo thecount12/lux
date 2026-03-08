@@ -3,13 +3,25 @@
 
 print "=== AWS Cryptographic Utilities Demo ===\n";
 
+class Dict {
+    init() {}
+}
+
+fun attrS(value) {
+    var attr = Dict();
+    attr.S = value;
+    return attr;
+}
+
 // ===== 1. SHA256 Hashing =====
 print "1. SHA256 Hash Examples:";
 print "   sha256('') = " + sha256("");
 print "   sha256('hello') = " + sha256("hello");
 print "   sha256('Hello, World!') = " + sha256("Hello, World!");
 
-var jsonPayload = toJSON({"message": "test"});
+var jsonPayloadObj = Dict();
+jsonPayloadObj.message = "test";
+var jsonPayload = toJSON(jsonPayloadObj);
 print "   sha256(JSON payload) = " + sha256(jsonPayload);
 
 // ===== 2. HMAC-SHA256 =====
@@ -85,7 +97,10 @@ print "   Note: Also send 'x-amz-security-token: " + sessionToken + "'";
 // ===== 5. POST Request with Body =====
 print "\n5. POST Request Signature (with body):";
 
-var postBody = toJSON({"action": "create", "data": "example"});
+var postBodyObj = Dict();
+postBodyObj.action = "create";
+postBodyObj.data = "example";
+var postBody = toJSON(postBodyObj);
 var postPayloadHash = sha256(postBody);
 
 var postAuth = awsSignRequest(
@@ -110,10 +125,12 @@ print "   Authorization: " + postAuth;
 // ===== 6. DynamoDB Example =====
 print "\n6. DynamoDB API Signature:";
 
-var dynamoPayload = toJSON({
-    "TableName": "Users",
-    "Key": {"id": {"S": "user123"}}
-});
+var dynamoKey = Dict();
+dynamoKey.id = attrS("user123");
+var dynamoPayloadObj = Dict();
+dynamoPayloadObj.TableName = "Users";
+dynamoPayloadObj.Key = dynamoKey;
+var dynamoPayload = toJSON(dynamoPayloadObj);
 
 var dynamoPayloadHash = sha256(dynamoPayload);
 var dynamoHost = "dynamodb.us-east-1.amazonaws.com";

@@ -8,6 +8,22 @@ var secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
 var region = "us-east-1";
 var sessionToken = nil;  // Optional, for temporary credentials
 
+class Dict {
+    init() {}
+}
+
+fun attrS(value) {
+    var attr = Dict();
+    attr.S = value;
+    return attr;
+}
+
+fun makeKey(idValue) {
+    var key = Dict();
+    key.id = attrS(idValue);
+    return key;
+}
+
 // Get current UTC timestamp in AWS format
 fun getAwsTimestamp() {
     // In production, you'd get actual UTC time
@@ -73,10 +89,10 @@ fun dynamoGetItem(tableName, key) {
     var queryString = "";
     
     // Build JSON payload
-    var payload = toJSON({
-        "TableName": tableName,
-        "Key": key
-    });
+    var requestPayload = Dict();
+    requestPayload.TableName = tableName;
+    requestPayload.Key = key;
+    var payload = toJSON(requestPayload);
     
     // Hash the payload
     var payloadHash = sha256(payload);
@@ -137,7 +153,8 @@ print "\n";
 
 // Example with DynamoDB
 print "Example 2: DynamoDB GetItem";
-dynamoGetItem("Users", {"id": {"S": "user123"}});
+var key = makeKey("user123");
+dynamoGetItem("Users", key);
 
 print "\n";
 
