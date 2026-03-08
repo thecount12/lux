@@ -1607,6 +1607,80 @@ s3PutObjectNative(int argCount, Value* args)
 	return BOOL_VAL(success);
 }
 
+/* sha256(data) -> hex string */
+static Value
+sha256Native(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+	
+	char* data = AS_CSTRING(args[0]);
+	int dataLen = AS_STRING(args[0])->length;
+	
+	uchar hash[SHA2_256dlen];
+	sha256Hash((uchar*)data, dataLen, hash);
+	
+	char hexHash[SHA2_256dlen*2+1];
+	hexEncode(hash, SHA2_256dlen, hexHash);
+	
+	return OBJ_VAL(copyString(hexHash, SHA2_256dlen*2));
+}
+
+/* hmacSha256(key, data) -> hex string */
+static Value
+hmacSha256Native(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	
+	char* key = AS_CSTRING(args[0]);
+	int keyLen = AS_STRING(args[0])->length;
+	char* data = AS_CSTRING(args[1]);
+	int dataLen = AS_STRING(args[1])->length;
+	
+	uchar hmac[SHA2_256dlen];
+	hmacSha256((uchar*)key, keyLen, (uchar*)data, dataLen, hmac);
+	
+	char hexHmac[SHA2_256dlen*2+1];
+	hexEncode(hmac, SHA2_256dlen, hexHmac);
+	
+	return OBJ_VAL(copyString(hexHmac, SHA2_256dlen*2));
+}
+
+/* awsSignRequest(method, host, uri, queryString, payloadHash, accessKey, secretKey, region, service, amzDate, dateStamp, [sessionToken]) -> authHeader */
+static Value
+awsSignRequestNative(int argCount, Value* args)
+{
+	if (argCount < 11 || argCount > 12)
+		return NIL_VAL;
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_STRING(args[2]) ||
+	    !IS_STRING(args[3]) || !IS_STRING(args[4]) || !IS_STRING(args[5]) ||
+	    !IS_STRING(args[6]) || !IS_STRING(args[7]) || !IS_STRING(args[8]) ||
+	    !IS_STRING(args[9]) || !IS_STRING(args[10]))
+		return NIL_VAL;
+	
+	char* method = AS_CSTRING(args[0]);
+	char* host = AS_CSTRING(args[1]);
+	char* uri = AS_CSTRING(args[2]);
+	char* queryString = AS_CSTRING(args[3]);
+	char* payloadHash = AS_CSTRING(args[4]);
+	char* accessKey = AS_CSTRING(args[5]);
+	char* secretKey = AS_CSTRING(args[6]);
+	char* region = AS_CSTRING(args[7]);
+	char* service = AS_CSTRING(args[8]);
+	char* amzDate = AS_CSTRING(args[9]);
+	char* dateStamp = AS_CSTRING(args[10]);
+	char* sessionToken = (argCount >= 12 && IS_STRING(args[11])) ? AS_CSTRING(args[11]) : nil;
+	
+	char authHeader[512];
+	createAwsSignature(method, host, uri, queryString, payloadHash,
+		accessKey, secretKey, region, service, amzDate, dateStamp,
+		sessionToken, authHeader, sizeof(authHeader));
+	
+	return OBJ_VAL(copyString(authHeader, strlen(authHeader)));
+}
+
 /* httpServer(port, handler) -> starts server, handler gets (method, path, body) */
 static Value 
 httpServerNative(int argCount, Value* args)
@@ -1809,6 +1883,9 @@ initVM(void)
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
 	defineNative("httpServer", httpServerNative);
+	defineNative("sha256", sha256Native);
+	defineNative("hmacSha256", hmacSha256Native);
+	defineNative("awsSignRequest", awsSignRequestNative);
 	defineNative("s3ListObjects", s3ListObjectsNative);
 	defineNative("s3GetObject", s3GetObjectNative);
 	defineNative("s3PutObject", s3PutObjectNative);

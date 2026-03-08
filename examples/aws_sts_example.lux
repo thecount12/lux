@@ -1,0 +1,145 @@
+// AWS STS (Temporary Credentials) Example
+// Shows how to use temporary credentials from STS AssumeRole, GetSessionToken, etc.
+
+print "=== AWS STS Temporary Credentials Example ===\n";
+
+// Temporary credentials from STS
+// These would typically come from STS API calls like:
+// - AssumeRole
+// - AssumeRoleWithWebIdentity
+// - GetSessionToken
+// - GetFederationToken
+
+var tempAccessKey = "ASIAIOSFODNN7EXAMPLE";  // Note: starts with "ASIA" for temp creds
+var tempSecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYTEMPORARYKEY";
+var sessionToken = "FwoGZXIvYXdzEBYaDH...very-long-session-token...==";
+var region = "us-east-1";
+
+// ===== Example 1: S3 with STS Credentials =====
+print "1. S3 ListObjects with STS Credentials:";
+
+var bucket = "my-secure-bucket";
+var host = bucket + ".s3." + region + ".amazonaws.com";
+var amzDate = "20240307T120000Z";
+var dateStamp = "20240307";
+
+var payloadHash = sha256("");
+
+var authHeader = awsSignRequest(
+    "GET",
+    host,
+    "/",
+    "list-type=2&prefix=confidential/",
+    payloadHash,
+    tempAccessKey,      // Temporary access key (starts with ASIA)
+    tempSecretKey,      // Temporary secret key
+    region,
+    "s3",
+    amzDate,
+    dateStamp,
+    sessionToken        // Session token (required for temp creds!)
+);
+
+print "   Host: " + host;
+print "   Access Key: " + tempAccessKey;
+print "   Authorization: " + authHeader;
+print "   x-amz-date: " + amzDate;
+print "   x-amz-security-token: " + sessionToken;
+print "   (Session token is included in signature)";
+
+// ===== Example 2: DynamoDB with STS Credentials =====
+print "\n2. DynamoDB with STS Credentials:";
+
+var dynamoHost = "dynamodb." + region + ".amazonaws.com";
+var payload = toJSON({
+    "TableName": "SecureTable",
+    "Key": {"id": {"S": "sensitive-data-123"}}
+});
+var dynamoPayloadHash = sha256(payload);
+
+var dynamoAuth = awsSignRequest(
+    "POST",
+    dynamoHost,
+    "/",
+    "",
+    dynamoPayloadHash,
+    tempAccessKey,
+    tempSecretKey,
+    region,
+    "dynamodb",
+    amzDate,
+    dateStamp,
+    sessionToken        // Session token required
+);
+
+print "   Service: dynamodb";
+print "   Authorization: " + dynamoAuth;
+print "   x-amz-target: DynamoDB_20120810.GetItem";
+print "   x-amz-security-token: " + sessionToken;
+
+// ===== Example 3: S3 GetObject with temporary credentials =====
+print "\n3. S3 GetObject with Temporary Access:";
+
+var objectKey = "sensitive/document.pdf";
+var uri = "/" + objectKey;  // In production, URL-encode this
+
+var getAuthHeader = awsSignRequest(
+    "GET",
+    host,
+    uri,
+    "",
+    payloadHash,
+    tempAccessKey,
+    tempSecretKey,
+    region,
+    "s3",
+    amzDate,
+    dateStamp,
+    sessionToken
+);
+
+print "   GET https://" + host + uri;
+print "   Authorization: " + getAuthHeader;
+print "   x-amz-security-token: " + sessionToken;
+
+// ===== Example 4: Using with Native S3 Functions =====
+print "\n4. Native S3 Functions with STS:";
+print "   The built-in s3ListObjects, s3GetObject, s3PutObject";
+print "   also support session tokens:";
+print "";
+print "   // s3ListObjects(bucket, accessKey, secretKey, region, prefix, sessionToken)";
+print "   var result = s3ListObjects(";
+print "       'my-bucket',";
+print "       '" + tempAccessKey + "',";
+print "       '" + tempSecretKey + "',";
+print "       'us-east-1',";
+print "       'data/',";
+print "       '" + sessionToken + "'  // 6th parameter";
+print "   );";
+
+// ===== Key Points About STS =====
+print "\n=== Important Notes About STS Credentials ===";
+print "";
+print "1. Session Token is REQUIRED:";
+print "   - Temporary credentials MUST include the session token";
+print "   - Without it, AWS will reject the request with 403";
+print "";
+print "2. Temporary Credentials Expire:";
+print "   - Typically 1-12 hours depending on the STS operation";
+print "   - Check Expiration field from STS response";
+print "";
+print "3. Access Key Format:";
+print "   - Temporary: starts with 'ASIA...'";
+print "   - Permanent: starts with 'AKIA...'";
+print "";
+print "4. All AWS Services Supported:";
+print "   - S3, DynamoDB, Lambda, SQS, SNS, etc.";
+print "   - Just include the sessionToken parameter";
+print "";
+print "5. Use Cases:";
+print "   - Cross-account access (AssumeRole)";
+print "   - Federated access (AssumeRoleWithWebIdentity)";
+print "   - MFA-protected operations (GetSessionToken)";
+print "   - Temporary access for users (GetFederationToken)";
+
+print "\n=== Complete! ===";

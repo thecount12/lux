@@ -1,0 +1,232 @@
+// AWS Helper Module - Reusable AWS signing and request utilities
+// This shows how to structure AWS API calls from Lux
+
+class AwsConfig {
+    init(accessKey, secretKey, region, sessionToken) {
+        this.accessKey = accessKey;
+        this.secretKey = secretKey;
+        this.region = region;
+        this.sessionToken = sessionToken;
+    }
+}
+
+class AwsRequest {
+    init(config, service) {
+        this.config = config;
+        this.service = service;
+    }
+    
+    // Generate AWS timestamp (you'd get real UTC time in production)
+    getTimestamp() {
+        // Placeholder - in real code, calculate from clock()
+        return "20240307T120000Z";
+    }
+    
+    getDateStamp() {
+        var timestamp = this.getTimestamp();
+        // Extract first 8 chars: YYYYMMDD
+        return "20240307";  // Placeholder
+    }
+    
+    // Build authorization header for a request
+    sign(method, host, uri, queryString, payload) {
+        var amzDate = this.getTimestamp();
+        var dateStamp = this.getDateStamp();
+        
+        // Hash the payload
+        var payloadHash = sha256(payload);
+        
+        // Generate signature
+        var authHeader = awsSignRequest(
+            method,
+            host,
+            uri,
+            queryString,
+            payloadHash,
+            this.config.accessKey,
+            this.config.secretKey,
+            this.config.region,
+            this.service,
+            amzDate,
+            dateStamp,
+            this.config.sessionToken
+        );
+        
+        // Return all headers needed for the request
+        return {
+            "Authorization": authHeader,
+            "x-amz-date": amzDate,
+            "x-amz-content-sha256": payloadHash,
+            "Host": host
+        };
+    }
+}
+
+// S3-specific helper
+class S3Client {
+    init(config) {
+        this.config = config;
+        this.request = AwsRequest(config, "s3");
+    }
+    
+    getHost(bucket) {
+        return bucket + ".s3." + this.config.region + ".amazonaws.com";
+    }
+    
+    // List objects with custom parsing
+    listObjects(bucket, prefix) {
+        var host = this.getHost(bucket);
+        var queryString = "list-type=2";
+        if (prefix) {
+            queryString = queryString + "&prefix=" + prefix;
+        }
+        
+        var headers = this.request.sign("GET", host, "/", queryString, "");
+        
+        print "Make GET request to: https://" + host + "/?" + queryString;
+        print "Headers:";
+        print "  Authorization: " + headers["Authorization"];
+        print "  x-amz-date: " + headers["x-amz-date"];
+        print "  x-amz-content-sha256: " + headers["x-amz-content-sha256"];
+        
+        // In real implementation, you'd make the HTTP request here
+        // and parse the XML response
+        return headers;
+    }
+    
+    // Get object
+    getObject(bucket, key) {
+        var host = this.getHost(bucket);
+        var uri = "/" + key;  // Should URL-encode in production
+        
+        var headers = this.request.sign("GET", host, uri, "", "");
+        
+        print "Make GET request to: https://" + host + uri;
+        print "Headers:";
+        print "  Authorization: " + headers["Authorization"];
+        print "  x-amz-date: " + headers["x-amz-date"];
+        
+        return headers;
+    }
+    
+    // Put object
+    putObject(bucket, key, content) {
+        var host = this.getHost(bucket);
+        var uri = "/" + key;  // Should URL-encode in production
+        
+        var headers = this.request.sign("PUT", host, uri, "", content);
+        
+        print "Make PUT request to: https://" + host + uri;
+        print "Headers:";
+        print "  Authorization: " + headers["Authorization"];
+        print "  x-amz-date: " + headers["x-amz-date"];
+        print "  Content-Length: " + toJSON(content).length;  // Approximate
+        
+        return headers;
+    }
+}
+
+// DynamoDB-specific helper
+class DynamoDBClient {
+    init(config) {
+        this.config = config;
+        this.request = AwsRequest(config, "dynamodb");
+        this.host = "dynamodb." + config.region + ".amazonaws.com";
+    }
+    
+    // Generic DynamoDB operation
+    call(target, payload) {
+        var payloadJson = toJSON(payload);
+        var headers = this.request.sign("POST", this.host, "/", "", payloadJson);
+        
+        print "Make POST request to: https://" + this.host + "/";
+        print "Headers:";
+        print "  Authorization: " + headers["Authorization"];
+        print "  x-amz-date: " + headers["x-amz-date"];
+        print "  x-amz-target: " + target;
+        print "  Content-Type: application/x-amz-json-1.0";
+        print "Body: " + payloadJson;
+        
+        return headers;
+    }
+    
+    getItem(tableName, key) {
+        return this.call(
+            "DynamoDB_20120810.GetItem",
+            {"TableName": tableName, "Key": key}
+        );
+    }
+    
+    putItem(tableName, item) {
+        return this.call(
+            "DynamoDB_20120810.PutItem",
+            {"TableName": tableName, "Item": item}
+        );
+    }
+}
+
+// ===== Usage Examples =====
+
+print "=== AWS Helper Module Demo ===\n";
+
+// Example 1: Regular (permanent) credentials
+print "--- Example 1: Permanent Credentials ---";
+var config = AwsConfig(
+    "AKIAIOSFODNN7EXAMPLE",
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "us-east-1",
+    nil  // No session token
+);
+
+// S3 Examples
+print "\n--- S3 Examples ---";
+var s3 = S3Client(config);
+
+print "\n1. List Objects:";
+s3.listObjects("my-bucket", "documents/");
+
+print "\n2. Get Object:";
+s3.getObject("my-bucket", "file.txt");
+
+print "\n3. Put Object:";
+s3.putObject("my-bucket", "newfile.txt", "Hello from Lux!");
+
+// DynamoDB Examples
+print "\n\n--- DynamoDB Examples ---";
+var dynamodb = DynamoDBClient(config);
+
+print "\n1. GetItem:";
+dynamodb.getItem("Users", {"id": {"S": "user123"}});
+
+print "\n2. PutItem:";
+dynamodb.putItem("Users", {
+    "id": {"S": "user456"},
+    "name": {"S": "Alice"},
+    "age": {"N": "30"}
+});
+
+// Example 2: STS Temporary Credentials
+print "\n\n--- Example 2: STS Temporary Credentials ---";
+print "Using temporary credentials from AssumeRole/GetSessionToken:";
+
+var stsConfig = AwsConfig(
+    "ASIAIOSFODNN7EXAMPLE",  // Temp access key (starts with ASIA)
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYTEMPORARYKEY",
+    "us-east-1",
+    "FwoGZXIvYXdzE...session-token..."  // Session token required!
+);
+
+var stsS3 = S3Client(stsConfig);
+print "\nS3 with temporary credentials:";
+stsS3.listObjects("secure-bucket", "confidential/");
+
+var stsDynamodb = DynamoDBClient(stsConfig);
+print "\nDynamoDB with temporary credentials:";
+stsDynamodb.getItem("SecureTable", {"id": {"S": "sensitive-123"}});
+
+print "\n\n=== Complete! ===";
+print "Next steps:";
+print "1. Implement proper timestamp generation (from clock())";
+print "2. Add URL encoding for S3 keys";
+print "3. Extend httpGet/httpPost to accept custom headers";
+print "4. Parse XML/JSON responses";
