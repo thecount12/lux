@@ -1,5 +1,5 @@
 // test_import.lux - Test the import system
-// Run from repo/posix with: ./my_program ../examples/test_import.lux
+// Run from repo/posix with: ./lux ../examples/test_import.lux
 
 print("Main file starting...");
 

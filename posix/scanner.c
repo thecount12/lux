@@ -86,8 +86,22 @@ static void skipWhitespace() {
 				break;
 			case '/':
 				if (peekNext() == '/') {
-					// A comment goes until the end of the line.
+					// Line comment goes until the end of the line.
 					while (peek() != '\n' && !isAtEnd()) advance();
+				} else if (peekNext() == '*') {
+					// Block comment
+					advance(); // consume '/'
+					advance(); // consume '*'
+					while (!isAtEnd()) {
+						if (peek() == '*' && peekNext() == '/') {
+							advance(); // consume '*'
+							advance(); // consume '/'
+							break;
+						}
+						if (peek() == '\n')
+							scanner.line++;
+						advance();
+					}
 				} else {
 					return;
 				}

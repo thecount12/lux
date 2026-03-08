@@ -56,22 +56,24 @@ fun makeS3Request(accessKey, secretKey, region, bucket, method, key) {
 // Example usage:
 // Uncomment and add your credentials to test
 
-// print "=== S3 List Objects Example ===\n";
-// 
-// var response = makeS3Request(
-//     "YOUR_ACCESS_KEY",
-//     "YOUR_SECRET_KEY",
-//     "us-east-1",
-//     "your-bucket-name",
-//     "GET",
-//     nil  // nil means list bucket, or provide a key like "test.txt"
-// );
-// 
-// if (response != nil) {
-//     print "\n=== Response ===";
-//     print response;
-// } else {
-//     print "Request failed!";
-// }
+/*
+print "=== S3 List Objects Example ===\n";
+
+var response = makeS3Request(
+    "YOUR_ACCESS_KEY",
+    "YOUR_SECRET_KEY",
+    "us-east-1",
+    "your-bucket-name",
+    "GET",
+    nil  // nil means list bucket, or provide a key like "test.txt"
+);
+
+if (response != nil) {
+    print "\n=== Response ===";
+    print response;
+} else {
+    print "Request failed!";
+}
+*/
 
 print "AWS S3 example loaded. Edit the file to add your credentials and test!";
