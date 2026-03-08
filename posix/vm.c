@@ -578,6 +578,56 @@ static Value parseXmlNative(int argCount, Value* args) {
 	return OBJ_VAL(result);
 }
 
+/* getAwsTimestamp() -> returns instance with amzDate and dateStamp fields
+ * amzDate: "20240307T120000Z"
+ * dateStamp: "20240307"
+ */
+static Value getAwsTimestampNative(int argCount, Value* args) {
+	if (argCount != 0)
+		return NIL_VAL;
+	
+	time_t now = time(NULL);
+	struct tm* tm = gmtime(&now);
+	
+	char amzDate[32];
+	char dateStamp[16];
+	snprintf(amzDate, sizeof(amzDate), "%04d%02d%02dT%02d%02d%02dZ",
+		tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+	snprintf(dateStamp, sizeof(dateStamp), "%04d%02d%02d",
+		tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday);
+	
+	/* Create an instance to hold the timestamps */
+	ObjString* className = copyString("AwsTimestamp", 12);
+	push(OBJ_VAL(className));
+	ObjClass* klass = newClass(className);
+	pop();
+	
+	push(OBJ_VAL(klass));
+	ObjInstance* instance = newInstance(klass);
+	pop();
+	
+	/* Set fields */
+	push(OBJ_VAL(instance));
+	ObjString* amzDateKey = copyString("amzDate", 7);
+	push(OBJ_VAL(amzDateKey));
+	ObjString* amzDateValue = copyString(amzDate, strlen(amzDate));
+	push(OBJ_VAL(amzDateValue));
+	tableSet(&instance->fields, amzDateKey, OBJ_VAL(amzDateValue));
+	pop(); pop();
+	
+	ObjString* dateStampKey = copyString("dateStamp", 9);
+	push(OBJ_VAL(dateStampKey));
+	ObjString* dateStampValue = copyString(dateStamp, strlen(dateStamp));
+	push(OBJ_VAL(dateStampValue));
+	tableSet(&instance->fields, dateStampKey, OBJ_VAL(dateStampValue));
+	pop(); pop();
+	
+	Value result = OBJ_VAL(instance);
+	pop(); /* pop instance */
+	
+	return result;
+}
+
 /* HTTP support using libcurl */
 typedef struct {
 	char* data;
@@ -670,6 +720,119 @@ static Value httpPostNative(int argCount, Value* args) {
 	
 	CURLcode res = curl_easy_perform(curl);
 	curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	
+	if (res != CURLE_OK) {
+		free(resp.data);
+		return NIL_VAL;
+	}
+	
+	Value result = OBJ_VAL(copyString(resp.data, (int)resp.size));
+	free(resp.data);
+	return result;
+}
+
+/* httpRequest(method, url, [body], [headers]) -> string or nil
+ * method: "GET", "POST", "PUT", "DELETE", etc.
+ * url: target URL
+ * body: optional request body (nil or string)
+ * headers: optional instance with header fields (nil or instance)
+ */
+static Value httpRequestNative(int argCount, Value* args) {
+	if (argCount < 2 || argCount > 4)
+		return NIL_VAL;
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	
+	char* method = AS_CSTRING(args[0]);
+	char* url = AS_CSTRING(args[1]);
+	char* body = NULL;
+	ObjInstance* headersObj = NULL;
+	
+	/* Optional body (arg 2) */
+	if (argCount >= 3 && !IS_NIL(args[2])) {
+		if (!IS_STRING(args[2]))
+			return NIL_VAL;
+		body = AS_CSTRING(args[2]);
+	}
+	
+	/* Optional headers (arg 3) */
+	if (argCount >= 4 && !IS_NIL(args[3])) {
+		if (!IS_INSTANCE(args[3]))
+			return NIL_VAL;
+		headersObj = AS_INSTANCE(args[3]);
+	}
+	
+	CURL* curl = curl_easy_init();
+	if (!curl)
+		return NIL_VAL;
+	
+	HttpResponse resp = {0};
+	resp.data = malloc(1);
+	resp.size = 0;
+	
+	/* Set method */
+	if (strcmp(method, "GET") == 0) {
+		/* GET is default */
+	} else if (strcmp(method, "POST") == 0) {
+		curl_easy_setopt(curl, CURLOPT_POST, 1L);
+	} else if (strcmp(method, "PUT") == 0) {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+	} else if (strcmp(method, "DELETE") == 0) {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+	} else if (strcmp(method, "HEAD") == 0) {
+		curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+	} else {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
+	}
+	
+	/* Set body if provided */
+	if (body != NULL) {
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+	}
+	
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&resp);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "lux/1.0");
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+	
+	/* Build custom headers if provided */
+	struct curl_slist* headers = NULL;
+	if (headersObj != NULL) {
+		for (int i = 0; i < headersObj->fields.capacity; i++) {
+			if (headersObj->fields.entries[i].key != NULL) {
+				char* headerName = headersObj->fields.entries[i].key->chars;
+				Value headerValue = headersObj->fields.entries[i].value;
+				
+				if (IS_STRING(headerValue)) {
+					/* Convert underscores to hyphens in header names */
+					char convertedName[256];
+					strncpy(convertedName, headerName, sizeof(convertedName) - 1);
+					convertedName[sizeof(convertedName) - 1] = '\0';
+					for (char* p = convertedName; *p; p++) {
+						if (*p == '_') *p = '-';
+					}
+					
+					char headerLine[1024];
+					snprintf(headerLine, sizeof(headerLine), "%s: %s",
+						convertedName, AS_CSTRING(headerValue));
+					headers = curl_slist_append(headers, headerLine);
+				}
+			}
+		}
+	}
+	
+	if (headers != NULL) {
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	}
+	
+	CURLcode res = curl_easy_perform(curl);
+	
+	if (headers != NULL)
+		curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
 	
 	if (res != CURLE_OK) {
@@ -1514,10 +1677,12 @@ void initVM() {
 	defineNative("httpGet", httpGetNative);
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
+	defineNative("httpRequest", httpRequestNative);
 	defineNative("httpServer", httpServerNative);
 	defineNative("sha256", sha256Native);
 	defineNative("hmacSha256", hmacSha256Native);
 	defineNative("awsSignRequest", awsSignRequestNative);
+	defineNative("getAwsTimestamp", getAwsTimestampNative);
 	defineNative("s3ListObjects", s3ListObjectsNative);
 	defineNative("s3GetObject", s3GetObjectNative);
 	defineNative("s3PutObject", s3PutObjectNative);

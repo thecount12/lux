@@ -2,7 +2,7 @@
 
 ## Overview
 
-You can now call AWS APIs directly from Lux without using the built-in `s3ListObjectsNative` functions. Three new native functions expose AWS Signature Version 4 signing capabilities:
+You can now call AWS APIs directly from Lux using AWS Signature Version 4 authentication. Several new native functions make this possible:
 
 **Available in both Plan 9 and POSIX/Linux versions.**
 
@@ -26,7 +26,20 @@ var hmac = hmacSha256("secret-key", "message");
 print hmac;
 ```
 
-### 3. `awsSignRequest(method, host, uri, queryString, payloadHash, accessKey, secretKey, region, service, amzDate, dateStamp, [sessionToken])` → string
+### 3. `getAwsTimestamp()` → instance
+Returns current UTC time formatted for AWS requests.
+
+```lux
+var timestamp = getAwsTimestamp();
+print timestamp.amzDate;     // "20240307T152030Z"
+print timestamp.dateStamp;   // "20240307"
+```
+
+**Returns:** Instance with two fields:
+- `amzDate`: Full timestamp (YYYYMMDDTHHmmssZ format)
+- `dateStamp`: Date only (YYYYMMDD format)
+
+### 4. `awsSignRequest(method, host, uri, queryString, payloadHash, accessKey, secretKey, region, service, amzDate, dateStamp, [sessionToken])` → string
 Generates AWS Signature V4 Authorization header.
 
 **Parameters:**
@@ -45,9 +58,34 @@ Generates AWS Signature V4 Authorization header.
 
 **Returns:** Authorization header value (string)
 
-## Quick Example
+### 5. `httpRequest(method, url, body, headers)` → string or nil
+Makes HTTP request with custom headers.
+
+**Parameters:**
+- `method`: HTTP method ("GET", "POST", "PUT", "DELETE", "HEAD")
+- `url`: Full URL including scheme (https://...)
+- `body`: Request body as string, or `nil` for no body
+- `headers`: Instance with header fields, or `nil` for no custom headers
+
+**Returns:** Response body as string, or `nil` on error
+
+**Header Names:** Use underscores in Lux field names - they're automatically converted to hyphens:
+- `headers.x_amz_date` → HTTP header `x-amz-date`
+- `headers.Content_Type` → HTTP header `Content-Type`
 
 ```lux
+class Headers { init() {} }
+
+var headers = Headers();
+headers.Authorization = "AWS4-HMAC-SHA256 ...";
+headers.x_amz_date = "20240307T120000Z";
+headers.Host = "my-bucket.s3.us-east-1.amazonaws.com";
+
+var response = httpRequest("GET", "https://my-bucket.s3.us-east-1.amazonaws.com/", nil, headers);
+print response;
+```
+
+## Complete Working Example
 // 1. Hash the payload
 var payloadHash = sha256("");  // Empty for GET
 
