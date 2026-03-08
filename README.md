@@ -196,8 +196,8 @@ var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
 print matrix[1][2];   // 6
 
 // Arrays from native functions
-var xmlResponse = parseXml("<items><item>A</item><item>B</item></items>");
-// parseXml returns arrays for repeated elements
+var xmlResponse = parseXml("<items><item>A</item><item>B</item></items>", "item");
+// parseXml returns an array of matching tag contents
 for (var j = 0; j < xmlResponse.length; j = j + 1) {
     print xmlResponse[j];
 }

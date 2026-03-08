@@ -924,15 +924,36 @@ toJSONNative(int argCount, Value* args)
 static Value
 parseXmlNative(int argCount, Value* args)
 {
-	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1]))
+	if (argCount != 2) {
+		runtimeError("parseXml() expects 2 arguments (xmlString, tagName), got %d.", argCount);
 		return NIL_VAL;
+	}
+
+	if (!IS_STRING(args[0])) {
+		runtimeError("parseXml() first argument must be a string (xmlString).");
+		return NIL_VAL;
+	}
+
+	if (!IS_STRING(args[1])) {
+		runtimeError("parseXml() second argument must be a string (tagName).");
+		return NIL_VAL;
+	}
 	
 	char* xml = AS_CSTRING(args[0]);
 	char* tagName = AS_CSTRING(args[1]);
+	int tagLen = strlen(tagName);
+	if (tagLen == 0) {
+		runtimeError("parseXml() tagName cannot be empty.");
+		return NIL_VAL;
+	}
 	
 	/* Build open and close tags */
 	char openTag[256];
 	char closeTag[256];
+	if (tagLen > (int)sizeof(closeTag) - 4) {
+		runtimeError("parseXml() tagName too long (max %d bytes).", (int)sizeof(closeTag) - 4);
+		return NIL_VAL;
+	}
 	snprint(openTag, sizeof(openTag), "<%s>", tagName);
 	snprint(closeTag, sizeof(closeTag), "</%s>", tagName);
 	int openLen = strlen(openTag);
