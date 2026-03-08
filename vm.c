@@ -17,6 +17,11 @@
 
 VM vm;
 
+/* Forward declaration for native helpers that report runtime errors before
+ * runtimeError() is defined later in this translation unit.
+ */
+static void runtimeError(char *format, ...);
+
 /* posix linux only 
 static Value 
 clockNative(int argCount, Value* args)
