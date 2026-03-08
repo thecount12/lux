@@ -21,6 +21,7 @@ VM vm;
  * runtimeError() is defined later in this translation unit.
  */
 static void runtimeError(char *format, ...);
+static void nativeError(char *format, ...);
 
 /* posix linux only 
 static Value 
@@ -930,17 +931,17 @@ static Value
 parseXmlNative(int argCount, Value* args)
 {
 	if (argCount != 2) {
-		runtimeError("parseXml() expects 2 arguments (xmlString, tagName), got %d.", argCount);
+		nativeError("parseXml() expects 2 arguments (xmlString, tagName), got %d.", argCount);
 		return NIL_VAL;
 	}
 
 	if (!IS_STRING(args[0])) {
-		runtimeError("parseXml() first argument must be a string (xmlString).");
+		nativeError("parseXml() first argument must be a string (xmlString).");
 		return NIL_VAL;
 	}
 
 	if (!IS_STRING(args[1])) {
-		runtimeError("parseXml() second argument must be a string (tagName).");
+		nativeError("parseXml() second argument must be a string (tagName).");
 		return NIL_VAL;
 	}
 	
@@ -948,7 +949,7 @@ parseXmlNative(int argCount, Value* args)
 	char* tagName = AS_CSTRING(args[1]);
 	int tagLen = strlen(tagName);
 	if (tagLen == 0) {
-		runtimeError("parseXml() tagName cannot be empty.");
+		nativeError("parseXml() tagName cannot be empty.");
 		return NIL_VAL;
 	}
 	
@@ -956,7 +957,7 @@ parseXmlNative(int argCount, Value* args)
 	char openTag[256];
 	char closeTag[256];
 	if (tagLen > (int)sizeof(closeTag) - 4) {
-		runtimeError("parseXml() tagName too long (max %d bytes).", (int)sizeof(closeTag) - 4);
+		nativeError("parseXml() tagName too long (max %d bytes).", (int)sizeof(closeTag) - 4);
 		return NIL_VAL;
 	}
 	snprint(openTag, sizeof(openTag), "<%s>", tagName);
@@ -2354,6 +2355,38 @@ runtimeError(char *format, ...)
 	}
 
 	resetStack();
+}
+
+/* Native-function-safe error reporter: prints runtime-style stack trace
+ * without resetting VM state, so callers can return normally.
+ */
+static void
+nativeError(char *format, ...)
+{
+	char msg[1024];
+	char *end;
+	va_list args;
+
+	va_start(args, format);
+	end = vseprint(msg, msg + sizeof(msg), format, args);
+	va_end(args);
+
+	if (end == nil)
+		print("native error\n");
+	else
+		print("%s\n", msg);
+
+	for (int i = vm.frameCount -1; i >= 0; i--) {
+		CallFrame* frame = &vm.frames[i];
+		ObjFunction* function = frame->closure->function;
+		long instruction = frame->ip - function->chunk.code -1;
+		print("[line %d] in ", function->chunk.lines[instruction]);
+		if (function->name == nil) {
+			print("script\n");
+		} else {
+			print("%s()\n", function->name->chars);
+		}
+	}
 }
 
 

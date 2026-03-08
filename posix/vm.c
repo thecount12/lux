@@ -801,17 +801,17 @@ static Value toJSONNative(int argCount, Value* args) {
 /* parseXml(xmlString, tagName) -> object with numeric keys (like JSON arrays) */
 static Value parseXmlNative(int argCount, Value* args) {
 	if (argCount != 2) {
-		runtimeError("parseXml() expects 2 arguments (xmlString, tagName), got %d.", argCount);
+		fprintf(stderr, "parseXml() expects 2 arguments (xmlString, tagName), got %d.\n", argCount);
 		return NIL_VAL;
 	}
 
 	if (!IS_STRING(args[0])) {
-		runtimeError("parseXml() first argument must be a string (xmlString).");
+		fprintf(stderr, "parseXml() first argument must be a string (xmlString).\n");
 		return NIL_VAL;
 	}
 
 	if (!IS_STRING(args[1])) {
-		runtimeError("parseXml() second argument must be a string (tagName).");
+		fprintf(stderr, "parseXml() second argument must be a string (tagName).\n");
 		return NIL_VAL;
 	}
 	
@@ -819,7 +819,7 @@ static Value parseXmlNative(int argCount, Value* args) {
 	char* tagName = AS_CSTRING(args[1]);
 	int tagLen = strlen(tagName);
 	if (tagLen == 0) {
-		runtimeError("parseXml() tagName cannot be empty.");
+		fprintf(stderr, "parseXml() tagName cannot be empty.\n");
 		return NIL_VAL;
 	}
 	
@@ -827,7 +827,7 @@ static Value parseXmlNative(int argCount, Value* args) {
 	char openTag[256];
 	char closeTag[256];
 	if (tagLen > (int)sizeof(closeTag) - 4) {
-		runtimeError("parseXml() tagName too long (max %d bytes).", (int)sizeof(closeTag) - 4);
+		fprintf(stderr, "parseXml() tagName too long (max %d bytes).\n", (int)sizeof(closeTag) - 4);
 		return NIL_VAL;
 	}
 	snprintf(openTag, sizeof(openTag), "<%s>", tagName);
