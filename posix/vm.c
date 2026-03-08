@@ -2557,27 +2557,34 @@ static InterpretResult run() {
 			}
 			case OP_INDEX_SUBSCR: {
 				Value index = pop();
-				Value array = pop();
-				
-				if (!IS_ARRAY(array)) {
-					runtimeError("Can only index arrays.");
-					return INTERPRET_RUNTIME_ERROR;
-				}
+				Value target = pop();
 				
 				if (!IS_NUMBER(index)) {
-					runtimeError("Array index must be a number.");
+					runtimeError("Index must be a number.");
 					return INTERPRET_RUNTIME_ERROR;
 				}
 				
 				int idx = (int)AS_NUMBER(index);
-				ObjArray* arr = AS_ARRAY(array);
-				
-				if (idx < 0 || idx >= arr->count) {
-					runtimeError("Array index out of bounds.");
+
+				if (IS_ARRAY(target)) {
+					ObjArray* arr = AS_ARRAY(target);
+					if (idx < 0 || idx >= arr->count) {
+						runtimeError("Array index out of bounds.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+					push(arr->elements[idx]);
+				} else if (IS_STRING(target)) {
+					ObjString* str = AS_STRING(target);
+					if (idx < 0 || idx >= str->length) {
+						runtimeError("String index out of bounds.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+
+					push(OBJ_VAL(copyString(str->chars + idx, 1)));
+				} else {
+					runtimeError("Can only index arrays or strings.");
 					return INTERPRET_RUNTIME_ERROR;
 				}
-				
-				push(arr->elements[idx]);
 				break;
 			}
 			case OP_STORE_SUBSCR: {
