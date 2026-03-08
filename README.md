@@ -455,6 +455,23 @@ if (loaded != nil) {
 
 Lux includes native string parsing primitives for building custom parsers and text manipulation.
 
+#### String Indexing
+Strings can be indexed like arrays for read access. Indexing returns a single-character string.
+
+```lux
+var s = "hello";
+print s[0];  // "h"
+print s[1];  // "e"
+
+var i = 0;
+while (i < len(s)) {
+    print s[i];
+    i = i + 1;
+}
+```
+
+String assignment by index is not supported (`s[0] = "H"` is invalid).
+
 #### `len(string)` → number
 Returns the length of a string in bytes.
 
