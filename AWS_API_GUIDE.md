@@ -79,13 +79,13 @@ class Headers { init() {} }
 var headers = Headers();
 headers.Authorization = "AWS4-HMAC-SHA256 ...";
 headers.x_amz_date = "20240307T120000Z";
-headers.Host = "my-bucket.s3.us-east-1.amazonaws.com";
 
 var response = httpRequest("GET", "https://my-bucket.s3.us-east-1.amazonaws.com/", nil, headers);
 print response;
 ```
 
 ## Complete Working Example
+```lux
 // 1. Hash the payload
 var payloadHash = sha256("");  // Empty for GET
 
@@ -203,29 +203,19 @@ See [examples/aws_sts_example.lux](examples/aws_sts_example.lux) for complete ex
 
 ## Current Limitations
 
-1. **HTTP headers**: The built-in `httpGet()` and `httpPost()` don't support custom headers yet. You'll need to:
-   - Extend these functions to accept headers, OR
-   - Use the signature generation to construct requests externally
-
-2. **Timestamp generation**: You need to generate proper UTC timestamps. Example:
-   ```lux
-   // Placeholder - implement with clock() and date formatting
-   var amzDate = "20240307T120000Z";
-   var dateStamp = "20240307";
-   ```
-
-3. **URL encoding**: S3 keys and query parameters need proper URL encoding in production.
+1. **URL encoding**: S3 object keys and query parameters should be URL-encoded for production use.
+2. **Response metadata**: `httpRequest()` currently returns only the response body (not status code or response headers).
+3. **Large responses**: Responses are read fully into memory before returning.
 
 ## Next Steps
 
-To make full AWS API calls from Lux:
+To improve AWS ergonomics further:
 
-1. Add custom header support to `httpGet`/`httpPost`
-2. Implement UTC timestamp generation
-3. Add URL encoding utility
-4. Build response parsers (XML for S3, JSON for others)
+1. Add URL encoding helpers to Lux.
+2. Add an HTTP variant that returns status code + headers + body.
+3. Add higher-level XML helpers for S3 list/get workflows.
 
-Or continue using the built-in `s3ListObjects()`, `s3GetObject()`, `s3PutObject()` functions which handle all of this automatically.
+You can already make full AWS API calls from Lux today using `getAwsTimestamp()`, `awsSignRequest()`, and `httpRequest()`.
 
 ## Platform Differences
 
