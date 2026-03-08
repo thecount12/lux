@@ -21,6 +21,40 @@ A dynamically-typed scripting language based on the Lox language from "Crafting 
 - **Booleans**: `true`, `false`
 - **Nil**: `nil`
 
+#### Multi-Line String Literals
+String literals can span multiple lines in source code. Newlines are preserved as-is in the string value:
+
+```lux
+// String with embedded newlines
+var message = "Line 1
+Line 2
+Line 3";
+print message;
+// Output:
+// Line 1
+// Line 2
+// Line 3
+
+// Works in return statements
+fun getMultiLine() {
+    return "foo
+  bar";
+}
+print getMultiLine();
+// Output:
+// foo
+//   bar
+
+// Also works directly in print
+print "Hello
+World";
+// Output:
+// Hello
+// World
+```
+
+**Note**: Lux does not support escape sequences like `\n` or `\t` - use actual newlines in your source code instead.
+
 ### Variables
 ```lux
 var x = 10;
