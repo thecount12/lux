@@ -17,7 +17,7 @@ ifeq ($(UNAME_S),Darwin)
 endif
 
 # Define the executable name
-TARGET = my_program
+TARGET = lux
 
 # Define the source files
 SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c

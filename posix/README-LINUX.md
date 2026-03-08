@@ -37,8 +37,8 @@ The Makefile automatically detects Linux and uses appropriate compiler flags.
 ## Running
 
 ```bash
-./my_program ../examples/demo.lux
-./my_program ../tests/test_s3.lux
+./lux ../examples/demo.lux
+./lux ../tests/test_s3.lux
 ```
 
 ## Features

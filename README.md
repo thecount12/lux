@@ -229,7 +229,7 @@ make
 8.out tests/test_json.lux               # JSON parsing and serialization
 8.out tests/test_http_plan9.lux         # HTTP client (Plan 9 HTTP)
 8.out tests/test_https.lux              # HTTPS client with TLS (Plan 9)
-posix/my_program tests/test_http.lux    # HTTP/HTTPS examples (POSIX)
+posix/lux tests/test_http.lux    # HTTP/HTTPS examples (POSIX)
 8.out tests/test_http_server.lux        # HTTP server (both Plan 9 and POSIX)
 8.out tests/c29-inherit.lux             # Inheritance examples
 8.out tests/closure.lux                 # Closure examples
