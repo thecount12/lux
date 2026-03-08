@@ -1,0 +1,49 @@
+// Test basic VM string parsing primitives
+
+print "=== String Parsing Builtins Test ===";
+print "";
+
+var text = "  alpha,beta,gamma  ";
+
+print "1. strTrim";
+var trimmed = strTrim(text);
+print "   raw: '" + text + "'";
+print "   trimmed: '" + trimmed + "'";
+
+print "";
+print "2. strFind";
+print "   index of 'beta': " + strFind(trimmed, "beta");
+print "   index of 'ma' from 0: " + strFind(trimmed, "ma", 0);
+print "   index of 'ma' from 12: " + strFind(trimmed, "ma", 12);
+
+print "";
+print "3. strStartsWithAt";
+print "   startsWithAt(trimmed, 'alpha', 0): " + strStartsWithAt(trimmed, "alpha", 0);
+print "   startsWithAt(trimmed, 'beta', 6): " + strStartsWithAt(trimmed, "beta", 6);
+print "   startsWithAt(trimmed, 'beta', 7): " + strStartsWithAt(trimmed, "beta", 7);
+
+print "";
+print "4. strSlice";
+print "   strSlice(trimmed, 0, 5): '" + strSlice(trimmed, 0, 5) + "'";
+print "   strSlice(trimmed, 6, 10): '" + strSlice(trimmed, 6, 10) + "'";
+
+print "";
+print "5. strSplit";
+var parts = strSplit(trimmed, ",");
+print "   parts length: " + parts.length;
+var i = 0;
+while (i < parts.length) {
+    print "   [" + i + "] '" + parts[i] + "'";
+    i = i + 1;
+}
+
+print "";
+print "6. strSplit with empty separator (chars)";
+var chars = strSplit("abc", "");
+print "   chars length: " + chars.length;
+print "   [0]: '" + chars[0] + "'";
+print "   [1]: '" + chars[1] + "'";
+print "   [2]: '" + chars[2] + "'";
+
+print "";
+print "=== Complete ===";
