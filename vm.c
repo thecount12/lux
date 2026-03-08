@@ -821,6 +821,57 @@ readHttpResponse(int fd, int* outLen)
 	return body;
 }
 
+/* getAwsTimestamp() -> returns instance with amzDate and dateStamp fields
+ * amzDate: "20240307T120000Z"
+ * dateStamp: "20240307"
+ */
+static Value
+getAwsTimestampNative(int argCount, Value* args)
+{
+	if (argCount != 0)
+		return NIL_VAL;
+	
+	Tm* tm = gmtime(time(0));
+	
+	char amzDate[32];
+	char dateStamp[16];
+	snprint(amzDate, sizeof(amzDate), "%04d%02d%02dT%02d%02d%02dZ",
+		tm->year+1900, tm->mon+1, tm->mday, tm->hour, tm->min, tm->sec);
+	snprint(dateStamp, sizeof(dateStamp), "%04d%02d%02d",
+		tm->year+1900, tm->mon+1, tm->mday);
+	
+	/* Create an instance to hold the timestamps */
+	ObjString* className = copyString("AwsTimestamp", 12);
+	push(OBJ_VAL(className));
+	ObjClass* klass = newClass(className);
+	pop();
+	
+	push(OBJ_VAL(klass));
+	ObjInstance* instance = newInstance(klass);
+	pop();
+	
+	/* Set fields */
+	push(OBJ_VAL(instance));
+	ObjString* amzDateKey = copyString("amzDate", 7);
+	push(OBJ_VAL(amzDateKey));
+	ObjString* amzDateValue = copyString(amzDate, strlen(amzDate));
+	push(OBJ_VAL(amzDateValue));
+	tableSet(&instance->fields, amzDateKey, OBJ_VAL(amzDateValue));
+	pop(); pop();
+	
+	ObjString* dateStampKey = copyString("dateStamp", 9);
+	push(OBJ_VAL(dateStampKey));
+	ObjString* dateStampValue = copyString(dateStamp, strlen(dateStamp));
+	push(OBJ_VAL(dateStampValue));
+	tableSet(&instance->fields, dateStampKey, OBJ_VAL(dateStampValue));
+	pop(); pop();
+	
+	Value result = OBJ_VAL(instance);
+	pop(); /* pop instance */
+	
+	return result;
+}
+
 /* httpGet(url) -> string or nil */
 static Value 
 httpGetNative(int argCount, Value* args)
@@ -893,6 +944,147 @@ httpGetNative(int argCount, Value* args)
 	
 	Value result = OBJ_VAL(copyString(body, bodyLen));
 	free(body);
+	return result;
+}
+
+/* httpRequest(method, url, [body], [headers]) -> string or nil
+ * method: "GET", "POST", "PUT", "DELETE", etc.
+ * url: target URL
+ * body: optional request body (nil or string)
+ * headers: optional instance with header fields (nil or instance)
+ */
+static Value
+httpRequestNative(int argCount, Value* args)
+{
+	if (argCount < 2 || argCount > 4)
+		return NIL_VAL;
+	
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	
+	char* method = AS_CSTRING(args[0]);
+	char* url = AS_CSTRING(args[1]);
+	char* requestBody = nil;
+	int requestBodyLen = 0;
+	ObjInstance* headersObj = nil;
+	
+	/* Optional body (arg 2) */
+	if (argCount >= 3 && !IS_NIL(args[2])) {
+		if (!IS_STRING(args[2]))
+			return NIL_VAL;
+		requestBody = AS_CSTRING(args[2]);
+		requestBodyLen = strlen(requestBody);
+	}
+	
+	/* Optional headers (arg 3) */
+	if (argCount >= 4 && !IS_NIL(args[3])) {
+		if (!IS_INSTANCE(args[3]))
+			return NIL_VAL;
+		headersObj = AS_INSTANCE(args[3]);
+	}
+	
+	UrlParts parts;
+	if (parseUrl(url, &parts) < 0)
+		return NIL_VAL;
+	
+	int fd;
+	TLSconn conn;
+	
+	/* Dial */
+	char dialAddr[512];
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
+	
+	if (parts.ishttps) {
+		memset(&conn, 0, sizeof(conn));
+		conn.serverName = parts.host;
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0)
+			return NIL_VAL;
+		
+		fd = tlsClient(fd, &conn);
+		if (fd < 0) {
+			fprint(2, "TLS handshake failed for %s\n", parts.host);
+			close(fd);
+			return NIL_VAL;
+		}
+	} else {
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0)
+			return NIL_VAL;
+	}
+	
+	/* Build HTTP request with custom headers */
+	char request[8192];
+	int reqLen = snprint(request, sizeof(request),
+		"%s %s HTTP/1.1\r\n"
+		"Host: %s\r\n"
+		"User-Agent: lux/1.0\r\n",
+		method, parts.path, parts.host);
+	
+	/* Add custom headers if provided */
+	if (headersObj != nil) {
+		for (int i = 0; i < headersObj->fields.capacity; i++) {
+			if (headersObj->fields.entries[i].key != nil) {
+				char* headerName = headersObj->fields.entries[i].key->chars;
+				Value headerValue = headersObj->fields.entries[i].value;
+				
+				if (IS_STRING(headerValue)) {
+					/* Convert underscores to hyphens in header names */
+					char convertedName[256];
+					strncpy(convertedName, headerName, sizeof(convertedName) - 1);
+					convertedName[sizeof(convertedName) - 1] = '\0';
+					for (char* p = convertedName; *p; p++) {
+						if (*p == '_') *p = '-';
+					}
+					
+					reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+						"%s: %s\r\n", convertedName, AS_CSTRING(headerValue));
+				}
+			}
+		}
+	}
+	
+	/* Add Content-Length if body is present */
+	if (requestBody != nil && requestBodyLen > 0) {
+		reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+			"Content-Length: %d\r\n", requestBodyLen);
+	}
+	
+	/* Close headers */
+	reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+		"Connection: close\r\n\r\n");
+	
+	/* Write headers */
+	if (write(fd, request, reqLen) < 0) {
+		if (parts.ishttps)
+			free(conn.cert);
+		close(fd);
+		return NIL_VAL;
+	}
+	
+	/* Write body if present */
+	if (requestBody != nil && requestBodyLen > 0) {
+		if (write(fd, requestBody, requestBodyLen) < 0) {
+			if (parts.ishttps)
+				free(conn.cert);
+			close(fd);
+			return NIL_VAL;
+		}
+	}
+	
+	/* Read response */
+	int bodyLen;
+	char* respBody = readHttpResponse(fd, &bodyLen);
+	
+	if (parts.ishttps)
+		free(conn.cert);
+	close(fd);
+	
+	if (respBody == nil)
+		return NIL_VAL;
+	
+	Value result = OBJ_VAL(copyString(respBody, bodyLen));
+	free(respBody);
 	return result;
 }
 
@@ -1882,10 +2074,12 @@ initVM(void)
 	defineNative("httpGet", httpGetNative);
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
+	defineNative("httpRequest", httpRequestNative);
 	defineNative("httpServer", httpServerNative);
 	defineNative("sha256", sha256Native);
 	defineNative("hmacSha256", hmacSha256Native);
 	defineNative("awsSignRequest", awsSignRequestNative);
+	defineNative("getAwsTimestamp", getAwsTimestampNative);
 	defineNative("s3ListObjects", s3ListObjectsNative);
 	defineNative("s3GetObject", s3GetObjectNative);
 	defineNative("s3PutObject", s3PutObjectNative);

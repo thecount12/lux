@@ -1,6 +1,13 @@
 // AWS Helper Module - Reusable AWS signing and request utilities
 // This shows how to structure AWS API calls from Lux
 
+// Simple class to hold HTTP headers as instance fields
+class AwsHeaders {
+    init() {
+        // Headers will be added as instance fields dynamically
+    }
+}
+
 class AwsConfig {
     init(accessKey, secretKey, region, sessionToken) {
         this.accessKey = accessKey;
@@ -16,22 +23,12 @@ class AwsRequest {
         this.service = service;
     }
     
-    // Generate AWS timestamp (you'd get real UTC time in production)
-    getTimestamp() {
-        // Placeholder - in real code, calculate from clock()
-        return "20240307T120000Z";
-    }
-    
-    getDateStamp() {
-        var timestamp = this.getTimestamp();
-        // Extract first 8 chars: YYYYMMDD
-        return "20240307";  // Placeholder
-    }
-    
     // Build authorization header for a request
+    // Returns an instance with header fields
     sign(method, host, uri, queryString, payload) {
-        var amzDate = this.getTimestamp();
-        var dateStamp = this.getDateStamp();
+        var timestamp = getAwsTimestamp();
+        var amzDate = timestamp.amzDate;
+        var dateStamp = timestamp.dateStamp;
         
         // Hash the payload
         var payloadHash = sha256(payload);
@@ -52,13 +49,18 @@ class AwsRequest {
             this.config.sessionToken
         );
         
-        // Return all headers needed for the request
-        return {
-            "Authorization": authHeader,
-            "x-amz-date": amzDate,
-            "x-amz-content-sha256": payloadHash,
-            "Host": host
-        };
+        // Create headers instance
+        var headers = AwsHeaders();
+        headers.Authorization = authHeader;
+        headers.x_amz_date = amzDate;
+        headers.x_amz_content_sha256 = payloadHash;
+        
+        // Add session token header if present
+        if (this.config.sessionToken != nil) {
+            headers.x_amz_security_token = this.config.sessionToken;
+        }
+        
+        return headers;
     }
 }
 
@@ -82,16 +84,10 @@ class S3Client {
         }
         
         var headers = this.request.sign("GET", host, "/", queryString, "");
+        var url = "https://" + host + "/?" + queryString;
         
-        print "Make GET request to: https://" + host + "/?" + queryString;
-        print "Headers:";
-        print "  Authorization: " + headers["Authorization"];
-        print "  x-amz-date: " + headers["x-amz-date"];
-        print "  x-amz-content-sha256: " + headers["x-amz-content-sha256"];
-        
-        // In real implementation, you'd make the HTTP request here
-        // and parse the XML response
-        return headers;
+        var response = httpRequest("GET", url, nil, headers);
+        return response;
     }
     
     // Get object
@@ -100,13 +96,10 @@ class S3Client {
         var uri = "/" + key;  // Should URL-encode in production
         
         var headers = this.request.sign("GET", host, uri, "", "");
+        var url = "https://" + host + uri;
         
-        print "Make GET request to: https://" + host + uri;
-        print "Headers:";
-        print "  Authorization: " + headers["Authorization"];
-        print "  x-amz-date: " + headers["x-amz-date"];
-        
-        return headers;
+        var response = httpRequest("GET", url, nil, headers);
+        return response;
     }
     
     // Put object
@@ -115,14 +108,10 @@ class S3Client {
         var uri = "/" + key;  // Should URL-encode in production
         
         var headers = this.request.sign("PUT", host, uri, "", content);
+        var url = "https://" + host + uri;
         
-        print "Make PUT request to: https://" + host + uri;
-        print "Headers:";
-        print "  Authorization: " + headers["Authorization"];
-        print "  x-amz-date: " + headers["x-amz-date"];
-        print "  Content-Length: " + toJSON(content).length;  // Approximate
-        
-        return headers;
+        var response = httpRequest("PUT", url, content, headers);
+        return response;
     }
 }
 
@@ -139,15 +128,13 @@ class DynamoDBClient {
         var payloadJson = toJSON(payload);
         var headers = this.request.sign("POST", this.host, "/", "", payloadJson);
         
-        print "Make POST request to: https://" + this.host + "/";
-        print "Headers:";
-        print "  Authorization: " + headers["Authorization"];
-        print "  x-amz-date: " + headers["x-amz-date"];
-        print "  x-amz-target: " + target;
-        print "  Content-Type: application/x-amz-json-1.0";
-        print "Body: " + payloadJson;
+        // Add DynamoDB-specific headers
+        headers.X_Amz_Target = target;
+        headers.Content_Type = "application/x-amz-json-1.0";
         
-        return headers;
+        var url = "https://" + this.host + "/";
+        var response = httpRequest("POST", url, payloadJson, headers);
+        return response;
     }
     
     getItem(tableName, key) {
