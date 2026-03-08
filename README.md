@@ -67,39 +67,53 @@ fun makeCounter() {
     return increment;
 }
 
+
+
 var counter = makeCounter();
+
 print counter();  // 1
 print counter();  // 2
+
 ```
 
 ### Classes and Objects
 ```lux
 class Person {
+
     init(name, age) {
         this.name = name;
+
         this.age = age;
     }
 
     greet() {
         print "Hi, I'm " + this.name;
+
     }
 }
+
 
 var alice = Person("Alice", 30);
 alice.greet();
 ```
 
+
 ### Inheritance
 ```lux
+
 class Animal {
     init(name) {
         this.name = name;
+
     }
+
 
     speak() {
         print this.name + " makes a sound";
     }
+
 }
+
 
 class Dog < Animal {
     speak() {
@@ -538,6 +552,59 @@ print items[0];      // "A"
 print items[1];      // "B"
 ```
 
+
+### Array Algorithms
+
+Lux includes native array search and sort helpers.
+
+#### `arrayIndexOf(array, value)` -> number
+Returns the index of the first matching element, or `-1` if not found.
+
+```lux
+var nums = [10, 20, 30, 20];
+print arrayIndexOf(nums, 20);  // 1
+print arrayIndexOf(nums, 99);  // -1
+```
+
+#### `arrayContains(array, value)` -> bool
+Returns `true` if the array contains the value.
+
+```lux
+var names = ["alice", "bob", "carol"];
+print arrayContains(names, "bob");   // true
+print arrayContains(names, "dave");  // false
+```
+
+#### `arraySort(array)` -> array
+Sorts an array in place and returns the same array. Supports all-number arrays or all-string arrays.
+
+```lux
+var nums = [9, 2, 7, 1, 5];
+arraySort(nums);
+print nums;  // [1, 2, 5, 7, 9]
+
+var words = ["pear", "apple", "orange", "banana"];
+arraySort(words);
+print words; // ["apple", "banana", "orange", "pear"]
+
+var mixed = [1, "two", 3];
+print arraySort(mixed); // nil (mixed types not sortable)
+```
+
+#### `arrayBinarySearch(array, value)` -> number
+Performs binary search on a sorted array. Returns the index if found, or `-1`.
+
+```lux
+var nums = [9, 2, 7, 1, 5];
+arraySort(nums);  // required before binary search
+
+print arrayBinarySearch(nums, 7);   // 3
+print arrayBinarySearch(nums, 42);  // -1
+
+var words = ["pear", "apple", "orange", "banana"];
+arraySort(words);
+print arrayBinarySearch(words, "banana"); // 1
+```
 ### HTTP Operations
 
 Lux includes HTTP client functions for making web requests on both Plan 9 and POSIX platforms.
