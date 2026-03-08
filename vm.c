@@ -273,6 +273,177 @@ listDirNative(int argCount, Value* args)
 	return retval;
 }
 
+static bool
+isAsciiWhitespace(char c)
+{
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+static bool
+stringMatchAt(const char* text, int textLen, int index, const char* pattern, int patternLen)
+{
+	if (index < 0 || index + patternLen > textLen)
+		return false;
+
+	for (int i = 0; i < patternLen; i++) {
+		if (text[index + i] != pattern[i])
+			return false;
+	}
+
+	return true;
+}
+
+/* strFind(haystack, needle, [start]) -> number index or -1 */
+static Value
+strFindNative(int argCount, Value* args)
+{
+	if (argCount < 2 || argCount > 3)
+		return NIL_VAL;
+
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+
+	ObjString* haystack = AS_STRING(args[0]);
+	ObjString* needle = AS_STRING(args[1]);
+	int start = 0;
+
+	if (argCount == 3) {
+		if (!IS_NUMBER(args[2]))
+			return NIL_VAL;
+		start = (int)AS_NUMBER(args[2]);
+	}
+
+	if (start < 0)
+		start = 0;
+	if (start > haystack->length)
+		return NUMBER_VAL(-1);
+
+	if (needle->length == 0)
+		return NUMBER_VAL(start);
+
+	int lastStart = haystack->length - needle->length;
+	for (int i = start; i <= lastStart; i++) {
+		if (stringMatchAt(haystack->chars, haystack->length, i,
+				needle->chars, needle->length)) {
+			return NUMBER_VAL(i);
+		}
+	}
+
+	return NUMBER_VAL(-1);
+}
+
+/* strStartsWithAt(text, pattern, index) -> bool */
+static Value
+strStartsWithAtNative(int argCount, Value* args)
+{
+	if (argCount != 3)
+		return NIL_VAL;
+
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_NUMBER(args[2]))
+		return NIL_VAL;
+
+	ObjString* text = AS_STRING(args[0]);
+	ObjString* pattern = AS_STRING(args[1]);
+	int index = (int)AS_NUMBER(args[2]);
+
+	return BOOL_VAL(stringMatchAt(text->chars, text->length, index,
+			pattern->chars, pattern->length));
+}
+
+/* strSlice(text, start, end) -> string */
+static Value
+strSliceNative(int argCount, Value* args)
+{
+	if (argCount != 3)
+		return NIL_VAL;
+
+	if (!IS_STRING(args[0]) || !IS_NUMBER(args[1]) || !IS_NUMBER(args[2]))
+		return NIL_VAL;
+
+	ObjString* text = AS_STRING(args[0]);
+	int start = (int)AS_NUMBER(args[1]);
+	int end = (int)AS_NUMBER(args[2]);
+
+	if (start < 0) start = 0;
+	if (end < 0) end = 0;
+	if (start > text->length) start = text->length;
+	if (end > text->length) end = text->length;
+	if (end < start) end = start;
+
+	return OBJ_VAL(copyString(text->chars + start, end - start));
+}
+
+/* strTrim(text) -> string */
+static Value
+strTrimNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	ObjString* text = AS_STRING(args[0]);
+	int start = 0;
+	int end = text->length;
+
+	while (start < end && isAsciiWhitespace(text->chars[start]))
+		start++;
+
+	while (end > start && isAsciiWhitespace(text->chars[end - 1]))
+		end--;
+
+	return OBJ_VAL(copyString(text->chars + start, end - start));
+}
+
+/* strSplit(text, sep) -> array of strings */
+static Value
+strSplitNative(int argCount, Value* args)
+{
+	if (argCount != 2)
+		return NIL_VAL;
+
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+
+	ObjString* text = AS_STRING(args[0]);
+	ObjString* sep = AS_STRING(args[1]);
+
+	ObjArray* result = newArray();
+	push(OBJ_VAL(result));
+
+	if (sep->length == 0) {
+		for (int i = 0; i < text->length; i++) {
+			Value token = OBJ_VAL(copyString(text->chars + i, 1));
+			push(token);
+			writeArray(result, token);
+			pop();
+		}
+		pop();
+		return OBJ_VAL(result);
+	}
+
+	int tokenStart = 0;
+	for (int i = 0; i <= text->length - sep->length; ) {
+		if (stringMatchAt(text->chars, text->length, i, sep->chars, sep->length)) {
+			Value token = OBJ_VAL(copyString(text->chars + tokenStart, i - tokenStart));
+			push(token);
+			writeArray(result, token);
+			pop();
+
+			i += sep->length;
+			tokenStart = i;
+		} else {
+			i++;
+		}
+	}
+
+	Value tail = OBJ_VAL(copyString(text->chars + tokenStart, text->length - tokenStart));
+	push(tail);
+	writeArray(result, tail);
+	pop();
+
+	pop();
+	return OBJ_VAL(result);
+}
+
 /* JSON parsing helpers */
 typedef struct {
 	char* start;
@@ -2068,6 +2239,11 @@ initVM(void)
 	defineNative("fileExists", fileExistsNative);
 	defineNative("createDir", createDirNative);
 	defineNative("listDir", listDirNative);
+	defineNative("strFind", strFindNative);
+	defineNative("strSlice", strSliceNative);
+	defineNative("strStartsWithAt", strStartsWithAtNative);
+	defineNative("strTrim", strTrimNative);
+	defineNative("strSplit", strSplitNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
 	defineNative("parseXml", parseXmlNative);

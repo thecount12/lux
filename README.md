@@ -403,6 +403,141 @@ if (loaded != nil) {
 }
 ```
 
+### String Operations
+
+Lux includes native string parsing primitives for building custom parsers and text manipulation.
+
+#### `len(string)` → number
+Returns the length of a string in bytes.
+
+```lux
+var text = "Hello, World!";
+print len(text);  // 13
+```
+
+#### `strFind(haystack, needle, [start])` → number
+Searches for `needle` in `haystack` starting at optional `start` index. Returns the index of the first match, or `-1` if not found.
+
+```lux
+var text = "alpha,beta,gamma";
+
+print strFind(text, "beta");        // 6
+print strFind(text, "beta", 0);     // 6
+print strFind(text, "beta", 7);     // -1 (not found after index 7)
+print strFind(text, "nothere");     // -1
+print strFind(text, ",");           // 5 (first comma)
+```
+
+#### `strSlice(text, start, end)` → string
+Extracts a substring from `start` (inclusive) to `end` (exclusive). Negative or out-of-bounds indices are clamped to valid ranges.
+
+```lux
+var text = "Hello, World!";
+
+print strSlice(text, 0, 5);   // "Hello"
+print strSlice(text, 7, 12);  // "World"
+print strSlice(text, 7, 100); // "World!" (clamped to end)
+
+// Extract between delimiters
+var data = "key=value";
+var eqIdx = strFind(data, "=");
+if (eqIdx != -1) {
+    var key = strSlice(data, 0, eqIdx);
+    var value = strSlice(data, eqIdx + 1, len(data));
+    print "Key: " + key;      // "key"
+    print "Value: " + value;  // "value"
+}
+```
+
+#### `strStartsWithAt(text, pattern, index)` → bool
+Checks if `pattern` starts at position `index` in `text`. Useful for efficient pattern matching without creating substrings.
+
+```lux
+var text = "alpha,beta,gamma";
+
+print strStartsWithAt(text, "alpha", 0);   // true
+print strStartsWithAt(text, "beta", 6);    // true
+print strStartsWithAt(text, "beta", 7);    // false
+print strStartsWithAt(text, ",", 5);       // true
+```
+
+#### `strTrim(text)` → string
+Removes leading and trailing ASCII whitespace (space, tab, newline, carriage return).
+
+```lux
+var text = "  Hello, World!  \n";
+print strTrim(text);  // "Hello, World!"
+
+// Parse user input
+var input = "  alice@example.com\t";
+var email = strTrim(input);
+print email;  // "alice@example.com"
+```
+
+#### `strSplit(text, separator)` → array
+Splits `text` into an array of strings using `separator` as the delimiter. If separator is empty, splits into individual characters.
+
+```lux
+var csv = "alpha,beta,gamma";
+var parts = strSplit(csv, ",");
+print parts.length;  // 3
+print parts[0];      // "alpha"
+print parts[1];      // "beta"
+print parts[2];      // "gamma"
+
+// Split into characters
+var word = "abc";
+var chars = strSplit(word, "");
+print chars.length;  // 3
+print chars[0];      // "a"
+print chars[1];      // "b"
+
+// Parse lines
+var multiline = "line1\nline2\nline3";
+var lines = strSplit(multiline, "\n");
+var i = 0;
+while (i < lines.length) {
+    print "Line " + (i + 1) + ": " + lines[i];
+    i = i + 1;
+}
+```
+
+**Practical Example: Custom XML Parser**
+```lux
+// Extract all values for a given XML tag
+fun extractXmlTag(xml, tagName) {
+    var results = [];
+    var openTag = "<" + tagName + ">";
+    var closeTag = "</" + tagName + ">";
+    var cursor = 0;
+    
+    while (cursor < len(xml)) {
+        var openIdx = strFind(xml, openTag, cursor);
+        if (openIdx == -1) {
+            return results;
+        }
+        
+        var valueStart = openIdx + len(openTag);
+        var closeIdx = strFind(xml, closeTag, valueStart);
+        if (closeIdx == -1) {
+            return results;
+        }
+        
+        var value = strSlice(xml, valueStart, closeIdx);
+        results = results + [strTrim(value)];
+        cursor = closeIdx + len(closeTag);
+    }
+    
+    return results;
+}
+
+var xmlResponse = "<items><item>A</item><item>B</item><item>C</item></items>";
+var items = extractXmlTag(xmlResponse, "item");
+print items.length;  // 3
+print items[0];      // "A"
+print items[1];      // "B"
+```
+
 ### HTTP Operations
 
 Lux includes HTTP client functions for making web requests on both Plan 9 and POSIX platforms.

@@ -1,0 +1,162 @@
+// S3 XML Parsing using VM string primitives
+// This example shows manual XML parsing with strFind, strSlice, etc.
+
+print "=== S3 XML Manual Parsing Example ===";
+print "";
+
+// Sample S3 ListObjectsV2 XML response (simplified)
+var xmlResponse = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<ListBucketResult>
+    <Name>my-bucket</Name>
+    <Prefix>documents/</Prefix>
+    <Contents>
+        <Key>documents/file1.txt</Key>
+        <Size>1024</Size>
+        <LastModified>2024-03-01T10:00:00.000Z</LastModified>
+    </Contents>
+    <Contents>
+        <Key>documents/file2.pdf</Key>
+        <Size>2048</Size>
+        <LastModified>2024-03-02T11:30:00.000Z</LastModified>
+    </Contents>
+    <Contents>
+        <Key>documents/report.csv</Key>
+        <Size>512</Size>
+        <LastModified>2024-03-03T14:45:00.000Z</LastModified>
+    </Contents>
+</ListBucketResult>";
+
+// Function to extract all values for a given XML tag
+fun extractXmlTag(xml, tagName) {
+    var results = [];
+    var openTag = "<" + tagName + ">";
+    var closeTag = "</" + tagName + ">";
+    var cursor = 0;
+    
+    while (cursor < len(xml)) {
+        // Find opening tag
+        var openIdx = strFind(xml, openTag, cursor);
+        if (openIdx == -1) {
+            return results;
+        }
+        
+        // Find closing tag after opening
+        var valueStart = openIdx + len(openTag);
+        var closeIdx = strFind(xml, closeTag, valueStart);
+        if (closeIdx == -1) {
+            return results;
+        }
+        
+        // Extract value between tags
+        var value = strSlice(xml, valueStart, closeIdx);
+        results = results + [strTrim(value)];
+        
+        // Move cursor past closing tag
+        cursor = closeIdx + len(closeTag);
+    }
+    
+    return results;
+}
+
+// Function to extract first occurrence of a tag
+fun extractSingleTag(xml, tagName) {
+    var openTag = "<" + tagName + ">";
+    var closeTag = "</" + tagName + ">";
+    
+    var openIdx = strFind(xml, openTag, 0);
+    if (openIdx == -1) {
+        return nil;
+    }
+    
+    var valueStart = openIdx + len(openTag);
+    var closeIdx = strFind(xml, closeTag, valueStart);
+    if (closeIdx == -1) {
+        return nil;
+    }
+    
+    return strTrim(strSlice(xml, valueStart, closeIdx));
+}
+
+print "1. Extract bucket name:";
+var bucketName = extractSingleTag(xmlResponse, "Name");
+print "   " + bucketName;
+
+print "";
+print "2. Extract prefix:";
+var prefix = extractSingleTag(xmlResponse, "Prefix");
+print "   " + prefix;
+
+print "";
+print "3. Extract all Keys:";
+var keys = extractXmlTag(xmlResponse, "Key");
+print "   Found " + keys.length + " objects";
+var i = 0;
+while (i < keys.length) {
+    print "   [" + i + "] " + keys[i];
+    i = i + 1;
+}
+
+print "";
+print "4. Extract all Sizes:";
+var sizes = extractXmlTag(xmlResponse, "Size");
+i = 0;
+while (i < sizes.length) {
+    print "   [" + i + "] " + sizes[i] + " bytes";
+    i = i + 1;
+}
+
+print "";
+print "5. Extract all LastModified dates:";
+var modified = extractXmlTag(xmlResponse, "LastModified");
+i = 0;
+while (i < modified.length) {
+    print "   [" + i + "] " + modified[i];
+    i = i + 1;
+}
+
+print "";
+print "6. Build object listing:";
+i = 0;
+while (i < keys.length) {
+    print "Object " + (i + 1) + ":";
+    print "  Key: " + keys[i];
+    if (i < sizes.length) {
+        print "  Size: " + sizes[i] + " bytes";
+    }
+    if (i < modified.length) {
+        print "  Modified: " + modified[i];
+    }
+    print "";
+    i = i + 1;
+}
+
+print "";
+print "7. String manipulation examples:";
+var firstKey = keys[0];
+print "   First key: " + firstKey;
+
+// Check if key starts with prefix
+var hasPrefix = strStartsWithAt(firstKey, "documents/", 0);
+print "   Starts with 'documents/': " + hasPrefix;
+
+// Extract filename after prefix
+var slashIdx = strFind(firstKey, "/", 0);
+if (slashIdx != -1) {
+    var filename = strSlice(firstKey, slashIdx + 1, len(firstKey));
+    print "   Filename: " + filename;
+    
+    // Split filename by dot to get extension
+    var parts = strSplit(filename, ".");
+    if (parts.length > 1) {
+        print "   Extension: " + parts[parts.length - 1];
+    }
+}
+
+print "";
+print "=== Complete ===";
+print "This example shows XML parsing using only VM string primitives:";
+print "- strFind() for pattern matching";
+print "- strSlice() for substring extraction";
+print "- strTrim() for whitespace cleanup";
+print "- strStartsWithAt() for pattern checks";
+print "- strSplit() for tokenization";
