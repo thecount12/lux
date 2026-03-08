@@ -444,6 +444,128 @@ strSplitNative(int argCount, Value* args)
 	return OBJ_VAL(result);
 }
 
+static int
+compareValuesForSort(Value a, Value b, bool* ok)
+{
+	if (IS_NUMBER(a) && IS_NUMBER(b)) {
+		double da = AS_NUMBER(a);
+		double db = AS_NUMBER(b);
+		*ok = true;
+		if (da < db) return -1;
+		if (da > db) return 1;
+		return 0;
+	}
+
+	if (IS_STRING(a) && IS_STRING(b)) {
+		int cmp = strcmp(AS_CSTRING(a), AS_CSTRING(b));
+		*ok = true;
+		if (cmp < 0) return -1;
+		if (cmp > 0) return 1;
+		return 0;
+	}
+
+	*ok = false;
+	return 0;
+}
+
+/* arrayIndexOf(array, value) -> number index or -1 */
+static Value
+arrayIndexOfNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_ARRAY(args[0]))
+		return NIL_VAL;
+
+	ObjArray* array = AS_ARRAY(args[0]);
+	Value needle = args[1];
+
+	for (int i = 0; i < array->count; i++) {
+		if (valuesEqual(array->elements[i], needle))
+			return NUMBER_VAL(i);
+	}
+
+	return NUMBER_VAL(-1);
+}
+
+/* arrayContains(array, value) -> bool */
+static Value
+arrayContainsNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_ARRAY(args[0]))
+		return NIL_VAL;
+
+	ObjArray* array = AS_ARRAY(args[0]);
+	Value needle = args[1];
+
+	for (int i = 0; i < array->count; i++) {
+		if (valuesEqual(array->elements[i], needle))
+			return BOOL_VAL(true);
+	}
+
+	return BOOL_VAL(false);
+}
+
+/* arraySort(array) -> array (in-place). Supports all-number or all-string arrays. */
+static Value
+arraySortNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_ARRAY(args[0]))
+		return NIL_VAL;
+
+	ObjArray* array = AS_ARRAY(args[0]);
+	if (array->count < 2)
+		return args[0];
+
+	for (int i = 0; i < array->count - 1; i++) {
+		for (int j = 0; j < array->count - 1 - i; j++) {
+			bool ok;
+			int cmp = compareValuesForSort(array->elements[j], array->elements[j + 1], &ok);
+			if (!ok)
+				return NIL_VAL;
+
+			if (cmp > 0) {
+				Value tmp = array->elements[j];
+				array->elements[j] = array->elements[j + 1];
+				array->elements[j + 1] = tmp;
+			}
+		}
+	}
+
+	return args[0];
+}
+
+/* arrayBinarySearch(array, value) -> number index or -1.
+ * Array must already be sorted and value type must match element type.
+ */
+static Value
+arrayBinarySearchNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_ARRAY(args[0]))
+		return NIL_VAL;
+
+	ObjArray* array = AS_ARRAY(args[0]);
+	Value needle = args[1];
+
+	int left = 0;
+	int right = array->count - 1;
+
+	while (left <= right) {
+		int mid = left + (right - left) / 2;
+		bool ok;
+		int cmp = compareValuesForSort(array->elements[mid], needle, &ok);
+		if (!ok)
+			return NUMBER_VAL(-1);
+
+		if (cmp == 0)
+			return NUMBER_VAL(mid);
+		if (cmp < 0)
+			left = mid + 1;
+		else
+			right = mid - 1;
+	}
+
+	return NUMBER_VAL(-1);
+}
+
 /* JSON parsing helpers */
 typedef struct {
 	char* start;
@@ -2244,6 +2366,10 @@ initVM(void)
 	defineNative("strStartsWithAt", strStartsWithAtNative);
 	defineNative("strTrim", strTrimNative);
 	defineNative("strSplit", strSplitNative);
+	defineNative("arrayIndexOf", arrayIndexOfNative);
+	defineNative("arrayContains", arrayContainsNative);
+	defineNative("arraySort", arraySortNative);
+	defineNative("arrayBinarySearch", arrayBinarySearchNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
 	defineNative("parseXml", parseXmlNative);
