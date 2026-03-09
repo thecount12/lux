@@ -120,6 +120,70 @@ class S3Client {
         var response = httpRequest("GET", url, nil, headers);
         return response;
     }
+
+    // List a single page of objects using ListObjectsV2 pagination fields.
+    // continuationToken and maxKeys are optional; pass nil to omit.
+    listObjectsPage(bucket, prefix, continuationToken, maxKeys) {
+        var host = this.getHost(bucket);
+        var queryString = "list-type=2";
+
+        if (prefix) {
+            queryString = queryString + "&prefix=" + prefix;
+        }
+
+        if (continuationToken != nil && continuationToken != "") {
+            queryString = queryString + "&continuation-token=" + continuationToken;
+        }
+
+        if (maxKeys != nil) {
+            queryString = queryString + "&max-keys=" + maxKeys;
+        }
+
+        var headers = this.request.sign("GET", host, "/", queryString, "");
+        var url = "https://" + host + "/?" + queryString;
+
+        return httpRequest("GET", url, nil, headers);
+    }
+
+    // Iterate all pages and return a single array of <Key> values.
+    // maxPages is optional safety guard (default: 100).
+    listAllObjects(bucket, prefix, maxPages, maxKeys) {
+        var keys = [];
+        var token = nil;
+        var page = 0;
+        var limit = 100;
+
+        if (maxPages != nil) {
+            limit = maxPages;
+        }
+
+        while (page < limit) {
+            var xml = this.listObjectsPage(bucket, prefix, token, maxKeys);
+            if (xml == nil) {
+                return keys;
+            }
+
+            var pageKeys = parseXml(xml, "Key");
+            if (pageKeys != nil && pageKeys.length > 0) {
+                keys = keys + pageKeys;
+            }
+
+            var truncated = parseXml(xml, "IsTruncated");
+            if (truncated == nil || truncated.length == 0 || truncated[0] != "true") {
+                return keys;
+            }
+
+            var nextToken = parseXml(xml, "NextContinuationToken");
+            if (nextToken == nil || nextToken.length == 0) {
+                return keys;
+            }
+
+            token = nextToken[0];
+            page = page + 1;
+        }
+
+        return keys;
+    }
     
     // Get object
     getObject(bucket, key) {
@@ -202,6 +266,18 @@ var s3 = S3Client(config);
 
 print "\n1. List Objects:";
 s3.listObjects("my-bucket", "documents/");
+
+// 1b. Optional pagination helpers (kept separate so existing usage is unchanged)
+// var firstPageXml = s3.listObjectsPage("my-bucket", "documents/", nil, 100);
+// print firstPageXml;
+//
+// var allKeys = s3.listAllObjects("my-bucket", "documents/", 20, 1000);
+// print "Total keys: " + allKeys.length;
+// var i = 0;
+// while (i < allKeys.length) {
+//     print allKeys[i];
+//     i = i + 1;
+// }
 
 print "\n2. Get Object:";
 s3.getObject("my-bucket", "file.txt");
