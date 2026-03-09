@@ -17,6 +17,278 @@
 
 VM vm;
 
+typedef struct {
+	const char* name;
+	const char* signature;
+	const char* description;
+} NativeDoc;
+
+static const NativeDoc kNativeDocs[] = {
+	{"clock", "clock()", "Return process uptime in seconds."},
+	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
+	{"writeFile", "writeFile(path, content)", "Write content to a file."},
+	{"appendFile", "appendFile(path, content)", "Append content to a file."},
+	{"deleteFile", "deleteFile(path)", "Delete a file."},
+	{"fileExists", "fileExists(path)", "Return whether a file exists."},
+	{"createDir", "createDir(path)", "Create a directory."},
+	{"listDir", "listDir(path)", "List directory entries as a newline-separated string."},
+	{"len", "len(value)", "Return length for strings and arrays."},
+	{"strFind", "strFind(haystack, needle)", "Return index of substring or -1."},
+	{"strSlice", "strSlice(s, start, end)", "Return substring from start to end."},
+	{"strStartsWithAt", "strStartsWithAt(s, prefix, offset)", "Check prefix match at offset."},
+	{"strTrim", "strTrim(s)", "Trim surrounding whitespace."},
+	{"strSplit", "strSplit(s, delim)", "Split string into an array."},
+	{"arrayIndexOf", "arrayIndexOf(arr, value)", "Return index of value in array or -1."},
+	{"arrayContains", "arrayContains(arr, value)", "Return whether array contains value."},
+	{"arraySort", "arraySort(arr)", "Sort an array in place."},
+	{"arrayBinarySearch", "arrayBinarySearch(arr, value)", "Binary-search sorted array."},
+	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
+	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
+	{"parseXml", "parseXml(xml)", "Parse XML text into Lux values."},
+	{"httpGet", "httpGet(url)", "Make an HTTP GET request."},
+	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request."},
+	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
+	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request."},
+	{"httpServer", "httpServer(port, handler)", "Start a simple HTTP server."},
+	{"sha256", "sha256(text)", "Compute SHA-256 hash."},
+	{"hmacSha256", "hmacSha256(key, text)", "Compute HMAC-SHA256."},
+	{"awsSignRequest", "awsSignRequest(method, path, query, headers, payloadHash, region, service, accessKey, secretKey)", "Build AWS Signature V4 headers."},
+	{"getAwsTimestamp", "getAwsTimestamp()", "Return AWS timestamp fields."},
+	{"s3ListObjects", "s3ListObjects(endpoint, bucket, prefix, region, accessKey, secretKey)", "List S3 objects."},
+	{"s3GetObject", "s3GetObject(endpoint, bucket, key, region, accessKey, secretKey)", "Read object contents from S3."},
+	{"s3PutObject", "s3PutObject(endpoint, bucket, key, body, region, accessKey, secretKey)", "Upload object data to S3."},
+	{"help", "help() or help(name)", "List available callables or show details for one name."},
+};
+
+static int
+compareNamePtr(const void* a, const void* b)
+{
+	const char* const* lhs = (const char* const*)a;
+	const char* const* rhs = (const char* const*)b;
+	return strcmp(*lhs, *rhs);
+}
+
+static const NativeDoc*
+findNativeDoc(const char* name)
+{
+	int count = (int)(sizeof(kNativeDocs) / sizeof(kNativeDocs[0]));
+	for (int i = 0; i < count; i++) {
+		if (strcmp(kNativeDocs[i].name, name) == 0)
+			return &kNativeDocs[i];
+	}
+	return nil;
+}
+
+static bool
+isCallableGlobal(Value value)
+{
+	if (!IS_OBJ(value))
+		return false;
+
+	switch (OBJ_TYPE(value)) {
+	case OBJ_NATIVE:
+	case OBJ_FUNCTION:
+	case OBJ_CLOSURE:
+	case OBJ_CLASS:
+	case OBJ_BOUND_METHOD:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static const char*
+callableCategory(const char* name)
+{
+	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0)
+		return "Core";
+	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
+	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
+	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
+	    strcmp(name, "listDir") == 0)
+		return "File and Directory";
+	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
+	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
+	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
+	    strcmp(name, "arrayIndexOf") == 0 || strcmp(name, "arrayContains") == 0 ||
+	    strcmp(name, "arraySort") == 0 || strcmp(name, "arrayBinarySearch") == 0)
+		return "String and Array";
+	if (strcmp(name, "parseJSON") == 0 || strcmp(name, "toJSON") == 0 ||
+	    strcmp(name, "parseXml") == 0)
+		return "Data Formats";
+	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
+	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
+	    strcmp(name, "httpServer") == 0)
+		return "HTTP";
+	if (strcmp(name, "sha256") == 0 || strcmp(name, "hmacSha256") == 0)
+		return "Crypto";
+	if (strcmp(name, "awsSignRequest") == 0 || strcmp(name, "getAwsTimestamp") == 0 ||
+	    strcmp(name, "s3ListObjects") == 0 || strcmp(name, "s3GetObject") == 0 ||
+	    strcmp(name, "s3PutObject") == 0)
+		return "AWS";
+	if (strcmp(name, "dbConnect") == 0 || strcmp(name, "dbQuery") == 0 ||
+	    strcmp(name, "dbClose") == 0)
+		return "Database";
+	return "User or Other";
+}
+
+static Value
+helpNative(int argCount, Value* args)
+{
+	if (argCount > 1) {
+		print("Usage: help() or help(name)\n");
+		return NIL_VAL;
+	}
+
+	if (argCount == 1) {
+		if (!IS_STRING(args[0])) {
+			print("help(name) expects a string name.\n");
+			return NIL_VAL;
+		}
+
+		char* name = AS_CSTRING(args[0]);
+		Value found = NIL_VAL;
+		bool exists = false;
+
+		for (int i = 0; i < vm.globals.capacity; i++) {
+			Entry* entry = &vm.globals.entries[i];
+			if (entry->key != nil && strcmp(entry->key->chars, name) == 0) {
+				exists = true;
+				found = entry->value;
+				break;
+			}
+		}
+
+		if (!exists) {
+			print("No global named '%s'.\n", name);
+			if (strcmp(name, "class") == 0) {
+				print("'class' is a language keyword, not a global value.\n");
+				print("Define a class first, then call help(\"ClassName\").\n");
+				return NIL_VAL;
+			}
+			if (name[0] >= 'A' && name[0] <= 'Z') {
+				print("Tip: classes only appear in help() after they are defined or imported in the current run.\n");
+			}
+			return NIL_VAL;
+		}
+
+		print("%s\n", name);
+		const NativeDoc* doc = findNativeDoc(name);
+		if (doc != nil) {
+			print("  %s\n", doc->signature);
+			print("  %s\n", doc->description);
+		}
+
+		if (!IS_OBJ(found)) {
+			print("  Type: value\n");
+			return NIL_VAL;
+		}
+
+		switch (OBJ_TYPE(found)) {
+		case OBJ_NATIVE:
+			print("  Type: native function\n");
+			break;
+		case OBJ_FUNCTION:
+			print("  Type: function (arity %d)\n", AS_FUNCTION(found)->arity);
+			break;
+		case OBJ_CLOSURE:
+			print("  Type: closure (arity %d)\n", AS_CLOSURE(found)->function->arity);
+			break;
+		case OBJ_CLASS: {
+			ObjClass* klass = AS_CLASS(found);
+			print("  Type: class\n");
+			int shown = 0;
+			for (int i = 0; i < klass->methods.capacity; i++) {
+				Entry* method = &klass->methods.entries[i];
+				if (method->key == nil)
+					continue;
+				if (shown == 0)
+					print("  Methods:\n");
+				print("    %s\n", method->key->chars);
+				shown++;
+				if (shown >= 20)
+					break;
+			}
+			if (shown == 0)
+				print("  Methods: (none)\n");
+			break;
+		}
+		case OBJ_BOUND_METHOD:
+			print("  Type: bound method\n");
+			break;
+		default:
+			print("  Type: value\n");
+			break;
+		}
+
+		return NIL_VAL;
+	}
+
+	print("Available global callables:\n");
+	print("  help()\n");
+	print("  help(\"name\")\n\n");
+
+	int nameCap = 32;
+	int nameCount = 0;
+	char** names = (char**)malloc(sizeof(char*) * nameCap);
+	if (names == nil) {
+		print("Out of memory while listing globals.\n");
+		return NIL_VAL;
+	}
+
+	for (int i = 0; i < vm.globals.capacity; i++) {
+		Entry* entry = &vm.globals.entries[i];
+		if (entry->key == nil)
+			continue;
+		if (!isCallableGlobal(entry->value))
+			continue;
+
+		if (nameCount >= nameCap) {
+			nameCap *= 2;
+			char** grown = realloc(names, sizeof(char*) * nameCap);
+			if (grown == nil) {
+				free(names);
+				print("Out of memory while listing globals.\n");
+				return NIL_VAL;
+			}
+			names = grown;
+		}
+
+		names[nameCount++] = entry->key->chars;
+	}
+
+	qsort(names, nameCount, sizeof(char*), compareNamePtr);
+	const char* categories[] = {
+		"Core",
+		"File and Directory",
+		"String and Array",
+		"Data Formats",
+		"HTTP",
+		"Crypto",
+		"AWS",
+		"Database",
+		"User or Other",
+	};
+	int categoryCount = (int)(sizeof(categories) / sizeof(categories[0]));
+	for (int c = 0; c < categoryCount; c++) {
+		bool any = false;
+		for (int i = 0; i < nameCount; i++) {
+			if (strcmp(callableCategory(names[i]), categories[c]) == 0) {
+				if (!any) {
+					print("%s:\n", categories[c]);
+					any = true;
+				}
+				print("  %s\n", names[i]);
+			}
+		}
+		if (any)
+			print("\n");
+	}
+
+	free(names);
+	return NIL_VAL;
+}
+
 /* Forward declaration for native helpers that report runtime errors before
  * runtimeError() is defined later in this translation unit.
  */
@@ -2423,6 +2695,7 @@ initVM(void)
 	vm.initString = copyString("init", 4);
 
 	defineNative("clock", clockNative);
+	defineNative("help", helpNative);
 	defineNative("readFile", readFileNative);
 	defineNative("writeFile", writeFileNative);
 	defineNative("appendFile", appendFileNative);
