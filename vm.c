@@ -25,6 +25,8 @@ typedef struct {
 
 static const NativeDoc kNativeDocs[] = {
 	{"clock", "clock()", "Return process uptime in seconds."},
+	{"epoch", "epoch()", "Return Unix epoch time in seconds (UTC)."},
+	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"writeFile", "writeFile(path, content)", "Write content to a file."},
 	{"appendFile", "appendFile(path, content)", "Append content to a file."},
@@ -100,7 +102,7 @@ isCallableGlobal(Value value)
 static const char*
 callableCategory(const char* name)
 {
-	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0)
+	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0)
 		return "Core";
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
@@ -309,6 +311,33 @@ clockNative(int argCount, Value* args)
     (void)argCount; (void)args;
     // Plan 9: use nsec() for nanoseconds since boot, divide by 1e9 for seconds
     return NUMBER_VAL((double)nsec() / 1000000000.0);
+}
+
+static Value
+epochNative(int argCount, Value* args)
+{
+	(void)argCount;
+	(void)args;
+	return NUMBER_VAL((double)time(0));
+}
+
+static Value
+floorNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_NUMBER(args[0])) {
+		return NIL_VAL;
+	}
+	double value = AS_NUMBER(args[0]);
+	/* Integer floor for Plan 9 */
+	long result;
+	if (value >= 0) {
+		result = (long)value;
+	} else {
+		result = (long)value;
+		if ((double)result != value)
+			result--;
+	}
+	return NUMBER_VAL((double)result);
 }
 
 /* Native function to read a file: readFile(path) -> string */
@@ -2695,6 +2724,8 @@ initVM(void)
 	vm.initString = copyString("init", 4);
 
 	defineNative("clock", clockNative);
+	defineNative("epoch", epochNative);
+	defineNative("floor", floorNative);
 	defineNative("help", helpNative);
 	defineNative("readFile", readFileNative);
 	defineNative("writeFile", writeFileNative);
@@ -3258,6 +3289,18 @@ run(void)
 			da = AS_NUMBER(a);
 			db = AS_NUMBER(b);
 			push(NUMBER_VAL(da / db));
+			break;
+
+		case OP_MODULO:
+			b = pop(); a = pop();
+			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
+				runtimeError("Operands must be numbers.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			da = AS_NUMBER(a);
+			db = AS_NUMBER(b);
+			/* Floating-point modulo for Plan 9 */
+			push(NUMBER_VAL(da - ((long)(da / db)) * db));
 			break;
 
 		case OP_NOT:
