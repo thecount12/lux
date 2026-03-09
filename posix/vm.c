@@ -45,6 +45,8 @@ typedef struct {
 
 static const NativeDoc kNativeDocs[] = {
 	{"clock", "clock()", "Return process CPU time in seconds."},
+	{"epoch", "epoch()", "Return Unix epoch time in seconds (UTC)."},
+	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"writeFile", "writeFile(path, content)", "Write content to a file."},
 	{"appendFile", "appendFile(path, content)", "Append content to a file."},
@@ -124,7 +126,7 @@ static const char* callableTypeName(Value v) {
 }
 
 static const char* callableCategory(const char* name) {
-	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0) return "Core";
+	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0) return "Core";
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
@@ -303,6 +305,27 @@ static Value helpNative(int argCount, Value* args) {
 
 static Value clockNative(int argCount __attribute__((unused)), Value* args __attribute__((unused))) {
 	return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+}
+
+static Value epochNative(int argCount __attribute__((unused)), Value* args __attribute__((unused))) {
+	return NUMBER_VAL((double)time(NULL));
+}
+
+static Value floorNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_NUMBER(args[0])) {
+		return NIL_VAL;
+	}
+	double value = AS_NUMBER(args[0]);
+	/* Floor using integer cast */
+	long result;
+	if (value >= 0) {
+		result = (long)value;
+	} else {
+		result = (long)value;
+		if ((double)result != value)
+			result--;
+	}
+	return NUMBER_VAL((double)result);
 }
 
 /* Native function to read a file: readFile(path) -> string */
@@ -2828,6 +2851,8 @@ void initVM() {
 	vm.initString = copyString("init", 4);
 
 	defineNative("clock", clockNative);
+	defineNative("epoch", epochNative);
+	defineNative("floor", floorNative);
 	defineNative("help", helpNative);
 	defineNative("readFile", readFileNative);
 	defineNative("writeFile", writeFileNative);
@@ -3300,6 +3325,16 @@ static InterpretResult run() {
 			case OP_SUBTRACT:	BINARY_OP(NUMBER_VAL, -); break;
 			case OP_MULTIPLY:	BINARY_OP(NUMBER_VAL, *); break;
 			case OP_DIVIDE:		BINARY_OP(NUMBER_VAL, /); break;
+			case OP_MODULO: {
+				if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
+					runtimeError("Operands must be numbers.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+				double b = AS_NUMBER(pop());
+				double a = AS_NUMBER(pop());
+				push(NUMBER_VAL(a - ((long)(a / b)) * b));
+				break;
+			}
 			case OP_NOT:
 				push(BOOL_VAL(isFalsey(pop())));
 				break;

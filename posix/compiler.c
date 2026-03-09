@@ -78,6 +78,12 @@ Parser parser;
 Compiler* current = NULL;
 ClassCompiler* currentClass = NULL;
 
+/* Break statement support */
+#define MAX_BREAK_JUMPS 256
+static int breakJumps[MAX_BREAK_JUMPS];
+static int breakJumpCount = 0;
+static int loopDepth = 0;
+
 static Chunk* currentChunk() {
 	return &current->function->chunk;
 }
@@ -293,6 +299,7 @@ static void binary(bool canAssign __attribute__((unused))) {
 		case TOKEN_MINUS:	emitByte(OP_SUBTRACT); break;
 		case TOKEN_STAR:	emitByte(OP_MULTIPLY); break;
 		case TOKEN_SLASH:	emitByte(OP_DIVIDE); break;
+		case TOKEN_PERCENT:	emitByte(OP_MODULO); break;
 		default:
 			return; // Unreachable.
 	}
@@ -407,6 +414,9 @@ static void returnStatement() {
 }
 
 static void whileStatement() {
+	int savedBreakCount = breakJumpCount;
+	loopDepth++;
+	
 	int loopStart = currentChunk()->count;
 	consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
 	expression();
@@ -419,6 +429,36 @@ static void whileStatement() {
 
 	patchJump(exitJump);
 	emitByte(OP_POP);
+	
+	/* Patch all break statements */
+	while (breakJumpCount > savedBreakCount) {
+		patchJump(breakJumps[--breakJumpCount]);
+	}
+	
+	loopDepth--;
+}
+
+static void breakStatement() {
+	if (loopDepth == 0) {
+		error("Cannot use 'break' outside of a loop.");
+		return;
+	}
+	
+	consume(TOKEN_SEMICOLON, "Expect ';' after 'break'.");
+	
+	/* Discard any locals created inside the loop */
+	for (int i = current->localCount - 1; 
+	     i >= 0 && current->locals[i].depth > current->scopeDepth; 
+	     i--) {
+		emitByte(OP_POP);
+	}
+	
+	if (breakJumpCount >= MAX_BREAK_JUMPS) {
+		error("Too many break statements in one loop.");
+		return;
+	}
+	
+	breakJumps[breakJumpCount++] = emitJump(OP_JUMP);
 }
 
 static void synchronize() {
@@ -569,6 +609,7 @@ ParseRule rules[] = {
 	[TOKEN_SEMICOLON] 		= {NULL, NULL, PREC_NONE},
 	[TOKEN_SLASH] 			= {NULL, binary, PREC_FACTOR},
 	[TOKEN_STAR] 			= {NULL, binary, PREC_FACTOR},
+	[TOKEN_PERCENT] 		= {NULL, binary, PREC_FACTOR},
 	[TOKEN_BANG]			= {unary, NULL, PREC_NONE},
 	[TOKEN_BANG_EQUAL] 		= {NULL, binary, PREC_EQUALITY},
 	[TOKEN_EQUAL] 			= {NULL, binary, PREC_COMPARISON},
@@ -581,12 +622,14 @@ ParseRule rules[] = {
 	[TOKEN_STRING] 			= {string, NULL, PREC_NONE},
 	[TOKEN_NUMBER] 			= {number, NULL, PREC_NONE},
 	[TOKEN_AND] 			= {NULL, and_, PREC_AND},
+	[TOKEN_BREAK] 			= {NULL, NULL, PREC_NONE},
 	[TOKEN_CLASS] 			= {NULL, NULL, PREC_TERM},
 	[TOKEN_ELSE] 			= {NULL, NULL, PREC_NONE},
 	[TOKEN_FALSE] 			= {literal, NULL, PREC_NONE},
 	[TOKEN_FOR] 			= {NULL, NULL, PREC_NONE},
 	[TOKEN_FUN] 			= {NULL, NULL, PREC_NONE},
 	[TOKEN_IF] 				= {NULL, NULL, PREC_NONE},
+	[TOKEN_IMPORT] 			= {NULL, NULL, PREC_NONE},
 	[TOKEN_NIL] 			= {literal, NULL, PREC_NONE},
 	[TOKEN_OR] 				= {NULL, or_, PREC_OR},
 	[TOKEN_PRINT] 			= {NULL, NULL, PREC_NONE},
@@ -894,6 +937,9 @@ static void expressionStatement() {
 }
 
 static void forStatement() {
+	int savedBreakCount = breakJumpCount;
+	loopDepth++;
+	
 	beginScope();
 	consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
 	if (match(TOKEN_SEMICOLON)) {
@@ -934,8 +980,14 @@ static void forStatement() {
 		patchJump(exitJump);
 		emitByte(OP_POP);
 	}
+	
+	/* Patch all break statements */
+	while (breakJumpCount > savedBreakCount) {
+		patchJump(breakJumps[--breakJumpCount]);
+	}
 
 	endScope();
+	loopDepth--;
 }
 
 static void ifStatement() {
@@ -981,6 +1033,8 @@ static void statement() {
 		ifStatement();
 	} else if (match(TOKEN_RETURN)) {
 		returnStatement();
+	} else if (match(TOKEN_BREAK)) {
+		breakStatement();
 	} else if (match(TOKEN_WHILE)) {
 		whileStatement();
 	} else if (match(TOKEN_LEFT_BRACE)) {

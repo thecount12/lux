@@ -307,6 +307,7 @@ Use `help("name")` to inspect one symbol.
 help();
 help("dbQuery");
 help("str"); // unknown names can suggest close matches
+print epoch(); // Unix epoch seconds (UTC)
 
 class Greeter {
     init(name) {
@@ -320,6 +321,8 @@ help("Greeter"); // shows class type and known method names
 ```
 
 `help()` groups callables by category (Core, File and Directory, String and Array, Data Formats, HTTP, Crypto, AWS, Database, and User or Other) so long lists are easier to scan.
+
+`epoch()` returns Unix timestamp seconds in UTC, which is useful for durable event timestamps.
 
 Plan 9 REPL tip: if multiline input is awkward in your terminal, define classes on one line and then inspect them.
 
