@@ -12,6 +12,7 @@ A dynamically-typed scripting language based on the Lox language from "Crafting 
 - **Modules** - Split code across files using `import "path.lux";`
 - **Automatic memory management** - Mark-and-sweep garbage collector
 - **NaN boxing** - Optional performance optimization for value representation
+- **REPL help** - Discover available callables with `help()` and inspect a symbol with `help("name")`
 
 ## Language Features
 
@@ -296,6 +297,45 @@ Lux now supports **automatic type conversion** with the `+` operator:
 Any type (number, boolean, nil) is automatically converted to string when used with `+` and at least one string operand.
 
 ## Built-in Functions
+
+### REPL Help
+
+Use `help()` in the REPL to list callable globals (native functions, classes, and functions).
+Use `help("name")` to inspect one symbol.
+
+```lux
+help();
+help("dbQuery");
+help("str"); // unknown names can suggest close matches
+
+class Greeter {
+    init(name) {
+        this.name = name;
+    }
+    hello() {
+        print "hello " + this.name;
+    }
+}
+help("Greeter"); // shows class type and known method names
+```
+
+`help()` groups callables by category (Core, File and Directory, String and Array, Data Formats, HTTP, Crypto, AWS, Database, and User or Other) so long lists are easier to scan.
+
+Plan 9 REPL tip: if multiline input is awkward in your terminal, define classes on one line and then inspect them.
+
+```lux
+class Greeter {init(name){this.name = name;} hello(){print "hello " + this.name;}}
+help("Greeter");
+```
+
+Typical output for `help("dbQuery")`:
+
+```text
+dbQuery
+    dbQuery(conn, sql)
+    Execute SQL and return rows for queries.
+    Type: native function
+```
 
 ### File Operations
 

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <ctype.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
@@ -35,6 +36,270 @@
 #include "vm.h"
 
 VM vm;
+
+typedef struct {
+	const char* name;
+	const char* signature;
+	const char* description;
+} NativeDoc;
+
+static const NativeDoc kNativeDocs[] = {
+	{"clock", "clock()", "Return process CPU time in seconds."},
+	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
+	{"writeFile", "writeFile(path, content)", "Write content to a file."},
+	{"appendFile", "appendFile(path, content)", "Append content to a file."},
+	{"deleteFile", "deleteFile(path)", "Delete a file."},
+	{"fileExists", "fileExists(path)", "Return whether a file exists."},
+	{"createDir", "createDir(path)", "Create a directory."},
+	{"listDir", "listDir(path)", "List directory entries as a newline-separated string."},
+	{"len", "len(value)", "Return length for strings and arrays."},
+	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
+	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
+	{"httpGet", "httpGet(url)", "Make an HTTP GET request."},
+	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request."},
+	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
+	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request."},
+	{"sha256", "sha256(text)", "Compute SHA-256 hash."},
+	{"hmacSha256", "hmacSha256(key, text)", "Compute HMAC-SHA256."},
+	{"dbConnect", "dbConnect(driver, connection)", "Open a database connection."},
+	{"dbQuery", "dbQuery(conn, sql)", "Execute SQL and return rows for queries."},
+	{"dbClose", "dbClose(conn)", "Close a database connection."},
+	{"help", "help() or help(name)", "List available callables or show details for one name."},
+};
+
+static int compareNamePtr(const void* a, const void* b) {
+	const char* const* lhs = (const char* const*)a;
+	const char* const* rhs = (const char* const*)b;
+	return strcmp(*lhs, *rhs);
+}
+
+static const NativeDoc* findNativeDoc(const char* name) {
+	int count = (int)(sizeof(kNativeDocs) / sizeof(kNativeDocs[0]));
+	for (int i = 0; i < count; i++) {
+		if (strcmp(kNativeDocs[i].name, name) == 0) {
+			return &kNativeDocs[i];
+		}
+	}
+	return NULL;
+}
+
+static bool isCallableGlobal(Value value) {
+	if (!IS_OBJ(value)) return false;
+	switch (OBJ_TYPE(value)) {
+		case OBJ_NATIVE:
+		case OBJ_FUNCTION:
+		case OBJ_CLOSURE:
+		case OBJ_CLASS:
+		case OBJ_BOUND_METHOD:
+			return true;
+		default:
+			return false;
+	}
+}
+
+static bool containsIgnoreCase(const char* haystack, const char* needle) {
+	if (needle[0] == '\0') return true;
+	int n = (int)strlen(needle);
+	for (const char* h = haystack; *h != '\0'; h++) {
+		int i = 0;
+		while (i < n && h[i] != '\0' &&
+		       (char)tolower((unsigned char)h[i]) == (char)tolower((unsigned char)needle[i])) {
+			i++;
+		}
+		if (i == n) return true;
+	}
+	return false;
+}
+
+static const char* callableTypeName(Value v) {
+	if (!IS_OBJ(v)) return "value";
+	switch (OBJ_TYPE(v)) {
+		case OBJ_NATIVE: return "native function";
+		case OBJ_FUNCTION: return "function";
+		case OBJ_CLOSURE: return "closure";
+		case OBJ_CLASS: return "class";
+		case OBJ_BOUND_METHOD: return "bound method";
+		default: return "value";
+	}
+}
+
+static const char* callableCategory(const char* name) {
+	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0) return "Core";
+	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
+	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
+	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
+	    strcmp(name, "listDir") == 0) return "File and Directory";
+	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
+	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
+	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
+	    strcmp(name, "arrayIndexOf") == 0 || strcmp(name, "arrayContains") == 0 ||
+	    strcmp(name, "arraySort") == 0 || strcmp(name, "arrayBinarySearch") == 0) return "String and Array";
+	if (strcmp(name, "parseJSON") == 0 || strcmp(name, "toJSON") == 0 ||
+	    strcmp(name, "parseXml") == 0) return "Data Formats";
+	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
+	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
+	    strcmp(name, "httpServer") == 0) return "HTTP";
+	if (strcmp(name, "sha256") == 0 || strcmp(name, "hmacSha256") == 0) return "Crypto";
+	if (strcmp(name, "awsSignRequest") == 0 || strcmp(name, "getAwsTimestamp") == 0 ||
+	    strcmp(name, "s3ListObjects") == 0 || strcmp(name, "s3GetObject") == 0 ||
+	    strcmp(name, "s3PutObject") == 0) return "AWS";
+	if (strcmp(name, "dbConnect") == 0 || strcmp(name, "dbQuery") == 0 ||
+	    strcmp(name, "dbClose") == 0) return "Database";
+	return "User or Other";
+}
+
+static Value helpNative(int argCount, Value* args) {
+	if (argCount > 1) {
+		printf("Usage: help() or help(name)\n");
+		return NIL_VAL;
+	}
+
+	if (argCount == 1) {
+		if (!IS_STRING(args[0])) {
+			printf("help(name) expects a string name.\n");
+			return NIL_VAL;
+		}
+
+		char* name = AS_CSTRING(args[0]);
+		Entry* entries = vm.globals.entries;
+		Value found = NIL_VAL;
+		bool exists = false;
+
+		for (int i = 0; i < vm.globals.capacity; i++) {
+			Entry* entry = &entries[i];
+			if (entry->key != NULL && strcmp(entry->key->chars, name) == 0) {
+				exists = true;
+				found = entry->value;
+				break;
+			}
+		}
+
+		if (!exists) {
+			printf("No global named '%s'.\n", name);
+			if (strcmp(name, "class") == 0) {
+				printf("'class' is a language keyword, not a global value.\n");
+				printf("Define a class first, then call help(\"ClassName\").\n");
+				return NIL_VAL;
+			}
+			if (name[0] >= 'A' && name[0] <= 'Z') {
+				printf("Tip: classes only appear in help() after they are defined or imported in the current run.\n");
+			}
+			int shown = 0;
+			for (int i = 0; i < vm.globals.capacity; i++) {
+				Entry* entry = &entries[i];
+				if (entry->key == NULL) continue;
+				if (!isCallableGlobal(entry->value)) continue;
+				if (!containsIgnoreCase(entry->key->chars, name)) continue;
+				if (shown == 0) printf("Did you mean:\n");
+				printf("  %s\n", entry->key->chars);
+				shown++;
+				if (shown >= 8) break;
+			}
+			return NIL_VAL;
+		}
+
+		printf("%s\n", name);
+		const NativeDoc* doc = findNativeDoc(name);
+		if (doc != NULL) {
+			printf("  %s\n", doc->signature);
+			printf("  %s\n", doc->description);
+		}
+
+		printf("  Type: %s\n", callableTypeName(found));
+		if (IS_OBJ(found) && OBJ_TYPE(found) == OBJ_FUNCTION) {
+			ObjFunction* fn = AS_FUNCTION(found);
+			printf("  Arity: %d\n", fn->arity);
+			if (fn->name != NULL) {
+				printf("  Name: %s\n", fn->name->chars);
+			}
+		}
+		if (IS_OBJ(found) && OBJ_TYPE(found) == OBJ_CLOSURE) {
+			ObjClosure* cl = AS_CLOSURE(found);
+			printf("  Arity: %d\n", cl->function->arity);
+			if (cl->function->name != NULL) {
+				printf("  Name: %s\n", cl->function->name->chars);
+			}
+		}
+		if (IS_OBJ(found) && OBJ_TYPE(found) == OBJ_CLASS) {
+			ObjClass* klass = AS_CLASS(found);
+			int shown = 0;
+			for (int i = 0; i < klass->methods.capacity; i++) {
+				Entry* method = &klass->methods.entries[i];
+				if (method->key == NULL) continue;
+				if (shown == 0) printf("  Methods:\n");
+				printf("    %s\n", method->key->chars);
+				shown++;
+				if (shown >= 20) break;
+			}
+			if (shown == 0) {
+				printf("  Methods: (none)\n");
+			}
+		}
+
+		return NIL_VAL;
+	}
+
+	printf("Available global callables:\n");
+	printf("  help()\n");
+	printf("  help(\"name\")\n\n");
+
+	int nameCap = 32;
+	int nameCount = 0;
+	char** names = (char**)malloc(sizeof(char*) * nameCap);
+	if (names == NULL) {
+		printf("Out of memory while listing globals.\n");
+		return NIL_VAL;
+	}
+
+	for (int i = 0; i < vm.globals.capacity; i++) {
+		Entry* entry = &vm.globals.entries[i];
+		if (entry->key == NULL) continue;
+		if (!isCallableGlobal(entry->value)) continue;
+
+		if (nameCount >= nameCap) {
+			nameCap *= 2;
+			char** grown = (char**)realloc(names, sizeof(char*) * nameCap);
+			if (grown == NULL) {
+				free(names);
+				printf("Out of memory while listing globals.\n");
+				return NIL_VAL;
+			}
+			names = grown;
+		}
+
+		names[nameCount++] = entry->key->chars;
+	}
+
+	qsort(names, nameCount, sizeof(char*), compareNamePtr);
+	const char* categories[] = {
+		"Core",
+		"File and Directory",
+		"String and Array",
+		"Data Formats",
+		"HTTP",
+		"Crypto",
+		"AWS",
+		"Database",
+		"User or Other",
+	};
+	int categoryCount = (int)(sizeof(categories) / sizeof(categories[0]));
+	for (int c = 0; c < categoryCount; c++) {
+		bool any = false;
+		for (int i = 0; i < nameCount; i++) {
+			if (strcmp(callableCategory(names[i]), categories[c]) == 0) {
+				if (!any) {
+					printf("%s:\n", categories[c]);
+					any = true;
+				}
+				printf("  %s\n", names[i]);
+			}
+		}
+		if (any) printf("\n");
+	}
+	free(names);
+
+	return NIL_VAL;
+}
 
 static Value clockNative(int argCount __attribute__((unused)), Value* args __attribute__((unused))) {
 	return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
@@ -2563,6 +2828,7 @@ void initVM() {
 	vm.initString = copyString("init", 4);
 
 	defineNative("clock", clockNative);
+	defineNative("help", helpNative);
 	defineNative("readFile", readFileNative);
 	defineNative("writeFile", writeFileNative);
 	defineNative("appendFile", appendFileNative);

@@ -52,6 +52,7 @@ All features work on Linux:
 - ✅ JSON parsing and serialization
 - ✅ File I/O operations
 - ✅ XML parsing
+- ✅ REPL discovery via `help()` and `help("name")`
 
 ## Troubleshooting
 
