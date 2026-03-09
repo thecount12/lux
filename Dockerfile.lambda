@@ -1,0 +1,25 @@
+FROM amazonlinux:2023 AS build
+
+RUN dnf -y update \
+    && dnf -y install gcc make curl-devel openssl-devel \
+    && dnf clean all
+
+WORKDIR /src
+COPY posix/ ./posix/
+RUN make -C posix clean && make -C posix
+
+FROM public.ecr.aws/lambda/provided:al2023
+
+# Lux runtime binary built for Linux.
+COPY --from=build /src/posix/lux /var/task/lux
+
+# Custom runtime bootstrap expected by AWS Lambda custom runtimes.
+COPY lambda/bootstrap /var/runtime/bootstrap
+
+# Lux handler script (edit this to implement your business logic).
+COPY lambda/handler.lux /var/task/lambda/handler.lux
+
+RUN chmod +x /var/runtime/bootstrap /var/task/lux
+
+# Unused for custom runtime, but AWS expects a CMD to exist.
+CMD ["bootstrap"]
