@@ -196,9 +196,27 @@ void printObject(Value value) {
 		case OBJ_FUNCTION:
 			printFunction(AS_FUNCTION(value));
 			break;
-		case OBJ_INSTANCE:
-			printf("%s instance", AS_INSTANCE(value)->klass->name->chars);
+		case OBJ_INSTANCE: {
+			ObjInstance* inst = AS_INSTANCE(value);
+			if (inst->klass == NULL) {
+				/* Print as dict/object */
+				printf("{");
+				bool first = true;
+				for (int i = 0; i < inst->fields.capacity; i++) {
+					Entry* entry = &inst->fields.entries[i];
+					if (entry->key != NULL) {
+						if (!first) printf(", ");
+						printf("\"%s\": ", entry->key->chars);
+						printValue(entry->value);
+						first = false;
+					}
+				}
+				printf("}");
+			} else {
+				printf("%s instance", inst->klass->name->chars);
+			}
 			break;
+		}
 		case OBJ_NATIVE:
 			printf("<native fn>");
 			break;
