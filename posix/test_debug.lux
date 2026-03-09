@@ -1,0 +1,8 @@
+var conn = dbConnect("sqlite", "debug.db");
+dbQuery(conn, "CREATE TABLE test (id INTEGER, val TEXT)");
+dbQuery(conn, "INSERT INTO test VALUES (1, 'hello')");
+var results = dbQuery(conn, "SELECT * FROM test");
+print "results type:";
+print typeof results;
+print "results length:";
+print len(results);

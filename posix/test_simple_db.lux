@@ -1,0 +1,6 @@
+var conn = dbConnect("sqlite", "testdb.db");
+print "connected";
+var r = dbQuery(conn, "SELECT 42 as num");
+print "result:";
+print r;
+print "done";

@@ -2189,13 +2189,13 @@ static Value dbQuerySQLite(DbConnection* dbConn, const char* sql) {
 			tableSet(&row->fields, key, val);
 		}
 		
-		writeValueArray(&resultArray->elements, OBJ_VAL(row));
+		writeArray(resultArray, OBJ_VAL(row));
 		pop();  /* Pop row */
 	}
 	
 	sqlite3_finalize(stmt);
-	pop();  /* Pop resultArray */
-	return OBJ_VAL(resultArray);
+	Value result = pop();  /* Pop resultArray - returns the value */
+	return result;
 }
 #endif
 
@@ -2243,13 +2243,13 @@ static Value dbQueryPostgres(DbConnection* dbConn, const char* sql) {
 			tableSet(&rowObj->fields, key, val);
 		}
 		
-		writeValueArray(&resultArray->elements, OBJ_VAL(rowObj));
+		writeArray(resultArray, OBJ_VAL(rowObj));
 		pop();  /* Pop rowObj */
 	}
 	
 	PQclear(res);
-	pop();  /* Pop resultArray */
-	return OBJ_VAL(resultArray);
+	Value result = pop();  /* Pop resultArray - returns the value */
+	return result;
 }
 #endif
 
@@ -2310,13 +2310,13 @@ static Value dbQueryMySQL(DbConnection* dbConn, const char* sql) {
 			tableSet(&rowObj->fields, key, val);
 		}
 		
-		writeValueArray(&resultArray->elements, OBJ_VAL(rowObj));
+		writeArray(resultArray, OBJ_VAL(rowObj));
 		pop();  /* Pop rowObj */
 	}
 	
 	mysql_free_result(result);
-	pop();  /* Pop resultArray */
-	return OBJ_VAL(resultArray);
+	Value res = pop();  /* Pop resultArray - returns the value */
+	return res;
 }
 #endif
 
@@ -2391,13 +2391,7 @@ static Value dbQueryOracle(DbConnection* dbConn, const char* sql) {
 			tableSet(&row->fields, key, val);
 		}
 		
-		writeValueArray(&resultArray->elements, OBJ_VAL(row));
-		pop();  /* Pop row */
-	}
-	
-	/* Cleanup */
-	for (ub4 i = 0; i < colCount; i++) {
-		free(colNames[i]);
+	writeArray(resultArray, OBJ_VAL(row));
 		free(colData[i]);
 	}
 	free(colNames);
@@ -2406,8 +2400,8 @@ static Value dbQueryOracle(DbConnection* dbConn, const char* sql) {
 	free(defnpp);
 	
 	OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-	pop();  /* Pop resultArray */
-	return OBJ_VAL(resultArray);
+	Value result = pop();  /* Pop resultArray - returns the value */
+	return result;
 }
 #endif
 
