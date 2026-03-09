@@ -1,0 +1,330 @@
+/*
+ * Database Example - SQLite, PostgreSQL, MySQL, and Oracle
+ * 
+ * This example demonstrates database connectivity in Lux
+ * All databases are optional - compile only what you need!
+ * 
+ * To enable databases in the Makefile:
+ *   USE_SQLITE=1    - Lightweight embedded database
+ *   USE_POSTGRES=1  - Full-featured PostgreSQL
+ *   USE_MYSQL=1     - MySQL/MariaDB
+ *   USE_ORACLE=1    - Enterprise Oracle database
+ */
+
+// ========== SQLite Example ==========
+
+fun sqliteExample() {
+    print("=== SQLite Example ===");
+    
+    // Connect to SQLite database (creates if not exists)
+    var conn = dbConnect("sqlite", "test.db");
+    
+    if (conn == nil) {
+        print("Failed to connect to SQLite");
+        return;
+    }
+    
+    print("Connected to SQLite database");
+    
+    // Create table
+    dbQuery(conn, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)");
+    
+    // Insert data
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')");
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')");
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@example.com')");
+    
+    // Query data
+    var results = dbQuery(conn, "SELECT * FROM users");
+    
+    if (results != nil) {
+        print("Query returned " + len(results) + " rows:");
+        for (var i = 0; i < len(results); i = i + 1) {
+            var row = results[i];
+            print("  ID: " + row.id + ", Name: " + row.name + ", Email: " + row.email);
+        }
+    }
+    
+    // Close connection
+    dbClose(conn);
+    print("SQLite connection closed");
+}
+
+// ========== PostgreSQL Example ==========
+
+fun postgresExample() {
+    print("\n=== PostgreSQL Example ===");
+    
+    // Connect to PostgreSQL database
+    // Format: "host=HOST dbname=DB user=USER password=PASS port=PORT"
+    var conn = dbConnect("postgres", "host=localhost dbname=testdb user=postgres password=postgres");
+    
+    if (conn == nil) {
+        print("Failed to connect to PostgreSQL");
+        print("Make sure PostgreSQL is running and credentials are correct");
+        return;
+    }
+    
+    print("Connected to PostgreSQL database");
+    
+    // Create table
+    dbQuery(conn, "CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name VARCHAR(100), email VARCHAR(100))");
+    
+    // Clear existing data
+    dbQuery(conn, "DELETE FROM users");
+    
+    // Insert data
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')");
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')");
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@example.com')");
+    
+    // Query data
+    var results = dbQuery(conn, "SELECT * FROM users ORDER BY id");
+    
+    if (results != nil) {
+        print("Query returned " + len(results) + " rows:");
+        for (var i = 0; i < len(results); i = i + 1) {
+            var row = results[i];
+            print("  ID: " + row.id + ", Name: " + row.name + ", Email: " + row.email);
+        }
+    }
+    
+    // Cleanup
+    dbQuery(conn, "DROP TABLE users");
+    
+    // Close connection
+    dbClose(conn);
+    print("PostgreSQL connection closed");
+}
+
+// ========== MySQL Example ==========
+
+fun mysqlExample() {
+    print("\n=== MySQL Example ===");
+    
+    // Connect to MySQL database
+    // Format: "host=HOST;user=USER;password=PASS;database=DB;port=PORT"
+    var conn = dbConnect("mysql", "host=localhost;user=root;password=root;database=testdb");
+    
+    if (conn == nil) {
+        print("Failed to connect to MySQL");
+        print("Make sure MySQL is running and credentials are correct");
+        return;
+    }
+    
+    print("Connected to MySQL database");
+    
+    // Create table
+    dbQuery(conn, "CREATE TABLE IF NOT EXISTS users (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), email VARCHAR(100))");
+    
+    // Clear existing data
+    dbQuery(conn, "DELETE FROM users");
+    
+    // Insert data
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')");
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')");
+    dbQuery(conn, "INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@example.com')");
+    
+    // Query data
+    var results = dbQuery(conn, "SELECT * FROM users ORDER BY id");
+    
+    if (results != nil) {
+        print("Query returned " + len(results) + " rows:");
+        for (var i = 0; i < len(results); i = i + 1) {
+            var row = results[i];
+            print("  ID: " + row.id + ", Name: " + row.name + ", Email: " + row.email);
+        }
+    }
+    
+    // Cleanup
+    dbQuery(conn, "DROP TABLE users");
+    
+    // Close connection
+    dbClose(conn);
+    print("MySQL connection closed");
+}
+
+// ========== Oracle Example ==========
+
+fun oracleExample() {
+    print("\n=== Oracle Example ===");
+    
+    // Connect to Oracle database
+    // Format: "username/password@host:port/service"
+    var conn = dbConnect("oracle", "myuser/mypass@localhost:1521/XEPDB1");
+    
+    if (conn == nil) {
+        print("Failed to connect to Oracle");
+        print("Make sure Oracle is running and credentials are correct");
+        return;
+    }
+    
+    print("Connected to Oracle database");
+    
+    // Create table (Oracle syntax)
+    dbQuery(conn, "CREATE TABLE users (id NUMBER PRIMARY KEY, name VARCHAR2(100), email VARCHAR2(100))");
+    
+    // Insert data
+    dbQuery(conn, "INSERT INTO users VALUES (1, 'Alice', 'alice@example.com')");
+    dbQuery(conn, "INSERT INTO users VALUES (2, 'Bob', 'bob@example.com')");
+    dbQuery(conn, "INSERT INTO users VALUES (3, 'Charlie', 'charlie@example.com')");
+    dbQuery(conn, "COMMIT");
+    
+    // Query data
+    var results = dbQuery(conn, "SELECT * FROM users ORDER BY id");
+    
+    if (results != nil) {
+        print("Query returned " + len(results) + " rows:");
+        for (var i = 0; i < len(results); i = i + 1) {
+            var row = results[i];
+            print("  ID: " + row.ID + ", Name: " + row.NAME + ", Email: " + row.EMAIL);
+        }
+    }
+    
+    // Cleanup
+    dbQuery(conn, "DROP TABLE users");
+    dbQuery(conn, "COMMIT");
+    
+    // Close connection
+    dbClose(conn);
+    print("Oracle connection closed");
+}
+
+// ========== Work Example: Query Oracle HR Schema ==========
+
+class Employee {
+    init(id, firstName, lastName, email, salary) {
+        this.id = id;
+        this.firstName = firstName;
+        this.lastName = lastName;
+        this.email = email;
+        this.salary = salary;
+    }
+    
+    toString() {
+        return this.firstName + " " + this.lastName + 
+               " (" + this.email + ") - $" + this.salary;
+    }
+}
+
+fun queryOracleHR() {
+    print("\n=== Oracle HR Schema Example ===");
+    
+    // Connect to Oracle HR schema
+    var conn = dbConnect("oracle", "hr/hr@localhost:1521/XEPDB1");
+    
+    if (conn == nil) {
+        print("Failed to connect to Oracle HR schema");
+        return;
+    }
+    
+    print("Connected to Oracle HR schema");
+    
+    // Query employees with salary > 10000
+    var sql = "SELECT employee_id, first_name, last_name, email, salary " +
+              "FROM employees " +
+              "WHERE salary > 10000 " +
+              "ORDER BY salary DESC";
+    
+    var results = dbQuery(conn, sql);
+    
+    if (results != nil) {
+        print("\nHigh-earning employees:");
+        print("Found " + len(results) + " employees\n");
+        
+        var employees = [];
+        for (var i = 0; i < len(results); i = i + 1) {
+            var row = results[i];
+            var emp = Employee(
+                row.EMPLOYEE_ID,
+                row.FIRST_NAME,
+                row.LAST_NAME,
+                row.EMAIL,
+                row.SALARY
+            );
+            employees = employees + [emp];
+        }
+        
+        // Display employees
+        for (var i = 0; i < len(employees); i = i + 1) {
+            print("  " + employees[i].toString());
+        }
+        
+        // Calculate total salary
+        var totalSalary = 0;
+        for (var i = 0; i < len(employees); i = i + 1) {
+            totalSalary = totalSalary + employees[i].salary;
+        }
+        print("\nTotal salary: $" + totalSalary);
+    }
+    
+    dbClose(conn);
+    print("\nOracle connection closed");
+}
+
+// ========== Analytics Example: Aggregate Queries ==========
+
+fun analyticsSQLite() {
+    print("\n=== Analytics Example (SQLite) ===");
+    
+    var conn = dbConnect("sqlite", "analytics.db");
+    if (conn == nil) {
+        print("Failed to connect");
+        return;
+    }
+    
+    // Create sales table
+    dbQuery(conn, "CREATE TABLE IF NOT EXISTS sales (id INTEGER PRIMARY KEY, region TEXT, amount REAL, sale_date TEXT)");
+    
+    // Insert sample data
+    dbQuery(conn, "DELETE FROM sales");
+    dbQuery(conn, "INSERT INTO sales (region, amount, sale_date) VALUES ('East', 1500.50, '2024-01-15')");
+    dbQuery(conn, "INSERT INTO sales (region, amount, sale_date) VALUES ('West', 2300.75, '2024-01-16')");
+    dbQuery(conn, "INSERT INTO sales (region, amount, sale_date) VALUES ('East', 1800.00, '2024-01-17')");
+    dbQuery(conn, "INSERT INTO sales (region, amount, sale_date) VALUES ('North', 950.25, '2024-01-18')");
+    dbQuery(conn, "INSERT INTO sales (region, amount, sale_date) VALUES ('West', 3100.00, '2024-01-19')");
+    
+    // Aggregate query
+    var sql = "SELECT region, COUNT(*) as count, SUM(amount) as total, AVG(amount) as average " +
+              "FROM sales " +
+              "GROUP BY region " +
+              "ORDER BY total DESC";
+    
+    var results = dbQuery(conn, sql);
+    
+    if (results != nil) {
+        print("Sales by Region:");
+        print("Region    Count   Total      Average");
+        print("------    -----   -----      -------");
+        for (var i = 0; i < len(results); i = i + 1) {
+            var row = results[i];
+            print(row.region + "      " + row.count + "       $" + 
+                  row.total + "    $" + row.average);
+        }
+    }
+    
+    dbClose(conn);
+}
+
+// ========== Main Execution ==========
+
+print("Lux Database Examples\n");
+print("Note: Comment out examples for databases you haven't compiled support for.\n");
+
+// Run SQLite example (if USE_SQLITE=1)
+sqliteExample();
+
+// Run PostgreSQL example (if USE_POSTGRES=1)
+// postgresExample();
+
+// Run MySQL example (if USE_MYSQL=1)
+// mysqlExample();
+
+// Run Oracle example (if USE_ORACLE=1)
+// oracleExample();
+// queryOracleHR();
+
+// Run analytics example with SQLite
+analyticsSQLite();
+
+print("\n=== All examples completed ===");

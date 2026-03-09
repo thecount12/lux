@@ -12,6 +12,21 @@
 #include <arpa/inet.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
+
+/* Database includes - conditional compilation */
+#ifdef DB_SQLITE
+#include <sqlite3.h>
+#endif
+#ifdef DB_POSTGRES
+#include <libpq-fe.h>
+#endif
+#ifdef DB_MYSQL
+#include <mysql/mysql.h>
+#endif
+#ifdef DB_ORACLE
+#include <oci.h>
+#endif
+
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
@@ -1906,6 +1921,598 @@ static Value httpServerNative(int argCount, Value* args) {
 	return BOOL_VAL(true);
 }
 
+/* ========== Database Support (SQLite and Oracle) ========== */
+
+typedef enum {
+	DB_TYPE_NONE = 0,
+	DB_TYPE_SQLITE = 1,
+	DB_TYPE_POSTGRES = 2,
+	DB_TYPE_MYSQL = 3,
+	DB_TYPE_ORACLE = 4
+} DbType;
+
+typedef struct {
+	DbType type;
+	void* handle;  /* sqlite3* or OCIEnv* */
+	void* conn;    /* NULL for SQLite, OCISvcCtx* for Oracle */
+	void* err;     /* NULL for SQLite, OCIError* for Oracle */
+} DbConnection;
+
+#ifdef DB_SQLITE
+/* SQLite dbConnect: dbConnect("sqlite", "path/to/db.sqlite") */
+static DbConnection* dbConnectSQLite(const char* connString) {
+	sqlite3* db = NULL;
+	int rc = sqlite3_open(connString, &db);
+	if (rc != SQLITE_OK) {
+		if (db) sqlite3_close(db);
+		return NULL;
+	}
+	
+	DbConnection* dbConn = malloc(sizeof(DbConnection));
+	dbConn->type = DB_TYPE_SQLITE;
+	dbConn->handle = db;
+	dbConn->conn = NULL;
+	dbConn->err = NULL;
+	return dbConn;
+}
+#endif
+
+#ifdef DB_POSTGRES
+/* PostgreSQL dbConnect: dbConnect("postgres", "host=localhost dbname=mydb user=myuser password=mypass") */
+static DbConnection* dbConnectPostgres(const char* connString) {
+	PGconn* conn = PQconnectdb(connString);
+	
+	if (PQstatus(conn) != CONNECTION_OK) {
+		PQfinish(conn);
+		return NULL;
+	}
+	
+	DbConnection* dbConn = malloc(sizeof(DbConnection));
+	dbConn->type = DB_TYPE_POSTGRES;
+	dbConn->handle = conn;
+	dbConn->conn = NULL;
+	dbConn->err = NULL;
+	return dbConn;
+}
+#endif
+
+#ifdef DB_MYSQL
+/* MySQL dbConnect: dbConnect("mysql", "host=localhost;user=myuser;password=mypass;database=mydb") */
+static DbConnection* dbConnectMySQL(const char* connString) {
+	MYSQL* mysql = mysql_init(NULL);
+	if (mysql == NULL) {
+		return NULL;
+	}
+	
+	/* Parse connection string: host=X;user=Y;password=Z;database=W */
+	char host[256] = "localhost";
+	char user[256] = "root";
+	char pass[256] = "";
+	char database[256] = "";
+	unsigned int port = 3306;
+	
+	char* connCopy = strdup(connString);
+	char* token = strtok(connCopy, ";");
+	
+	while (token != NULL) {
+		if (strncmp(token, "host=", 5) == 0) {
+			strcpy(host, token + 5);
+		} else if (strncmp(token, "user=", 5) == 0) {
+			strcpy(user, token + 5);
+		} else if (strncmp(token, "password=", 9) == 0) {
+			strcpy(pass, token + 9);
+		} else if (strncmp(token, "database=", 9) == 0) {
+			strcpy(database, token + 9);
+		} else if (strncmp(token, "port=", 5) == 0) {
+			port = atoi(token + 5);
+		}
+		token = strtok(NULL, ";");
+	}
+	free(connCopy);
+	
+	if (mysql_real_connect(mysql, host, user, pass, database, port, NULL, 0) == NULL) {
+		mysql_close(mysql);
+		return NULL;
+	}
+	
+	DbConnection* dbConn = malloc(sizeof(DbConnection));
+	dbConn->type = DB_TYPE_MYSQL;
+	dbConn->handle = mysql;
+	dbConn->conn = NULL;
+	dbConn->err = NULL;
+	return dbConn;
+}
+#endif
+
+#ifdef DB_ORACLE
+/* Oracle dbConnect: dbConnect("oracle", "user/pass@host:port/service") */
+static DbConnection* dbConnectOracle(const char* connString) {
+	OCIEnv* envhp = NULL;
+	OCIError* errhp = NULL;
+	OCISvcCtx* svchp = NULL;
+	OCIServer* srvhp = NULL;
+	OCISession* authp = NULL;
+	
+	/* Parse connection string: user/pass@host:port/service */
+	char user[256], pass[256], connStr[512];
+	const char* atSign = strchr(connString, '@');
+	const char* slash = strchr(connString, '/');
+	
+	if (!slash || !atSign || slash > atSign) {
+		return NULL;
+	}
+	
+	int userLen = slash - connString;
+	int passLen = atSign - slash - 1;
+	strncpy(user, connString, userLen);
+	user[userLen] = '\0';
+	strncpy(pass, slash + 1, passLen);
+	pass[passLen] = '\0';
+	strcpy(connStr, atSign + 1);
+	
+	/* Initialize OCI environment */
+	if (OCIEnvCreate(&envhp, OCI_DEFAULT, NULL, NULL, NULL, NULL, 0, NULL) != OCI_SUCCESS) {
+		return NULL;
+	}
+	
+	/* Allocate error handle */
+	if (OCIHandleAlloc(envhp, (void**)&errhp, OCI_HTYPE_ERROR, 0, NULL) != OCI_SUCCESS) {
+		OCIHandleFree(envhp, OCI_HTYPE_ENV);
+		return NULL;
+	}
+	
+	/* Allocate server and service context handles */
+	OCIHandleAlloc(envhp, (void**)&srvhp, OCI_HTYPE_SERVER, 0, NULL);
+	OCIHandleAlloc(envhp, (void**)&svchp, OCI_HTYPE_SVCCTX, 0, NULL);
+	
+	/* Attach to server */
+	if (OCIServerAttach(srvhp, errhp, (text*)connStr, strlen(connStr), OCI_DEFAULT) != OCI_SUCCESS) {
+		OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+		OCIHandleFree(envhp, OCI_HTYPE_ENV);
+		return NULL;
+	}
+	
+	/* Set server in service context */
+	OCIAttrSet(svchp, OCI_HTYPE_SVCCTX, srvhp, 0, OCI_ATTR_SERVER, errhp);
+	
+	/* Allocate and initialize session */
+	OCIHandleAlloc(envhp, (void**)&authp, OCI_HTYPE_SESSION, 0, NULL);
+	OCIAttrSet(authp, OCI_HTYPE_SESSION, user, strlen(user), OCI_ATTR_USERNAME, errhp);
+	OCIAttrSet(authp, OCI_HTYPE_SESSION, pass, strlen(pass), OCI_ATTR_PASSWORD, errhp);
+	
+	/* Begin session */
+	if (OCISessionBegin(svchp, errhp, authp, OCI_CRED_RDBMS, OCI_DEFAULT) != OCI_SUCCESS) {
+		OCIServerDetach(srvhp, errhp, OCI_DEFAULT);
+		OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+		OCIHandleFree(envhp, OCI_HTYPE_ENV);
+		return NULL;
+	}
+	
+	/* Set session in service context */
+	OCIAttrSet(svchp, OCI_HTYPE_SVCCTX, authp, 0, OCI_ATTR_SESSION, errhp);
+	
+	DbConnection* dbConn = malloc(sizeof(DbConnection));
+	dbConn->type = DB_TYPE_ORACLE;
+	dbConn->handle = envhp;
+	dbConn->conn = svchp;
+	dbConn->err = errhp;
+	return dbConn;
+}
+#endif
+
+/* Native: dbConnect(driver, connString) -> connection handle (as number) */
+static Value dbConnectNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_STRING(args[1])) {
+		return NIL_VAL;
+	}
+	
+	char* driver = AS_CSTRING(args[0]);
+	char* connString = AS_CSTRING(args[1]);
+	DbConnection* conn = NULL;
+	
+	#ifdef DB_SQLITE
+	if (strcmp(driver, "sqlite") == 0) {
+		conn = dbConnectSQLite(connString);
+	}
+	#endif
+	
+	#ifdef DB_POSTGRES
+	if (strcmp(driver, "postgres") == 0 || strcmp(driver, "postgresql") == 0) {
+		conn = dbConnectPostgres(connString);
+	}
+	#endif
+	
+	#ifdef DB_MYSQL
+	if (strcmp(driver, "mysql") == 0) {
+		conn = dbConnectMySQL(connString);
+	}
+	#endif
+	
+	#ifdef DB_ORACLE
+	if (strcmp(driver, "oracle") == 0) {
+		conn = dbConnectOracle(connString);
+	}
+	#endif
+	
+	if (conn == NULL) {
+		return NIL_VAL;
+	}
+	
+	/* Return connection as number (pointer cast) */
+	return NUMBER_VAL((double)(uintptr_t)conn);
+}
+
+#ifdef DB_SQLITE
+/* Execute SQLite query and return result as array of Dict objects */
+static Value dbQuerySQLite(DbConnection* dbConn, const char* sql) {
+	sqlite3* db = (sqlite3*)dbConn->handle;
+	sqlite3_stmt* stmt = NULL;
+	
+	int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+	if (rc != SQLITE_OK) {
+		return NIL_VAL;
+	}
+	
+	/* Build result array */
+	ObjArray* resultArray = newArray();
+	push(OBJ_VAL(resultArray));  /* Protect from GC */
+	
+	int colCount = sqlite3_column_count(stmt);
+	while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+		/* Create Dict for this row */
+		ObjInstance* row = newInstance(NULL);  /* Raw instance as Dict */
+		push(OBJ_VAL(row));  /* Protect from GC */
+		
+		for (int i = 0; i < colCount; i++) {
+			const char* colName = sqlite3_column_name(stmt, i);
+			ObjString* key = copyString(colName, strlen(colName));
+			
+			Value val;
+			int colType = sqlite3_column_type(stmt, i);
+			switch (colType) {
+				case SQLITE_INTEGER:
+					val = NUMBER_VAL((double)sqlite3_column_int64(stmt, i));
+					break;
+				case SQLITE_FLOAT:
+					val = NUMBER_VAL(sqlite3_column_double(stmt, i));
+					break;
+				case SQLITE_TEXT:
+					val = OBJ_VAL(copyString((const char*)sqlite3_column_text(stmt, i),
+					                          sqlite3_column_bytes(stmt, i)));
+					break;
+				case SQLITE_NULL:
+				default:
+					val = NIL_VAL;
+					break;
+			}
+			
+			tableSet(&row->fields, key, val);
+		}
+		
+		writeValueArray(&resultArray->elements, OBJ_VAL(row));
+		pop();  /* Pop row */
+	}
+	
+	sqlite3_finalize(stmt);
+	pop();  /* Pop resultArray */
+	return OBJ_VAL(resultArray);
+}
+#endif
+
+#ifdef DB_POSTGRES
+/* Execute PostgreSQL query and return result as array of Dict objects */
+static Value dbQueryPostgres(DbConnection* dbConn, const char* sql) {
+	PGconn* conn = (PGconn*)dbConn->handle;
+	PGresult* res = PQexec(conn, sql);
+	
+	if (PQresultStatus(res) != PGRES_TUPLES_OK && PQresultStatus(res) != PGRES_COMMAND_OK) {
+		PQclear(res);
+		return NIL_VAL;
+	}
+	
+	/* Build result array */
+	ObjArray* resultArray = newArray();
+	push(OBJ_VAL(resultArray));  /* Protect from GC */
+	
+	int numRows = PQntuples(res);
+	int numCols = PQnfields(res);
+	
+	for (int row = 0; row < numRows; row++) {
+		ObjInstance* rowObj = newInstance(NULL);
+		push(OBJ_VAL(rowObj));  /* Protect from GC */
+		
+		for (int col = 0; col < numCols; col++) {
+			const char* colName = PQfname(res, col);
+			ObjString* key = copyString(colName, strlen(colName));
+			
+			Value val;
+			if (PQgetisnull(res, row, col)) {
+				val = NIL_VAL;
+			} else {
+				const char* value = PQgetvalue(res, row, col);
+				/* Try to parse as number */
+				char* endptr;
+				double numVal = strtod(value, &endptr);
+				if (*endptr == '\0' && value != endptr) {
+					val = NUMBER_VAL(numVal);
+				} else {
+					val = OBJ_VAL(copyString(value, strlen(value)));
+				}
+			}
+			
+			tableSet(&rowObj->fields, key, val);
+		}
+		
+		writeValueArray(&resultArray->elements, OBJ_VAL(rowObj));
+		pop();  /* Pop rowObj */
+	}
+	
+	PQclear(res);
+	pop();  /* Pop resultArray */
+	return OBJ_VAL(resultArray);
+}
+#endif
+
+#ifdef DB_MYSQL
+/* Execute MySQL query and return result as array of Dict objects */
+static Value dbQueryMySQL(DbConnection* dbConn, const char* sql) {
+	MYSQL* mysql = (MYSQL*)dbConn->handle;
+	
+	if (mysql_query(mysql, sql) != 0) {
+		return NIL_VAL;
+	}
+	
+	MYSQL_RES* result = mysql_store_result(mysql);
+	
+	/* For INSERT/UPDATE/DELETE, no result set */
+	if (result == NULL) {
+		if (mysql_field_count(mysql) == 0) {
+			/* Query succeeded, no data returned */
+			return OBJ_VAL(newArray());
+		}
+		return NIL_VAL;
+	}
+	
+	/* Build result array */
+	ObjArray* resultArray = newArray();
+	push(OBJ_VAL(resultArray));  /* Protect from GC */
+	
+	int numFields = mysql_num_fields(result);
+	MYSQL_FIELD* fields = mysql_fetch_fields(result);
+	MYSQL_ROW row;
+	
+	while ((row = mysql_fetch_row(result))) {
+		ObjInstance* rowObj = newInstance(NULL);
+		push(OBJ_VAL(rowObj));  /* Protect from GC */
+		
+		for (int i = 0; i < numFields; i++) {
+			ObjString* key = copyString(fields[i].name, strlen(fields[i].name));
+			
+			Value val;
+			if (row[i] == NULL) {
+				val = NIL_VAL;
+			} else {
+				/* Try to parse as number for numeric types */
+				if (fields[i].type == MYSQL_TYPE_TINY ||
+				    fields[i].type == MYSQL_TYPE_SHORT ||
+				    fields[i].type == MYSQL_TYPE_LONG ||
+				    fields[i].type == MYSQL_TYPE_LONGLONG ||
+				    fields[i].type == MYSQL_TYPE_FLOAT ||
+				    fields[i].type == MYSQL_TYPE_DOUBLE ||
+				    fields[i].type == MYSQL_TYPE_DECIMAL ||
+				    fields[i].type == MYSQL_TYPE_NEWDECIMAL) {
+					val = NUMBER_VAL(atof(row[i]));
+				} else {
+					val = OBJ_VAL(copyString(row[i], strlen(row[i])));
+				}
+			}
+			
+			tableSet(&rowObj->fields, key, val);
+		}
+		
+		writeValueArray(&resultArray->elements, OBJ_VAL(rowObj));
+		pop();  /* Pop rowObj */
+	}
+	
+	mysql_free_result(result);
+	pop();  /* Pop resultArray */
+	return OBJ_VAL(resultArray);
+}
+#endif
+
+#ifdef DB_ORACLE
+/* Execute Oracle query and return result as array of Dict objects */
+static Value dbQueryOracle(DbConnection* dbConn, const char* sql) {
+	OCIEnv* envhp = (OCIEnv*)dbConn->handle;
+	OCISvcCtx* svchp = (OCISvcCtx*)dbConn->conn;
+	OCIError* errhp = (OCIError*)dbConn->err;
+	OCIStmt* stmthp = NULL;
+	
+	/* Allocate statement handle */
+	if (OCIHandleAlloc(envhp, (void**)&stmthp, OCI_HTYPE_STMT, 0, NULL) != OCI_SUCCESS) {
+		return NIL_VAL;
+	}
+	
+	/* Prepare statement */
+	if (OCIStmtPrepare(stmthp, errhp, (text*)sql, strlen(sql), 
+	                   OCI_NTV_SYNTAX, OCI_DEFAULT) != OCI_SUCCESS) {
+		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		return NIL_VAL;
+	}
+	
+	/* Execute statement */
+	if (OCIStmtExecute(svchp, stmthp, errhp, 0, 0, NULL, NULL, OCI_DEFAULT) != OCI_SUCCESS) {
+		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		return NIL_VAL;
+	}
+	
+	/* Get column count */
+	ub4 colCount = 0;
+	OCIAttrGet(stmthp, OCI_HTYPE_STMT, &colCount, 0, OCI_ATTR_PARAM_COUNT, errhp);
+	
+	/* Define output buffers dynamically */
+	char** colNames = malloc(colCount * sizeof(char*));
+	char** colData = malloc(colCount * sizeof(char*));
+	ub2* colSizes = malloc(colCount * sizeof(ub2));
+	OCIDefine** defnpp = malloc(colCount * sizeof(OCIDefine*));
+	
+	for (ub4 i = 1; i <= colCount; i++) {
+		OCIParam* colParam = NULL;
+		text* colName = NULL;
+		ub4 colNameLen = 0;
+		
+		OCIParamGet(stmthp, OCI_HTYPE_STMT, errhp, (void**)&colParam, i);
+		OCIAttrGet(colParam, OCI_DTYPE_PARAM, &colName, &colNameLen, OCI_ATTR_NAME, errhp);
+		
+		colNames[i-1] = malloc(colNameLen + 1);
+		strncpy(colNames[i-1], (char*)colName, colNameLen);
+		colNames[i-1][colNameLen] = '\0';
+		
+		colData[i-1] = malloc(4096);  /* Max column size */
+		colSizes[i-1] = 4096;
+		
+		OCIDefineByPos(stmthp, &defnpp[i-1], errhp, i, colData[i-1], 
+		               colSizes[i-1], SQLT_STR, NULL, NULL, NULL, OCI_DEFAULT);
+	}
+	
+	/* Build result array */
+	ObjArray* resultArray = newArray();
+	push(OBJ_VAL(resultArray));  /* Protect from GC */
+	
+	/* Fetch rows */
+	sword rc;
+	while ((rc = OCIStmtFetch2(stmthp, errhp, 1, OCI_FETCH_NEXT, 0, OCI_DEFAULT)) == OCI_SUCCESS) {
+		ObjInstance* row = newInstance(NULL);
+		push(OBJ_VAL(row));  /* Protect from GC */
+		
+		for (ub4 i = 0; i < colCount; i++) {
+			ObjString* key = copyString(colNames[i], strlen(colNames[i]));
+			Value val = OBJ_VAL(copyString(colData[i], strlen(colData[i])));
+			tableSet(&row->fields, key, val);
+		}
+		
+		writeValueArray(&resultArray->elements, OBJ_VAL(row));
+		pop();  /* Pop row */
+	}
+	
+	/* Cleanup */
+	for (ub4 i = 0; i < colCount; i++) {
+		free(colNames[i]);
+		free(colData[i]);
+	}
+	free(colNames);
+	free(colData);
+	free(colSizes);
+	free(defnpp);
+	
+	OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+	pop();  /* Pop resultArray */
+	return OBJ_VAL(resultArray);
+}
+#endif
+
+/* Native: dbQuery(connHandle, sql) -> array of Dict objects */
+static Value dbQueryNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_NUMBER(args[0]) || !IS_STRING(args[1])) {
+		return NIL_VAL;
+	}
+	
+	DbConnection* conn = (DbConnection*)(uintptr_t)AS_NUMBER(args[0]);
+	char* sql = AS_CSTRING(args[1]);
+	
+	if (conn == NULL) {
+		return NIL_VAL;
+	}
+	
+	#ifdef DB_SQLITE
+	if (conn->type == DB_TYPE_SQLITE) {
+		return dbQuerySQLite(conn, sql);
+	}
+	#endif
+	
+	#ifdef DB_POSTGRES
+	if (conn->type == DB_TYPE_POSTGRES) {
+		return dbQueryPostgres(conn, sql);
+	}
+	#endif
+	
+	#ifdef DB_MYSQL
+	if (conn->type == DB_TYPE_MYSQL) {
+		return dbQueryMySQL(conn, sql);
+	}
+	#endif
+	
+	#ifdef DB_ORACLE
+	if (conn->type == DB_TYPE_ORACLE) {
+		return dbQueryOracle(conn, sql);
+	}
+	#endif
+	
+	return NIL_VAL;
+}
+
+/* Native: dbClose(connHandle) -> bool */
+static Value dbCloseNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_NUMBER(args[0])) {
+		return BOOL_VAL(false);
+	}
+	
+	DbConnection* conn = (DbConnection*)(uintptr_t)AS_NUMBER(args[0]);
+	if (conn == NULL) {
+		return BOOL_VAL(false);
+	}
+	
+	#ifdef DB_SQLITE
+	if (conn->type == DB_TYPE_SQLITE) {
+		sqlite3* db = (sqlite3*)conn->handle;
+		sqlite3_close(db);
+		free(conn);
+		return BOOL_VAL(true);
+	}
+	#endif
+	
+	#ifdef DB_POSTGRES
+	if (conn->type == DB_TYPE_POSTGRES) {
+		PGconn* pgConn = (PGconn*)conn->handle;
+		PQfinish(pgConn);
+		free(conn);
+		return BOOL_VAL(true);
+	}
+	#endif
+	
+	#ifdef DB_MYSQL
+	if (conn->type == DB_TYPE_MYSQL) {
+		MYSQL* mysql = (MYSQL*)conn->handle;
+		mysql_close(mysql);
+		free(conn);
+		return BOOL_VAL(true);
+	}
+	#endif
+	
+	#ifdef DB_ORACLE
+	if (conn->type == DB_TYPE_ORACLE) {
+		OCIEnv* envhp = (OCIEnv*)conn->handle;
+		OCISvcCtx* svchp = (OCISvcCtx*)conn->conn;
+		OCIError* errhp = (OCIError*)conn->err;
+		
+		/* End session and detach from server */
+		OCISessionEnd(svchp, errhp, NULL, OCI_DEFAULT);
+		OCIServerDetach(NULL, errhp, OCI_DEFAULT);
+		
+		/* Free handles */
+		OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+		OCIHandleFree(envhp, OCI_HTYPE_ENV);
+		
+		free(conn);
+		return BOOL_VAL(true);
+	}
+	#endif
+	
+	return BOOL_VAL(false);
+}
+
+/* ========== End Database Support ========== */
+
 static void resetStack() {
 	vm.stackTop = vm.stack;
 	vm.frameCount = 0;
@@ -1994,6 +2601,11 @@ void initVM() {
 	defineNative("s3ListObjects", s3ListObjectsNative);
 	defineNative("s3GetObject", s3GetObjectNative);
 	defineNative("s3PutObject", s3PutObjectNative);
+	
+	/* Database natives */
+	defineNative("dbConnect", dbConnectNative);
+	defineNative("dbQuery", dbQueryNative);
+	defineNative("dbClose", dbCloseNative);
 }
 
 void freeVM() {
