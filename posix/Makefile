@@ -63,18 +63,25 @@ endif
 
 # Define the executable name
 TARGET = lux
+FMT_TARGET = luxfmt
 
 # Define the source files
 SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c
+FMT_SRC = luxfmt.c
 
 # Automatically determine object files from source files
 OBJS = $(SRCS:.c=.o)
+FMT_OBJ = $(FMT_SRC:.c=.o)
 
 # Define the header files for dependency tracking
 DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h
 
 # The default target, which builds the executable
 all: $(TARGET)
+
+# Build the formatter utility
+$(FMT_TARGET): $(FMT_OBJ)
+	$(CC) $(CFLAGS) $^ -o $@
 
 # Rule to link the object files into the executable
 $(TARGET): $(OBJS)
@@ -92,9 +99,9 @@ value.o: value.c value.h memory.h common.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Phony targets don't create a file of the same name
-.PHONY: all clean
+.PHONY: all clean $(FMT_TARGET)
 
 # Rule to clean up generated files
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(FMT_OBJ) $(TARGET) $(FMT_TARGET)
 
