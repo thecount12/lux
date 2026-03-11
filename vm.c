@@ -1155,6 +1155,33 @@ static void appendChar(char** buffer, int* len, int* cap, char c) {
 	(*buffer)[*len] = '\0';
 }
 
+/* Append a string escaped for safe JSON string value embedding. */
+static void
+appendJsonEscaped(char** buffer, int* len, int* cap, char* str)
+{
+	while (*str) {
+		uchar c;
+		char esc[8];
+
+		c = (uchar)*str++;
+		switch (c) {
+		case '"': appendToBuffer(buffer, len, cap, "\\\""); break;
+		case '\\': appendToBuffer(buffer, len, cap, "\\\\"); break;
+		case '\n': appendToBuffer(buffer, len, cap, "\\n"); break;
+		case '\t': appendToBuffer(buffer, len, cap, "\\t"); break;
+		case '\r': appendToBuffer(buffer, len, cap, "\\r"); break;
+		default:
+			if (c < 0x20) {
+				snprint(esc, sizeof(esc), "\\u%04x", c);
+				appendToBuffer(buffer, len, cap, esc);
+			} else {
+				appendChar(buffer, len, cap, (char)c);
+			}
+			break;
+		}
+	}
+}
+
 static void serializeJsonValue(Value value, char** buffer, int* len, int* cap);
 
 static void serializeJsonObject(ObjInstance* instance, char** buffer, int* len, int* cap) {
@@ -1948,20 +1975,23 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 static void
 sendHttpResponse(int fd, int statusCode, char* statusText, char* body)
 {
-	char response[8192];
+	char header[256];
 	int bodyLen = strlen(body);
-	
-	int len = snprint(response, sizeof(response),
+	int headerLen;
+
+	headerLen = snprint(header, sizeof(header),
 		"HTTP/1.0 %d %s\r\n"
 		"Content-Type: application/json\r\n"
 		"Content-Length: %d\r\n"
 		"Server: lux/1.0\r\n"
 		"Connection: close\r\n"
-		"\r\n"
-		"%s",
-		statusCode, statusText, bodyLen, body);
-	
-	write(fd, response, len);
+		"\r\n",
+		statusCode, statusText, bodyLen);
+
+	if (headerLen > 0)
+		write(fd, header, headerLen);
+	if (bodyLen > 0)
+		write(fd, body, bodyLen);
 }
 
 /* ========== AWS Signature V4 Implementation ========== */
@@ -2598,20 +2628,47 @@ httpServerNative(int argCount, Value* args)
 		fprint(1, "%s %s\n", req.method, req.path);
 		
 		/* Simple routing - respond based on path */
-		char responseBody[4096];
 		if (strcmp(req.path, "/") == 0) {
-			snprint(responseBody, sizeof(responseBody),
+			sendHttpResponse(dfd, 200, "OK",
 				"{\"message\":\"Hello from Lux!\",\"server\":\"lux/1.0\"}");
-			sendHttpResponse(dfd, 200, "OK", responseBody);
 		} else if (strcmp(req.path, "/echo") == 0) {
-			snprint(responseBody, sizeof(responseBody),
-				"{\"method\":\"%s\",\"path\":\"%s\",\"body\":\"%s\"}",
-				req.method, req.path, req.body);
+			int cap = 256;
+			int len = 0;
+			char* responseBody = malloc(cap);
+			if (responseBody == nil) {
+				sendHttpResponse(dfd, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+				close(dfd);
+				continue;
+			}
+			responseBody[0] = '\0';
+
+			appendToBuffer(&responseBody, &len, &cap, "{\"method\":\"");
+			appendJsonEscaped(&responseBody, &len, &cap, req.method);
+			appendToBuffer(&responseBody, &len, &cap, "\",\"path\":\"");
+			appendJsonEscaped(&responseBody, &len, &cap, req.path);
+			appendToBuffer(&responseBody, &len, &cap, "\",\"body\":\"");
+			appendJsonEscaped(&responseBody, &len, &cap, req.body);
+			appendToBuffer(&responseBody, &len, &cap, "\"}");
+
 			sendHttpResponse(dfd, 200, "OK", responseBody);
+			free(responseBody);
 		} else {
-			snprint(responseBody, sizeof(responseBody),
-				"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
+			int cap = 128;
+			int len = 0;
+			char* responseBody = malloc(cap);
+			if (responseBody == nil) {
+				sendHttpResponse(dfd, 500, "Internal Server Error", "{\"error\":\"out of memory\"}");
+				close(dfd);
+				continue;
+			}
+			responseBody[0] = '\0';
+
+			appendToBuffer(&responseBody, &len, &cap, "{\"error\":\"Not Found\",\"path\":\"");
+			appendJsonEscaped(&responseBody, &len, &cap, req.path);
+			appendToBuffer(&responseBody, &len, &cap, "\"}");
+
 			sendHttpResponse(dfd, 404, "Not Found", responseBody);
+			free(responseBody);
 		}
 		
 		close(dfd);
