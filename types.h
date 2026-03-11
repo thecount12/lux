@@ -207,6 +207,9 @@ struct VM {
 	int grayCount;
 	int grayCapacity;
 	Obj** grayStack;
+
+	int nativePanic;
+	char nativePanicMsg[256];
 };
 
 /* Object types */
