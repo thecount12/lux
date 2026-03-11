@@ -2,7 +2,7 @@
 UNAME_S := $(shell uname -s)
 
 # Define compiler and flags
-CC = gcc
+CC ?= cc
 
 # Database configuration (set to 1 to enable, 0 to disable)
 # By default, all disabled to keep Lux lightweight
@@ -19,6 +19,10 @@ ORACLE_LIB := $(ORACLE_HOME)
 # Database flags
 DB_FLAGS =
 DB_LDFLAGS =
+
+# Default flags for unknown POSIX systems.
+CFLAGS = -Wall -Wextra -std=c99 -g $(DB_FLAGS)
+LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
 
 ifeq ($(USE_SQLITE),1)
     DB_FLAGS += -DDB_SQLITE
@@ -50,6 +54,11 @@ ifeq ($(UNAME_S),Darwin)
     # macOS: Use Homebrew OpenSSL, compile for x86_64
     CFLAGS = -Wall -Wextra -std=c99 -g -arch x86_64 -I/usr/local/opt/openssl@3/include $(DB_FLAGS)
     LDFLAGS = -arch x86_64 -L/usr/local/opt/openssl@3/lib -lcurl -lcrypto $(DB_LDFLAGS)
+endif
+ifeq ($(UNAME_S),OpenBSD)
+    # OpenBSD: use ports-installed curl and OpenSSL under /usr/local.
+    CFLAGS = -Wall -Wextra -std=c99 -g -I/usr/local/include $(DB_FLAGS)
+    LDFLAGS = -L/usr/local/lib -lcurl -lcrypto $(DB_LDFLAGS)
 endif
 
 # Define the executable name
