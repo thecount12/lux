@@ -15,6 +15,10 @@ print "  curl http://localhost:8080/echo";
 print "  curl -X POST http://localhost:8080/echo -d 'test data'";
 print "";
 
+// Extra manual checks:
+// curl -X POST http://localhost:8080/echo -d 'quote:" backslash:\\ slash:/ newline:\n'
+// dd -if /dev/zero -bs 1 -count 12000 2>/dev/null | tr '\0' 'A' | curl -sS -X POST http://localhost:8080/echo --data-binary @-
+
 // Start the server on port 8080
 // This is a blocking call - press Ctrl+C to stop
 httpServer(8080);
