@@ -32,6 +32,9 @@ typedef struct {
 	int grayCount;
 	int grayCapacity;
 	Obj** grayStack;
+
+	bool nativePanic;
+	char nativePanicMsg[256];
 } VM;
 
 typedef enum {

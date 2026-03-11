@@ -297,13 +297,26 @@ helpNative(int argCount, Value* args)
 static void runtimeError(char *format, ...);
 static void nativeError(char *format, ...);
 
-/* posix linux only 
-static Value 
-clockNative(int argCount, Value* args)
+static Value
+assertNative(int argCount, Value* args)
 {
-	return NUMBER_VAL((double)clock() / CLOCK_PER_SEC);
+	if (argCount < 1 || argCount > 2) {
+		vm.nativePanic = 1;
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "assert() expects 1 or 2 arguments, got %d.", argCount);
+		return NIL_VAL;
+	}
+	if (!IS_NIL(args[0]) && !(IS_BOOL(args[0]) && !AS_BOOL(args[0])))
+		return BOOL_VAL(1);
+	vm.nativePanic = 1;
+	if (argCount == 2 && IS_STRING(args[1]))
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "Assertion failed: %s", AS_CSTRING(args[1]));
+	else
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "Assertion failed.");
+	return NIL_VAL;
 }
-*/
 
 static Value 
 clockNative(int argCount, Value* args)
@@ -2771,6 +2784,8 @@ initVM(void)
 
 	vm.bytesAllocated = 0;
 	vm.nextGC = 1024 * 1024;
+	vm.nativePanic = 0;
+	vm.nativePanicMsg[0] = '\0';
 
 
 	initTable(&vm.globals);
@@ -2780,6 +2795,7 @@ initVM(void)
 	vm.initString = nil;
 	vm.initString = copyString("init", 4);
 
+	defineNative("assert", assertNative);
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
 	defineNative("floor", floorNative);
@@ -2892,6 +2908,11 @@ static bool callValue(Value callee, int argCount) {
                 native = AS_NATIVE(callee);
 				result = native(argCount, vm.stackTop - argCount);
 				vm.stackTop -= argCount + 1;
+				if (vm.nativePanic) {
+					vm.nativePanic = 0;
+					runtimeError("%s", vm.nativePanicMsg);
+					return false;
+				}
 				push(result);
 				return true;
 			}

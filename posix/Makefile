@@ -64,14 +64,17 @@ endif
 # Define the executable name
 TARGET = lux
 FMT_TARGET = luxfmt
+TEST_TARGET = luxtest
 
 # Define the source files
 SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c
 FMT_SRC = luxfmt.c
+TEST_SRC = luxtest.c
 
 # Automatically determine object files from source files
 OBJS = $(SRCS:.c=.o)
 FMT_OBJ = $(FMT_SRC:.c=.o)
+TEST_OBJ = $(TEST_SRC:.c=.o)
 
 # Define the header files for dependency tracking
 DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h
@@ -81,6 +84,10 @@ all: $(TARGET)
 
 # Build the formatter utility
 $(FMT_TARGET): $(FMT_OBJ)
+	$(CC) $(CFLAGS) $^ -o $@
+
+# Build the test runner utility
+$(TEST_TARGET): $(TEST_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@
 
 # Rule to link the object files into the executable
@@ -99,9 +106,9 @@ value.o: value.c value.h memory.h common.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Phony targets don't create a file of the same name
-.PHONY: all clean $(FMT_TARGET)
+.PHONY: all clean $(FMT_TARGET) $(TEST_TARGET)
 
 # Rule to clean up generated files
 clean:
-	rm -f $(OBJS) $(FMT_OBJ) $(TARGET) $(FMT_TARGET)
+	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET)
 
