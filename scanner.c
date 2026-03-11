@@ -230,7 +230,12 @@ string(void)
 	while (peek() != '"' && !isAtEnd()) {
 		if (peek() == '\n')
 			scanner.line++;
-		advance();
+		if (peek() == '\\') {
+			advance(); /* skip backslash */
+			if (!isAtEnd()) advance(); /* skip escaped char */
+		} else {
+			advance();
+		}
 	}
 
 	if (isAtEnd())
