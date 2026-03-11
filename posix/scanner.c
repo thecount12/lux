@@ -184,7 +184,12 @@ static Token number() {
 static Token string() {
 	while (peek() != '"' && !isAtEnd()) {
 		if (peek() == '\n') scanner.line++;
-		advance();
+		if (peek() == '\\') {
+			advance(); /* skip backslash */
+			if (!isAtEnd()) advance(); /* skip escaped char */
+		} else {
+			advance();
+		}
 	}
 
 	if (isAtEnd()) return errorToken("Unterminated string.");

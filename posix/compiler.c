@@ -509,8 +509,28 @@ static void or_(bool canAssign __attribute__((unused))) {
 }
 
 static void string(bool canAssign __attribute__((unused))) {
-	emitConstant(OBJ_VAL(copyString(parser.previous.start + 1, 
-									parser.previous.length - 2)));
+	const char* src = parser.previous.start + 1;
+	int rawLen = parser.previous.length - 2;
+	char* buf = (char*)malloc(rawLen + 1);
+	if (buf == NULL) return;
+	int outLen = 0;
+	for (int i = 0; i < rawLen; i++) {
+		if (src[i] == '\\' && i + 1 < rawLen) {
+			i++;
+			switch (src[i]) {
+				case '"':  buf[outLen++] = '"'; break;
+				case '\\': buf[outLen++] = '\\'; break;
+				case 'n':  buf[outLen++] = '\n'; break;
+				case 't':  buf[outLen++] = '\t'; break;
+				case 'r':  buf[outLen++] = '\r'; break;
+				default:   buf[outLen++] = '\\'; buf[outLen++] = src[i]; break;
+			}
+		} else {
+			buf[outLen++] = src[i];
+		}
+	}
+	emitConstant(OBJ_VAL(copyString(buf, outLen)));
+	free(buf);
 }
 
 static void namedVariable(Token name, bool canAssign) {
