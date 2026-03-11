@@ -255,6 +255,10 @@ cd posix/
 make
 ```
 
+Platform guides:
+- Linux: `posix/README-LINUX.md`
+- OpenBSD: `posix/README-OPENBSD.md`
+
 ## Running
 
 ### Interactive REPL:
