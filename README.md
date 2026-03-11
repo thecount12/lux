@@ -1,18 +1,197 @@
-# Lux Programming Language
+# Lux — A Portable Scripting Language
 
-A dynamically-typed scripting language based on the Lox language from "Crafting Interpreters" by Robert Nystrom, implemented in Plan 9 C. However we do have some new features: Arrays, modules via import statements, File IO, Json serialization, HTTP/HTTPS client functionality (GET, POST and PUT), HTTP server capabilities, and AWS S3 integration.
+Lux is a dynamically-typed scripting language for system automation, cloud integration, and embedded scripting. Originally written in Plan 9 C, it runs on **macOS, Linux, OpenBSD, and Plan 9**.
+
+Built from first principles (inspired by "Crafting Interpreters"), Lux combines a clean language design with modern features: HTTP/HTTPS, cryptography, AWS integration, databases, and file I/O.
 
 ## Features
 
-- **Dynamic typing** - Variables can hold any type
-- **First-class functions** - Functions are values that can be passed around
-- **Closures** - Functions can capture and remember their surrounding scope
-- **Classes and inheritance** - Object-oriented programming with single inheritance
-- **Arrays** - Native array support with bracket syntax and dynamic sizing
-- **Modules** - Split code across files using `import "path.lux";`
-- **Automatic memory management** - Mark-and-sweep garbage collector
-- **NaN boxing** - Optional performance optimization for value representation
-- **REPL help** - Discover available callables with `help()` and inspect a symbol with `help("name")`
+**Language:**
+- **Dynamic typing** — numbers, strings, arrays, hashes, objects
+- **First-class functions** — lexical scoping, closures, recursion
+- **Classes & inheritance** — single inheritance, methods, fields
+- **Modules** — `import "path.lux"` for code organization
+- **Automatic GC** — mark-and-sweep garbage collector
+
+**Standard Library:**
+- **File I/O** — read, write, append, list directories
+- **JSON** — parse and serialize
+- **XML** — basic parsing
+- **Strings/Arrays** — slice, find, split, sort, binary search
+- **HTTP** — client (GET/POST/PUT) and server
+- **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
+- **Cloud** — AWS S3, STS, IAM operations
+- **Databases** — SQLite, PostgreSQL, MySQL (opt-in)
+- **Code formatting** — `luxfmt` (gofmt-style)
+- **Testing** — `luxtest` with timeouts and reporting
+- **Assertions** — `assert(condition, message)` for test-driven development
+
+## Quick Start
+
+### Build (macOS / Linux)
+```bash
+cd posix
+make
+./lux ../examples/demo.lux
+```
+
+### Build (OpenBSD)
+```bash
+cd posix
+gmake  # GNU make required
+./lux ../examples/demo.lux
+```
+
+### Build (Plan 9)
+```bash
+mk
+./8.out ../examples/demo.lux
+```
+
+### Hello Lux
+```lux
+print "Hello, Lux!";
+
+fun fib(n) {
+    if (n < 2) return n;
+    return fib(n - 2) + fib(n - 1);
+}
+
+print fib(10);  // 55
+```
+
+### Run Tests
+```bash
+./luxtest -t 5 tests/    # All tests with 5s timeout
+./luxtest tests/fib.lux  # Single test
+```
+
+### Format Code
+```bash
+./luxfmt --write myfile.lux   # In-place (POSIX)
+./luxfmt -w myfile.lux        # In-place (Plan 9)
+```
+
+## Detailed Build Instructions
+
+See [BUILD.md](BUILD.md) for comprehensive platform-specific build guides:
+- **macOS** — Homebrew setup, x86_64 compilation
+- **Linux** — Debian, Ubuntu, Fedora, CentOS
+- **OpenBSD** — GNU Make, port package paths
+- **Plan 9** — mk tool, compiler selection
+- **Optional features** — SQLite, PostgreSQL, MySQL database drivers
+
+## Why Lux?
+
+**Lux is ideal for:**
+- **System automation** — File I/O, process orchestration, configuration management
+- **Cloud scripting** — Direct AWS S3/STS/IAM integration, HTTP/HTTPS clients
+- **Embedded scripting** — Lightweight bytecode interpreter, Plan 9 native
+- **Testing frameworks** — Built-in `assert()` and `luxtest` runner
+- **Portable tools** — Single binary, runs on macOS, Linux, OpenBSD, Plan 9
+
+**Lux is NOT ideal for:**
+- Large numerical compute (use numerical Python/Julia)
+- GUI development (no graphics APIs)
+- Mobile development (not designed for mobile targets)
+
+## Practical Examples
+
+### HTTP Client
+```lux
+// GET request
+var resp = httpGet("https://api.example.com/users");
+print resp.statusCode;
+var data = parseJSON(resp.body);
+print data["name"];
+
+// POST with custom headers
+var headers = {"Authorization": "Bearer token123", "Content-Type": "application/json"};
+var body = toJSON({"username": "alice", "email": "alice@example.com"});
+var resp = httpRequest("POST", "https://api.example.com/users", body, headers);
+if (resp.statusCode == 201) {
+    print "User created!";
+}
+```
+
+### HTTP Server
+```lux
+// Start a simple HTTP server on port 8080
+httpServer(8080);
+// Handles GET /, GET /echo, POST /echo automatically
+// Try: curl http://localhost:8080/
+// Try: curl -X POST http://localhost:8080/echo -d 'hello'
+```
+
+### File I/O
+```lux
+// Read entire file
+var content = readFile("input.txt");
+print content;
+
+// Write file
+writeFile("output.txt", "Hello, Lux!");
+
+// Append to log
+appendFile("events.log", "Timestamp: " + epoch() + "\n");
+
+// List directory
+var files = listDir(".");
+print files;
+
+// Check existence
+if (fileExists("config.json")) {
+    var config = parseJSON(readFile("config.json"));
+}
+```
+
+### JSON Data
+```lux
+var user = {
+    "name": "Alice",
+    "age": 30,
+    "tags": ["admin", "dev"]
+};
+
+// Serialize
+var json = toJSON(user);
+writeFile("user.json", json);
+
+// Parse
+var data = parseJSON(readFile("user.json"));
+print data["name"];     // Alice
+print data["tags"][0];  // admin
+```
+
+### Cryptography
+```lux
+// SHA-256 hash
+var hash = sha256("password123");
+
+// HMAC-SHA256  
+var signature = hmacSha256("secret", "message");
+
+// AWS request signing
+var sig = awsSignRequest("us-east-1", "s3", "AWS4-HMAC-SHA256", 
+                         "20250101T000000Z", "...");
+```
+
+### Testing with Assertions
+```lux
+// Run: ./luxtest script.lux
+
+assert(1 + 1 == 2, "basic math");
+assert(len([1, 2, 3]) == 3, "array length");
+assert("hello".startsWith("hel"), "string prefix");
+
+class Calculator {
+    add(a, b) { return a + b; }
+}
+var calc = Calculator();
+assert(calc.add(2, 3) == 5, "calculator.add");
+
+print "All assertions passed!";
+```
 
 ## Language Features
 
