@@ -105,10 +105,18 @@ value.o: value.c value.h memory.h common.h
 %.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Build the luxcheck utility
+LUXCHECK_TARGET = luxcheck
+LUXCHECK_SRC = luxcheck.c
+LUXCHECK_OBJ = $(LUXCHECK_SRC:.c=.o)
+
+$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o vm.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # Phony targets don't create a file of the same name
-.PHONY: all clean $(FMT_TARGET) $(TEST_TARGET)
+.PHONY: all clean $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET)
 
 # Rule to clean up generated files
 clean:
-	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET)
+	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET)
 

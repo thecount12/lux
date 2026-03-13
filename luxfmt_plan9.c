@@ -1,3 +1,9 @@
+/* luxfmt 
+compile manual way:
+8c -FVw luxfmt_plan9.c
+8l -o luxfmt luxfmt_plan9.8
+./luxfmt examples/demo.lux
+*/
 #include <u.h>
 #include <libc.h>
 

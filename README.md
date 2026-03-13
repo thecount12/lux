@@ -25,6 +25,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Code formatting** — `luxfmt` (gofmt-style)
 - **Testing** — `luxtest` with timeouts and reporting
 - **Assertions** — `assert(condition, message)` for test-driven development
+- **Syntax** - `luxcheck` Fast light weight syntax checker
 
 ## Quick Start
 
