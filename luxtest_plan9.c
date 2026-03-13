@@ -10,6 +10,10 @@
  * PASS if lux exits with exits(nil).
  * FAIL if lux exits with exits("...").
  * TIMEOUT if the child is killed by alarm() -> exits("alarm").
+
+ compile manual way:
+ 8c -FVw luxtest_plan9.c
+ 8l -o luxtest luxtest_plan9.8
  */
 
 #include <u.h>

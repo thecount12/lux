@@ -1,0 +1,23 @@
+#!/bin/rc
+# compile luxcheck manual way
+
+switch($objtype){
+case 386
+    O=8
+case amd64
+    O=6
+case arm
+    O=5
+case *
+    echo unknown architecture $objtype
+    exit 'arch'
+}
+
+
+CC=$O^c
+LD=$O^l
+# Compile the main file
+$CC -FVw luxcheck.c
+
+# Link all required objects either .8 or .6 files
+$LD -o luxcheck luxcheck.$O compiler.$O scanner.$O object.$O memory.$O value.$O chunk.$O table.$O vm.$O
