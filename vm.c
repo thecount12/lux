@@ -120,7 +120,7 @@ callableCategory(const char* name)
 		return "Data Formats";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
-	    strcmp(name, "httpServer") == 0)
+	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0)
 		return "HTTP";
 	if (strcmp(name, "sha256") == 0 || strcmp(name, "hmacSha256") == 0)
 		return "Crypto";
@@ -1499,6 +1499,7 @@ readHttpResponse(int fd, int* outLen)
 static Value
 getAwsTimestampNative(int argCount, Value* args)
 {
+	(void)args;
 	if (argCount != 0)
 		return NIL_VAL;
 	
@@ -1985,8 +1986,16 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 	return 0;
 }
 
+static void sendHttpResponseEx(int fd, int statusCode, char* statusText, char* contentType, char* body);
+
 static void
 sendHttpResponse(int fd, int statusCode, char* statusText, char* body)
+{
+	sendHttpResponseEx(fd, statusCode, statusText, "application/json", body);
+}
+
+static void
+sendHttpResponseEx(int fd, int statusCode, char* statusText, char* contentType, char* body)
 {
 	char header[256];
 	int bodyLen = strlen(body);
@@ -1994,17 +2003,485 @@ sendHttpResponse(int fd, int statusCode, char* statusText, char* body)
 
 	headerLen = snprint(header, sizeof(header),
 		"HTTP/1.0 %d %s\r\n"
-		"Content-Type: application/json\r\n"
+		"Content-Type: %s\r\n"
 		"Content-Length: %d\r\n"
 		"Server: lux/1.0\r\n"
 		"Connection: close\r\n"
 		"\r\n",
-		statusCode, statusText, bodyLen);
+		statusCode, statusText, contentType, bodyLen);
 
 	if (headerLen > 0)
 		write(fd, header, headerLen);
 	if (bodyLen > 0)
 		write(fd, body, bodyLen);
+}
+
+static char*
+getMimeType(char* path)
+{
+	char* ext = strrchr(path, '.');
+	if (ext == nil) return "application/octet-stream";
+	ext++;
+	if (cistrcmp(ext, "html") == 0) return "text/html";
+	if (cistrcmp(ext, "htm") == 0) return "text/html";
+	if (cistrcmp(ext, "css") == 0) return "text/css";
+	if (cistrcmp(ext, "js") == 0) return "application/javascript";
+	if (cistrcmp(ext, "json") == 0) return "application/json";
+	if (cistrcmp(ext, "txt") == 0) return "text/plain";
+	if (cistrcmp(ext, "png") == 0) return "image/png";
+	if (cistrcmp(ext, "jpg") == 0) return "image/jpeg";
+	if (cistrcmp(ext, "jpeg") == 0) return "image/jpeg";
+	if (cistrcmp(ext, "gif") == 0) return "image/gif";
+	if (cistrcmp(ext, "svg") == 0) return "image/svg+xml";
+	return "application/octet-stream";
+}
+
+/* ========== HTTP Server: Req/Res objects and Server class ========== */
+
+static ObjClass* serverResClass;
+static ObjClass* serverClass;
+
+static bool call(ObjClosure* closure, int argCount);
+static bool callValue(Value callee, int argCount);
+static InterpretResult run(void);
+
+/* res.status(code) -> returns res for chaining */
+static Value
+resStatusNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_NUMBER(args[1]))
+		return NIL_VAL;
+	ObjInstance* res = AS_INSTANCE(args[0]);
+	ObjString* key = copyString("_statusCode", 11);
+	tableSet(&res->fields, key, args[1]);
+	return args[0];
+}
+
+/* res.send(body) */
+static Value
+resSendNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	ObjInstance* res = AS_INSTANCE(args[0]);
+	Value fdVal;
+	ObjString* fdKey = copyString("_fd", 3);
+	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
+		return NIL_VAL;
+	int fd = (int)AS_NUMBER(fdVal);
+	Value statusVal;
+	ObjString* statusKey = copyString("_statusCode", 11);
+	int statusCode = 200;
+	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
+		statusCode = (int)AS_NUMBER(statusVal);
+	char* statusText = (statusCode == 200) ? "OK" :
+		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
+		(statusCode == 500) ? "Internal Server Error" : "OK";
+	ObjString* bodyObj = valueToString(args[1]);
+	sendHttpResponseEx(fd, statusCode, statusText, "text/plain", bodyObj->chars);
+	return NIL_VAL;
+}
+
+/* res.next() - advances middleware chain */
+static ObjArray* _mwChainMiddlewares;
+static int _mwChainIndex;
+static ObjClosure* _mwChainHandler;
+static Value _mwChainReq;
+static Value _mwChainRes;
+
+static Value
+resNextNative(int argCount, Value* args)
+{
+	(void)argCount;
+	(void)args;
+	if (_mwChainMiddlewares == nil) return NIL_VAL;
+	_mwChainIndex++;
+	if (_mwChainIndex < _mwChainMiddlewares->count) {
+		Value mwVal = _mwChainMiddlewares->elements[_mwChainIndex];
+		if (IS_CLOSURE(mwVal)) {
+			push(OBJ_VAL(mwVal));
+			push(_mwChainReq);
+			push(_mwChainRes);
+			push(OBJ_VAL(newNative(resNextNative)));
+			if (call(AS_CLOSURE(mwVal), 3)) {
+				run();
+			}
+		}
+	} else if (_mwChainHandler != nil) {
+		ObjClosure* h = _mwChainHandler;
+		_mwChainHandler = nil;
+		_mwChainMiddlewares = nil;
+		push(OBJ_VAL(h));
+		push(_mwChainReq);
+		push(_mwChainRes);
+		if (call(h, 2)) {
+			run();
+		}
+	}
+	return NIL_VAL;
+}
+
+/* res.json(obj) */
+static Value
+resJsonNative(int argCount, Value* args)
+{
+	int fd, statusCode, jsonCap, len;
+	Value fdVal, statusVal;
+	ObjString* fdKey;
+	ObjString* statusKey;
+	ObjInstance* res;
+	char* statusText;
+	char* buffer;
+
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	fdKey = copyString("_fd", 3);
+	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
+		return NIL_VAL;
+	fd = (int)AS_NUMBER(fdVal);
+	statusKey = copyString("_statusCode", 11);
+	statusCode = 200;
+	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
+		statusCode = (int)AS_NUMBER(statusVal);
+	statusText = (statusCode == 200) ? "OK" :
+		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
+		(statusCode == 500) ? "Internal Server Error" : "OK";
+	jsonCap = 256;
+	len = 0;
+	buffer = malloc((ulong)jsonCap);
+	if (buffer == nil) return NIL_VAL;
+	buffer[0] = '\0';
+	serializeJsonValue(args[1], &buffer, &len, &jsonCap);
+	sendHttpResponseEx(fd, statusCode, statusText, "application/json", buffer);
+	free(buffer);
+	return NIL_VAL;
+}
+
+/* Helper: get or create _routes array on server instance */
+static ObjArray*
+serverGetRoutes(ObjInstance* server, char* key)
+{
+	Value routesVal;
+	ObjString* routesKey = copyString(key, (int)strlen(key));
+	if (!tableGet(&server->fields, routesKey, &routesVal)) {
+		ObjArray* arr = newArray();
+		tableSet(&server->fields, routesKey, OBJ_VAL(arr));
+		return arr;
+	}
+	if (!IS_ARRAY(routesVal)) return nil;
+	return AS_ARRAY(routesVal);
+}
+
+/* Server.init(port) - returns instance for constructor */
+static Value
+serverInitNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_NUMBER(args[1]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjString* portKey = copyString("port", 4);
+	tableSet(&server->fields, portKey, args[1]);
+	return args[0];
+}
+
+/* Server.get(path, handler) */
+static Value
+serverGetNative(int argCount, Value* args)
+{
+	if (argCount != 3 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) || !IS_CLOSURE(args[2]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjArray* routes = serverGetRoutes(server, "_routes");
+	if (routes == nil) return NIL_VAL;
+	ObjInstance* entry = newInstance(nil);
+	push(OBJ_VAL(entry));
+	ObjString* methodKey = copyString("method", 6);
+	ObjString* pathKey = copyString("path", 4);
+	ObjString* handlerKey = copyString("handler", 7);
+	tableSet(&entry->fields, methodKey, OBJ_VAL(copyString("GET", 3)));
+	tableSet(&entry->fields, pathKey, args[1]);
+	tableSet(&entry->fields, handlerKey, args[2]);
+	writeArray(routes, OBJ_VAL(entry));
+	pop();
+	return NIL_VAL;
+}
+
+/* Server.post(path, handler) */
+static Value
+serverPostNative(int argCount, Value* args)
+{
+	if (argCount != 3 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) || !IS_CLOSURE(args[2]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjArray* routes = serverGetRoutes(server, "_routes");
+	if (routes == nil) return NIL_VAL;
+	ObjInstance* entry = newInstance(nil);
+	push(OBJ_VAL(entry));
+	ObjString* methodKey = copyString("method", 6);
+	ObjString* pathKey = copyString("path", 4);
+	ObjString* handlerKey = copyString("handler", 7);
+	tableSet(&entry->fields, methodKey, OBJ_VAL(copyString("POST", 4)));
+	tableSet(&entry->fields, pathKey, args[1]);
+	tableSet(&entry->fields, handlerKey, args[2]);
+	writeArray(routes, OBJ_VAL(entry));
+	pop();
+	return NIL_VAL;
+}
+
+/* Server.use(middleware) */
+static Value
+serverUseNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_CLOSURE(args[1]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	Value mwVal;
+	ObjString* mwKey = copyString("_middleware", 11);
+	if (!tableGet(&server->fields, mwKey, &mwVal)) {
+		ObjArray* arr = newArray();
+		tableSet(&server->fields, mwKey, OBJ_VAL(arr));
+		writeArray(arr, args[1]);
+	} else if (IS_ARRAY(mwVal)) {
+		writeArray(AS_ARRAY(mwVal), args[1]);
+	}
+	return NIL_VAL;
+}
+
+/* Server.static(dir) */
+static Value
+serverStaticNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjString* key = copyString("_static_dir", 11);
+	tableSet(&server->fields, key, args[1]);
+	return NIL_VAL;
+}
+
+/* Server.start() - blocking dispatch loop (Plan 9: announce/listen/accept) */
+static Value
+serverStartNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_INSTANCE(args[0]))
+		return BOOL_VAL(false);
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	Value portVal;
+	if (!tableGet(&server->fields, copyString("port", 4), &portVal) || !IS_NUMBER(portVal))
+		return BOOL_VAL(false);
+	int port = (int)AS_NUMBER(portVal);
+
+	char addr[64];
+	char adir[40];
+	char ldir[40];
+	snprint(addr, sizeof(addr), "tcp!*!%d", port);
+
+	int afd = announce(addr, adir);
+	if (afd < 0) {
+		fprint(2, "Failed to announce on port %d\n", port);
+		return BOOL_VAL(false);
+	}
+
+	fprint(1, "HTTP server listening on port %d\n", port);
+	fprint(1, "Press Ctrl+C to stop\n");
+
+	Value routesVal;
+	ObjArray* routes = nil;
+	if (tableGet(&server->fields, copyString("_routes", 7), &routesVal) && IS_ARRAY(routesVal))
+		routes = AS_ARRAY(routesVal);
+
+	Value staticVal;
+	char* staticDir = nil;
+	if (tableGet(&server->fields, copyString("_static_dir", 11), &staticVal) && IS_STRING(staticVal))
+		staticDir = AS_CSTRING(staticVal);
+
+	while (1) {
+		int lcfd = listen(adir, ldir);
+		if (lcfd < 0) {
+			close(afd);
+			return BOOL_VAL(false);
+		}
+
+		int dfd = accept(lcfd, ldir);
+		close(lcfd);
+		if (dfd < 0)
+			continue;
+
+		char buffer[8192];
+		int totalRead = 0;
+		int n;
+
+		n = read(dfd, buffer, sizeof(buffer) - 1);
+		if (n <= 0) {
+			close(dfd);
+			continue;
+		}
+		totalRead = n;
+		buffer[totalRead] = '\0';
+
+		char* headerEnd = strstr(buffer, "\r\n\r\n");
+		if (headerEnd == nil)
+			headerEnd = strstr(buffer, "\n\n");
+		if (headerEnd != nil) {
+			char* clHeader = strstr(buffer, "Content-Length:");
+			if (clHeader == nil)
+				clHeader = strstr(buffer, "content-length:");
+			if (clHeader != nil) {
+				int contentLen = atoi(clHeader + 15);
+				int bodyStart = (headerEnd - buffer) + 4;
+				if (strstr(buffer, "\n\n") != nil && strstr(buffer, "\r\n\r\n") == nil)
+					bodyStart = (headerEnd - buffer) + 2;
+				int bodyReceived = totalRead - bodyStart;
+				int needMore = contentLen - bodyReceived;
+				while (needMore > 0 && totalRead < sizeof(buffer) - 1) {
+					n = read(dfd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
+					if (n <= 0) break;
+					totalRead += n;
+					needMore -= n;
+				}
+				buffer[totalRead] = '\0';
+			}
+		}
+
+		HttpRequest req;
+		if (parseHttpRequest(buffer, totalRead, &req) < 0) {
+			sendHttpResponse(dfd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
+			close(dfd);
+			continue;
+		}
+		fprint(1, "%s %s\n", req.method, req.path);
+
+		/* Static file serving */
+		if (staticDir != nil && strcmp(req.method, "GET") == 0) {
+			char filepath[2048];
+			char* reqPath;
+			int dirLen, pathLen, ffd, nread, hlen;
+			long fileLen;
+			Dir* d;
+			char* content;
+			char* mime;
+			char header[512];
+
+			content = nil;
+			reqPath = req.path;
+			if (strstr(reqPath, "..") == nil) {
+				dirLen = strlen(staticDir);
+				pathLen = strlen(reqPath);
+				if (dirLen + pathLen + 2 < sizeof(filepath)) {
+					snprint(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
+					if (pathLen > 0 && (reqPath[pathLen - 1] == '/' || (pathLen == 1 && reqPath[0] == '/')))
+						strncat(filepath, "index.html", sizeof(filepath) - strlen(filepath) - 1);
+					ffd = open(filepath, OREAD);
+					if (ffd >= 0) {
+						d = dirfstat(ffd);
+						if (d != nil) {
+							fileLen = d->length;
+							free(d);
+							if (fileLen > 0 && fileLen < (long)(1024*1024)) {
+								content = malloc((ulong)fileLen);
+								if (content != nil) {
+									nread = read(ffd, content, (int)fileLen);
+									mime = getMimeType(filepath);
+									hlen = snprint(header, sizeof(header),
+										"HTTP/1.0 200 OK\r\n"
+										"Content-Type: %s\r\n"
+										"Content-Length: %ld\r\n"
+										"Server: lux/1.0\r\n"
+										"Connection: close\r\n\r\n",
+										mime, (long)fileLen);
+									if (hlen > 0) write(dfd, header, hlen);
+									if (nread > 0) write(dfd, content, nread);
+									free(content);
+								} else {
+									sendHttpResponse(dfd, 500, "Internal Server Error",
+										"{\"error\":\"out of memory\"}");
+								}
+							} else {
+								sendHttpResponse(dfd, 500, "Internal Server Error",
+									"{\"error\":\"file too large or empty\"}");
+							}
+						}
+						close(ffd);
+						close(dfd);
+						continue;
+					}
+				}
+			}
+		}
+
+		Value mwVal;
+		ObjArray* middlewares = nil;
+		if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
+			middlewares = AS_ARRAY(mwVal);
+
+		ObjClosure* handler = nil;
+		if (routes != nil) {
+			for (int i = 0; i < routes->count; i++) {
+				Value entVal = routes->elements[i];
+				if (!IS_INSTANCE(entVal)) continue;
+				ObjInstance* ent = AS_INSTANCE(entVal);
+				Value methodVal, pathVal, handlerVal;
+				if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
+				if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
+				if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
+				if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
+				if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
+				if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
+				handler = AS_CLOSURE(handlerVal);
+				break;
+			}
+		}
+
+		/* Build req and res objects */
+		ObjInstance* reqObj = newInstance(nil);
+		push(OBJ_VAL(reqObj));
+		tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(req.method, strlen(req.method))));
+		tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(req.path, strlen(req.path))));
+		tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(req.body, strlen(req.body))));
+
+		ObjInstance* resObj = newInstance(serverResClass);
+		push(OBJ_VAL(resObj));
+		tableSet(&resObj->fields, copyString("_fd", 3), NUMBER_VAL((double)dfd));
+		tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
+
+		Value reqVal = OBJ_VAL(reqObj);
+		Value resVal = OBJ_VAL(resObj);
+		pop();
+		pop();
+
+		if (handler != nil) {
+			if (middlewares != nil && middlewares->count > 0) {
+				_mwChainMiddlewares = middlewares;
+				_mwChainIndex = 0;
+				_mwChainHandler = handler;
+				_mwChainReq = reqVal;
+				_mwChainRes = resVal;
+				Value firstMw = middlewares->elements[0];
+				push(OBJ_VAL(firstMw));
+				push(reqVal);
+				push(resVal);
+				push(OBJ_VAL(newNative(resNextNative)));
+				if (call(AS_CLOSURE(firstMw), 3)) {
+					run();
+				}
+			} else {
+				push(OBJ_VAL(handler));
+				push(reqVal);
+				push(resVal);
+				if (call(handler, 2)) {
+					run();
+				}
+			}
+		} else {
+			char errBody[256];
+			snprint(errBody, sizeof(errBody), "{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
+			sendHttpResponse(dfd, 404, "Not Found", errBody);
+		}
+		close(dfd);
+	}
+	close(afd);
+	return BOOL_VAL(true);
 }
 
 /* ========== AWS Signature V4 Implementation ========== */
@@ -2795,6 +3272,22 @@ initVM(void)
 	vm.initString = nil;
 	vm.initString = copyString("init", 4);
 
+	serverResClass = newClass(copyString("Res", 3));
+	tableSet(&serverResClass->methods, copyString("send", 4), OBJ_VAL(newNative(resSendNative)));
+	tableSet(&serverResClass->methods, copyString("json", 4), OBJ_VAL(newNative(resJsonNative)));
+	tableSet(&serverResClass->methods, copyString("status", 6), OBJ_VAL(newNative(resStatusNative)));
+
+	serverClass = newClass(copyString("Server", 6));
+	tableSet(&serverClass->methods, vm.initString, OBJ_VAL(newNative(serverInitNative)));
+	tableSet(&serverClass->methods, copyString("get", 3), OBJ_VAL(newNative(serverGetNative)));
+	tableSet(&serverClass->methods, copyString("post", 4), OBJ_VAL(newNative(serverPostNative)));
+	tableSet(&serverClass->methods, copyString("use", 3), OBJ_VAL(newNative(serverUseNative)));
+	tableSet(&serverClass->methods, copyString("static", 6), OBJ_VAL(newNative(serverStaticNative)));
+	tableSet(&serverClass->methods, copyString("start", 5), OBJ_VAL(newNative(serverStartNative)));
+	push(OBJ_VAL(copyString("Server", 6)));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(serverClass));
+	pop();
+
 	defineNative("assert", assertNative);
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
@@ -2889,14 +3382,18 @@ static bool callValue(Value callee, int argCount) {
 			case OBJ_BOUND_METHOD: {
 				ObjBoundMethod* bound = AS_BOUND_METHOD(callee);
 				vm.stackTop[-argCount -1] = bound->receiver;
-				return call(bound->method, argCount);
+				return call(bound->method, argCount + 1);
 			}
 			case OBJ_CLASS: {
 				ObjClass* klass = AS_CLASS(callee);
 				vm.stackTop[-argCount -1] = OBJ_VAL(newInstance(klass));
 				Value initializer;
 				if (tableGet(&klass->methods, vm.initString, &initializer)) {
-					return call(AS_CLOSURE(initializer), argCount);
+					push(initializer);
+					return callValue(initializer, argCount + 1);
+				} else if (argCount != 0) {
+					runtimeError("Expected 0 arguments but got %d.", argCount);
+					return false;
 				}
 				return true;
 			}
@@ -2905,8 +3402,12 @@ static bool callValue(Value callee, int argCount) {
 			case OBJ_NATIVE: {
 			    NativeFn native;
                 Value result;
+                Value* args;
                 native = AS_NATIVE(callee);
-				result = native(argCount, vm.stackTop - argCount);
+				/* Callee at top [arg0..argN, callee] => args = stackTop - argCount - 1;
+				 * callee at bottom [callee, arg1..] => args = stackTop - argCount */
+				args = (vm.stackTop[-1] == callee) ? vm.stackTop - argCount - 1 : vm.stackTop - argCount;
+				result = native(argCount, args);
 				vm.stackTop -= argCount + 1;
 				if (vm.nativePanic) {
 					vm.nativePanic = 0;
@@ -2932,7 +3433,20 @@ invokeFromClass(ObjClass* klass, ObjString* name, int argCount)
 		runtimeError("Undefined property '%s'.", name->chars);
 		return false;
 	}
-	return call(AS_CLOSURE(method), argCount);
+	if (IS_NATIVE(method)) {
+		NativeFn fn = AS_NATIVE(method);
+		Value result = fn(argCount + 1, vm.stackTop - argCount - 1);
+		vm.stackTop -= argCount + 1;
+		if (vm.nativePanic) {
+			vm.nativePanic = 0;
+			runtimeError("%s", vm.nativePanicMsg);
+			return false;
+		}
+		push(result);
+		return true;
+	}
+	push(method);
+	return call(AS_CLOSURE(method), argCount + 1);
 }
 
 static bool 
