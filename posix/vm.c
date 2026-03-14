@@ -55,6 +55,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"fileExists", "fileExists(path)", "Return whether a file exists."},
 	{"createDir", "createDir(path)", "Create a directory."},
 	{"listDir", "listDir(path)", "List directory entries as a newline-separated string."},
+	{"run", "run(cmd)", "Run a shell command and return stdout as string, or nil on failure."},
 	{"len", "len(value)", "Return length for strings and arrays."},
 	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
 	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
@@ -133,7 +134,7 @@ static const char* callableCategory(const char* name) {
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
-	    strcmp(name, "listDir") == 0) return "File and Directory";
+	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0) return "File and Directory";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
@@ -505,6 +506,48 @@ static Value listDirNative(int argCount, Value* args) {
 	Value retval = OBJ_VAL(copyString(result, resultLen));
 	free(result);
 	return retval;
+}
+
+/* run(cmd) -> string (stdout) or nil */
+static Value runNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	char* cmd = AS_CSTRING(args[0]);
+	FILE* fp = popen(cmd, "r");
+	if (!fp)
+		return NIL_VAL;
+
+	/* Pipes are not seekable; read incrementally */
+	size_t cap = 4096;
+	size_t n = 0;
+	char* buf = malloc(cap);
+	if (!buf) {
+		pclose(fp);
+		return NIL_VAL;
+	}
+	for (;;) {
+		if (n >= cap) {
+			cap *= 2;
+			char* newBuf = realloc(buf, cap);
+			if (!newBuf) {
+				free(buf);
+				pclose(fp);
+				return NIL_VAL;
+			}
+			buf = newBuf;
+		}
+		size_t got = fread(buf + n, 1, cap - n - 1, fp);
+		n += got;
+		if (got == 0)
+			break;
+	}
+	buf[n] = '\0';
+	pclose(fp);
+
+	Value result = OBJ_VAL(copyString(buf, (int)n));
+	free(buf);
+	return result;
 }
 
 static bool isAsciiWhitespace(char c) {
@@ -3386,6 +3429,7 @@ void initVM() {
 	defineNative("fileExists", fileExistsNative);
 	defineNative("createDir", createDirNative);
 	defineNative("listDir", listDirNative);
+	defineNative("run", runNative);
 	defineNative("len", lenNative);
 	defineNative("strFind", strFindNative);
 	defineNative("strSlice", strSliceNative);
