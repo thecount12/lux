@@ -1004,6 +1004,48 @@ curl -X POST http://localhost:8080/echo -d '{"test":"data"}'
 - **Plan 9**: Uses native `announce()`, `listen()`, `accept()` system calls
 - **POSIX**: Uses standard BSD sockets API (`socket()`, `bind()`, `listen()`, `accept()`)
 
+#### `Server` class (POSIX) - Routing, Middleware, Static Files
+Create a configurable HTTP server with user-defined routes:
+
+```lux
+fun handleHello(req, res) { res.send("Hello from Lux!"); }
+fun handleData(req, res) {
+  var body = parseJSON(req.body);
+  res.status(201).json({"status": "received"});
+}
+fun logger(req, res, next) {
+  print "Request: " + req.method + " " + req.path;
+  next();
+}
+var server = Server.new(8080);
+server.get("/hello", handleHello);
+server.post("/data", handleData);
+server.use(logger);
+server.static("public");  /* serve files from ./public/ */
+server.start();
+```
+
+**Controller imports:** Define `server` before importing route modules so they can register routes:
+```lux
+var server = Server.new(8080);
+import "routes/user.lux";   /* routes/user.lux calls server.get(...) */
+server.start();
+```
+
+**Simple persistence:** Use global variables for in-process state:
+```lux
+var store = {};
+fun postData(req, res) {
+  store["last"] = parseJSON(req.body);
+  res.status(201).json({"ok": true});
+}
+fun getData(req, res) { res.json(store); }
+var server = Server(8080);
+server.post("/data", postData);
+server.get("/data", getData);
+server.start();
+```
+
 **Practical Example: Fetch and Process API Data**
 ```lux
 // Fetch user data from API

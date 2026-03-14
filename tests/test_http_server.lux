@@ -1,24 +1,10 @@
-// HTTP Server Test
-// Basic HTTP server that responds to requests
-
+/* HTTP Server Test - legacy httpServer (works on Plan 9 and POSIX) */
 print "=== HTTP Server Test ===";
 print "";
-print "Starting simple HTTP server...";
-print "The server has built-in routes:";
-print "  GET /       -> Hello message";
-print "  GET /echo   -> Echo request details";
-print "  Others      -> 404 Not Found";
+print "Starting HTTP server...";
+print "Routes: GET /, GET/POST /echo, Others -> 404";
 print "";
-print "Try these commands in another terminal:";
-print "  curl http://localhost:8080/";
-print "  curl http://localhost:8080/echo";
-print "  curl -X POST http://localhost:8080/echo -d 'test data'";
+print "Try: curl http://localhost:8080/";
 print "";
 
-// Extra manual checks:
-// curl -X POST http://localhost:8080/echo -d 'quote:" backslash:\\ slash:/ newline:\n'
-// dd -if /dev/zero -bs 1 -count 12000 2>/dev/null | tr '\0' 'A' | curl -sS -X POST http://localhost:8080/echo --data-binary @-
-
-// Start the server on port 8080
-// This is a blocking call - press Ctrl+C to stop
 httpServer(8080);

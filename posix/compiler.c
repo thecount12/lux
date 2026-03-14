@@ -227,13 +227,17 @@ static void initCompiler(Compiler* compiler, FunctionType type) {
 											 parser.previous.length);
 	}
 
-	Local* local = &current->locals[current->localCount++];
-	local->depth = 0;
-	local->isCaptured = false;
-	if (type != TYPE_FUNCTION) {
+	if (type == TYPE_METHOD || type == TYPE_INITIALIZER) {
+		Local* local = &current->locals[current->localCount++];
+		local->depth = 0;
+		local->isCaptured = false;
 		local->name.start = "this";
 		local->name.length = 4;
-	} else {
+	} else if (type == TYPE_FUNCTION || type == TYPE_SCRIPT) {
+		/* Reserve slot 0 so params/locals align with VM layout [callee, arg1, ...] */
+		Local* local = &current->locals[current->localCount++];
+		local->depth = 0;
+		local->isCaptured = false;
 		local->name.start = "";
 		local->name.length = 0;
 	}
@@ -848,6 +852,8 @@ static void function(FunctionType type) {
 	beginScope();
 
 	consume(TOKEN_LEFT_PAREN, "Expect '(' after functions names.");
+	if (type == TYPE_METHOD || type == TYPE_INITIALIZER)
+		current->function->arity = 1; /* implicit 'this' */
 	if (!check(TOKEN_RIGHT_PAREN)) {
 		do {
 			current->function->arity++;
