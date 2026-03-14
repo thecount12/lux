@@ -1,0 +1,4 @@
+- Project Style: POSIX / mostly C89 wth some C99.
+- Coding Standard: C99 features allowed (// comments, bool, fixed-width types).
+- Headers: Use <unistd.h>, <fcntl.h>, <sys/types.h>.
+- Environment: Target standard POSIX syscalls.

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <ctype.h>
 #include <sys/stat.h>
@@ -61,6 +62,8 @@ static const NativeDoc kNativeDocs[] = {
 	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request."},
 	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
 	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request."},
+	{"httpServer", "httpServer(port)", "Start a simple HTTP server (legacy, built-in routes)."},
+	{"Server", "Server(port)", "Create HTTP server with routing, middleware, static files."},
 	{"sha256", "sha256(text)", "Compute SHA-256 hash."},
 	{"hmacSha256", "hmacSha256(key, text)", "Compute HMAC-SHA256."},
 	{"dbConnect", "dbConnect(driver, connection)", "Open a database connection."},
@@ -140,7 +143,7 @@ static const char* callableCategory(const char* name) {
 	    strcmp(name, "parseXml") == 0) return "Data Formats";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
-	    strcmp(name, "httpServer") == 0) return "HTTP";
+	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0) return "HTTP";
 	if (strcmp(name, "sha256") == 0 || strcmp(name, "hmacSha256") == 0) return "Crypto";
 	if (strcmp(name, "awsSignRequest") == 0 || strcmp(name, "getAwsTimestamp") == 0 ||
 	    strcmp(name, "s3ListObjects") == 0 || strcmp(name, "s3GetObject") == 0 ||
@@ -1121,6 +1124,14 @@ static void serializeJsonValue(Value value, char** buffer, int* len, int* cap) {
 			str++;
 		}
 		appendChar(buffer, len, cap, '"');
+	} else if (IS_ARRAY(value)) {
+		ObjArray* arr = AS_ARRAY(value);
+		appendChar(buffer, len, cap, '[');
+		for (int i = 0; i < arr->count; i++) {
+			if (i > 0) appendChar(buffer, len, cap, ',');
+			serializeJsonValue(arr->elements[i], buffer, len, cap);
+		}
+		appendChar(buffer, len, cap, ']');
 	} else if (IS_INSTANCE(value)) {
 		serializeJsonObject(AS_INSTANCE(value), buffer, len, cap);
 	}
@@ -1589,22 +1600,57 @@ static int parseHttpRequest(char* buffer, int bufLen, HttpRequest* req) {
 	return 0;
 }
 
-static void sendHttpResponse(int fd, int statusCode, const char* statusText, const char* body) {
-	char header[256];
+static void sendHttpResponseBinary(int fd, int statusCode, const char* statusText,
+	const char* contentType, const void* body, int bodyLen);
+
+static void sendHttpResponseEx(int fd, int statusCode, const char* statusText,
+	const char* contentType, const char* body) {
 	int bodyLen = (int)strlen(body);
+	sendHttpResponseBinary(fd, statusCode, statusText, contentType, body, bodyLen);
+}
+
+static void sendHttpResponseBinary(int fd, int statusCode, const char* statusText,
+	const char* contentType, const void* body, int bodyLen) {
+	char header[512];
 	int headerLen = snprintf(header, sizeof(header),
 		"HTTP/1.0 %d %s\r\n"
-		"Content-Type: application/json\r\n"
+		"Content-Type: %s\r\n"
 		"Content-Length: %d\r\n"
 		"Server: lux/1.0\r\n"
 		"Connection: close\r\n"
 		"\r\n",
-		statusCode, statusText, bodyLen);
+		statusCode, statusText, contentType, bodyLen);
 
 	if (headerLen > 0)
 		write(fd, header, (size_t)headerLen);
 	if (bodyLen > 0)
 		write(fd, body, (size_t)bodyLen);
+}
+
+static void sendHttpResponse(int fd, int statusCode, const char* statusText, const char* body) {
+	sendHttpResponseEx(fd, statusCode, statusText, "application/json", body);
+}
+
+/* MIME type lookup for static file serving */
+static const char* getMimeType(const char* path) {
+	const char* ext = strrchr(path, '.');
+	if (ext == NULL) return "application/octet-stream";
+	ext++;
+	if (strcasecmp(ext, "html") == 0) return "text/html";
+	if (strcasecmp(ext, "htm") == 0) return "text/html";
+	if (strcasecmp(ext, "css") == 0) return "text/css";
+	if (strcasecmp(ext, "js") == 0) return "application/javascript";
+	if (strcasecmp(ext, "json") == 0) return "application/json";
+	if (strcasecmp(ext, "txt") == 0) return "text/plain";
+	if (strcasecmp(ext, "png") == 0) return "image/png";
+	if (strcasecmp(ext, "jpg") == 0) return "image/jpeg";
+	if (strcasecmp(ext, "jpeg") == 0) return "image/jpeg";
+	if (strcasecmp(ext, "gif") == 0) return "image/gif";
+	if (strcasecmp(ext, "svg") == 0) return "image/svg+xml";
+	if (strcasecmp(ext, "ico") == 0) return "image/x-icon";
+	if (strcasecmp(ext, "woff") == 0) return "font/woff";
+	if (strcasecmp(ext, "woff2") == 0) return "font/woff2";
+	return "application/octet-stream";
 }
 
 /* ========== AWS Signature V4 Implementation ========== */
@@ -2119,6 +2165,413 @@ static Value awsSignRequestNative(int argCount, Value* args) {
 		sessionToken, authHeader, sizeof(authHeader));
 	
 	return OBJ_VAL(copyString(authHeader, strlen(authHeader)));
+}
+
+/* ========== HTTP Server: Req/Res objects and Server class ========== */
+
+static ObjClass* serverResClass;
+static ObjClass* serverClass;
+
+static bool call(ObjClosure* closure, int argCount);
+static InterpretResult run(void);
+
+/* res.status(code) -> returns res for chaining */
+static Value resStatusNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_NUMBER(args[1]))
+		return NIL_VAL;
+	ObjInstance* res = AS_INSTANCE(args[0]);
+	ObjString* key = copyString("_statusCode", 11);
+	tableSet(&res->fields, key, args[1]);
+	return args[0];
+}
+
+/* res.send(body) */
+static Value resSendNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	ObjInstance* res = AS_INSTANCE(args[0]);
+	Value fdVal;
+	ObjString* fdKey = copyString("_fd", 3);
+	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
+		return NIL_VAL;
+	int fd = (int)AS_NUMBER(fdVal);
+	Value statusVal;
+	ObjString* statusKey = copyString("_statusCode", 11);
+	int statusCode = 200;
+	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
+		statusCode = (int)AS_NUMBER(statusVal);
+	const char* statusText = (statusCode == 200) ? "OK" :
+		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
+		(statusCode == 500) ? "Internal Server Error" : "OK";
+	ObjString* bodyObj = valueToString(args[1]);
+	sendHttpResponseEx(fd, statusCode, statusText, "text/plain", bodyObj->chars);
+	return NIL_VAL;
+}
+
+/* res.next() - advances middleware chain, called by middleware */
+static ObjArray* _mwChainMiddlewares;
+static int _mwChainIndex;
+static ObjClosure* _mwChainHandler;
+static Value _mwChainReq;
+static Value _mwChainRes;
+
+static Value resNextNative(int argCount, Value* args) {
+	if (_mwChainMiddlewares == NULL) return NIL_VAL;
+	_mwChainIndex++;
+	if (_mwChainIndex < _mwChainMiddlewares->count) {
+		Value mwVal = _mwChainMiddlewares->elements[_mwChainIndex];
+		if (IS_CLOSURE(mwVal)) {
+			push(OBJ_VAL(mwVal));
+			push(_mwChainReq);
+			push(_mwChainRes);
+			push(OBJ_VAL(newNative(resNextNative)));
+			if (call(AS_CLOSURE(mwVal), 3)) {
+				run();
+			}
+		}
+	} else if (_mwChainHandler != NULL) {
+		ObjClosure* h = _mwChainHandler;
+		_mwChainHandler = NULL;
+		_mwChainMiddlewares = NULL;
+		push(OBJ_VAL(h));
+		push(_mwChainReq);
+		push(_mwChainRes);
+		if (call(h, 2)) {
+			run();
+		}
+	}
+	return NIL_VAL;
+}
+
+/* res.json(obj) */
+static Value resJsonNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	ObjInstance* res = AS_INSTANCE(args[0]);
+	Value fdVal;
+	ObjString* fdKey = copyString("_fd", 3);
+	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
+		return NIL_VAL;
+	int fd = (int)AS_NUMBER(fdVal);
+	Value statusVal;
+	ObjString* statusKey = copyString("_statusCode", 11);
+	int statusCode = 200;
+	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
+		statusCode = (int)AS_NUMBER(statusVal);
+	const char* statusText = (statusCode == 200) ? "OK" :
+		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
+		(statusCode == 500) ? "Internal Server Error" : "OK";
+	int cap = 256;
+	int len = 0;
+	char* buffer = malloc((size_t)cap);
+	if (buffer == NULL) return NIL_VAL;
+	buffer[0] = '\0';
+	serializeJsonValue(args[1], &buffer, &len, &cap);
+	sendHttpResponseEx(fd, statusCode, statusText, "application/json", buffer);
+	free(buffer);
+	return NIL_VAL;
+}
+
+/* Helper: get or create _routes array on server instance */
+static ObjArray* serverGetRoutes(ObjInstance* server, const char* key) {
+	Value routesVal;
+	ObjString* routesKey = copyString(key, (int)strlen(key));
+	if (!tableGet(&server->fields, routesKey, &routesVal)) {
+		ObjArray* arr = newArray();
+		tableSet(&server->fields, routesKey, OBJ_VAL(arr));
+		return arr;
+	}
+	if (!IS_ARRAY(routesVal)) return NULL;
+	return AS_ARRAY(routesVal);
+}
+
+/* Server.init(port) - returns instance for constructor */
+static Value serverInitNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_NUMBER(args[1]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjString* portKey = copyString("port", 4);
+	tableSet(&server->fields, portKey, args[1]);
+	/* Must return instance so Server(port) yields the constructed object */
+	return args[0];
+}
+
+/* Server.get(path, handler) */
+static Value serverGetNative(int argCount, Value* args) {
+	if (argCount != 3 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) || !IS_CLOSURE(args[2]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjArray* routes = serverGetRoutes(server, "_routes");
+	if (routes == NULL) return NIL_VAL;
+	ObjInstance* entry = newInstance(NULL);
+	push(OBJ_VAL(entry));
+	ObjString* methodKey = copyString("method", 6);
+	ObjString* pathKey = copyString("path", 4);
+	ObjString* handlerKey = copyString("handler", 7);
+	tableSet(&entry->fields, methodKey, OBJ_VAL(copyString("GET", 3)));
+	tableSet(&entry->fields, pathKey, args[1]);
+	tableSet(&entry->fields, handlerKey, args[2]);
+	writeArray(routes, OBJ_VAL(entry));
+	pop();
+	return NIL_VAL;
+}
+
+/* Server.post(path, handler) */
+static Value serverPostNative(int argCount, Value* args) {
+	if (argCount != 3 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) || !IS_CLOSURE(args[2]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjArray* routes = serverGetRoutes(server, "_routes");
+	if (routes == NULL) return NIL_VAL;
+	ObjInstance* entry = newInstance(NULL);
+	push(OBJ_VAL(entry));
+	ObjString* methodKey = copyString("method", 6);
+	ObjString* pathKey = copyString("path", 4);
+	ObjString* handlerKey = copyString("handler", 7);
+	tableSet(&entry->fields, methodKey, OBJ_VAL(copyString("POST", 4)));
+	tableSet(&entry->fields, pathKey, args[1]);
+	tableSet(&entry->fields, handlerKey, args[2]);
+	writeArray(routes, OBJ_VAL(entry));
+	pop();
+	return NIL_VAL;
+}
+
+/* Server.use(middleware) */
+static Value serverUseNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_CLOSURE(args[1]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	Value mwVal;
+	ObjString* mwKey = copyString("_middleware", 11);
+	if (!tableGet(&server->fields, mwKey, &mwVal)) {
+		ObjArray* arr = newArray();
+		tableSet(&server->fields, mwKey, OBJ_VAL(arr));
+		writeArray(arr, args[1]);
+	} else if (IS_ARRAY(mwVal)) {
+		writeArray(AS_ARRAY(mwVal), args[1]);
+	}
+	return NIL_VAL;
+}
+
+/* Server.static(dir) */
+static Value serverStaticNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjString* key = copyString("_static_dir", 11);
+	tableSet(&server->fields, key, args[1]);
+	return NIL_VAL;
+}
+
+/* Server.start() - blocking dispatch loop */
+static Value serverStartNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_INSTANCE(args[0]))
+		return BOOL_VAL(false);
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	Value portVal;
+	if (!tableGet(&server->fields, copyString("port", 4), &portVal) || !IS_NUMBER(portVal))
+		return BOOL_VAL(false);
+	int port = (int)AS_NUMBER(portVal);
+
+	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_fd < 0) {
+		fprintf(stderr, "Failed to create socket\n");
+		return BOOL_VAL(false);
+	}
+	int opt = 1;
+	if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+		close(server_fd);
+		return BOOL_VAL(false);
+	}
+	struct sockaddr_in address;
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = INADDR_ANY;
+	address.sin_port = htons(port);
+	if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+		fprintf(stderr, "Failed to bind to port %d\n", port);
+		close(server_fd);
+		return BOOL_VAL(false);
+	}
+	if (listen(server_fd, 10) < 0) {
+		close(server_fd);
+		return BOOL_VAL(false);
+	}
+	fprintf(stdout, "HTTP server listening on port %d\n", port);
+	fprintf(stdout, "Press Ctrl+C to stop\n");
+	fflush(stdout);
+
+	Value routesVal;
+	ObjArray* routes = NULL;
+	if (tableGet(&server->fields, copyString("_routes", 7), &routesVal) && IS_ARRAY(routesVal))
+		routes = AS_ARRAY(routesVal);
+
+	Value staticVal;
+	const char* staticDir = NULL;
+	if (tableGet(&server->fields, copyString("_static_dir", 11), &staticVal) && IS_STRING(staticVal))
+		staticDir = AS_CSTRING(staticVal);
+
+	while (1) {
+		struct sockaddr_in client_addr;
+		socklen_t client_len = sizeof(client_addr);
+		int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+		if (client_fd < 0) continue;
+
+		char buffer[8192];
+		int totalRead = 0;
+		int n = read(client_fd, buffer, sizeof(buffer) - 1);
+		if (n <= 0) {
+			close(client_fd);
+			continue;
+		}
+		totalRead = n;
+		buffer[totalRead] = '\0';
+
+		char* headerEnd = strstr(buffer, "\r\n\r\n");
+		if (headerEnd == NULL) headerEnd = strstr(buffer, "\n\n");
+		if (headerEnd != NULL) {
+			char* clHeader = strstr(buffer, "Content-Length:");
+			if (clHeader == NULL) clHeader = strstr(buffer, "content-length:");
+			if (clHeader != NULL) {
+				int contentLen = atoi(clHeader + 15);
+				int bodyStart = (headerEnd - buffer) + 4;
+				if (strstr(buffer, "\n\n") != NULL && strstr(buffer, "\r\n\r\n") == NULL)
+					bodyStart = (headerEnd - buffer) + 2;
+				int bodyReceived = totalRead - bodyStart;
+				int needMore = contentLen - bodyReceived;
+				while (needMore > 0 && totalRead < (int)sizeof(buffer) - 1) {
+					n = read(client_fd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
+					if (n <= 0) break;
+					totalRead += n;
+					needMore -= n;
+				}
+				buffer[totalRead] = '\0';
+			}
+		}
+
+		HttpRequest req;
+		if (parseHttpRequest(buffer, totalRead, &req) < 0) {
+			sendHttpResponse(client_fd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
+			close(client_fd);
+			continue;
+		}
+		fprintf(stdout, "%s %s\n", req.method, req.path);
+		fflush(stdout);
+
+		/* Build req object */
+		ObjInstance* reqObj = newInstance(NULL);
+		push(OBJ_VAL(reqObj));
+		tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(req.method, strlen(req.method))));
+		tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(req.path, strlen(req.path))));
+		tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(req.body, strlen(req.body))));
+
+		/* Build res object */
+		ObjInstance* resObj = newInstance(serverResClass);
+		push(OBJ_VAL(resObj));
+		tableSet(&resObj->fields, copyString("_fd", 3), NUMBER_VAL((double)client_fd));
+		tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
+
+		Value reqVal = OBJ_VAL(reqObj);
+		Value resVal = OBJ_VAL(resObj);
+		pop();
+		pop();
+
+		/* Phase 6: static file serving */
+		if (staticDir != NULL && strcmp(req.method, "GET") == 0) {
+			char filepath[2048];
+			const char* reqPath = req.path;
+			if (strstr(reqPath, "..") != NULL) {
+				/* Reject path traversal */
+			} else {
+				size_t dirLen = strlen(staticDir);
+				size_t pathLen = strlen(reqPath);
+				if (dirLen + pathLen + 2 < sizeof(filepath)) {
+					snprintf(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
+					if (pathLen > 0 && (reqPath[pathLen - 1] == '/' || (pathLen == 1 && reqPath[0] == '/'))) {
+						strncat(filepath, "index.html", sizeof(filepath) - strlen(filepath) - 1);
+					}
+					FILE* f = fopen(filepath, "rb");
+					if (f != NULL) {
+						fseek(f, 0, SEEK_END);
+						long fsize = ftell(f);
+						rewind(f);
+						if (fsize > 0 && fsize < 1024 * 1024) {
+							char* content = malloc((size_t)fsize);
+							if (content != NULL) {
+								size_t nread = fread(content, 1, (size_t)fsize, f);
+								const char* mime = getMimeType(filepath);
+								sendHttpResponseBinary(client_fd, 200, "OK", mime, content, (int)nread);
+								free(content);
+							} else {
+								sendHttpResponse(client_fd, 500, "Internal Server Error",
+									"{\"error\":\"out of memory\"}");
+							}
+						} else {
+							sendHttpResponse(client_fd, 500, "Internal Server Error",
+								"{\"error\":\"file too large or empty\"}");
+						}
+						fclose(f);
+						close(client_fd);
+						continue;
+					}
+				}
+			}
+		}
+
+		Value mwVal;
+		ObjArray* middlewares = NULL;
+		if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
+			middlewares = AS_ARRAY(mwVal);
+
+		ObjClosure* handler = NULL;
+		if (routes != NULL) {
+			for (int i = 0; i < routes->count; i++) {
+				Value entVal = routes->elements[i];
+				if (!IS_INSTANCE(entVal)) continue;
+				ObjInstance* ent = AS_INSTANCE(entVal);
+				Value methodVal, pathVal, handlerVal;
+				if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
+				if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
+				if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
+				if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
+				if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
+				if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
+				handler = AS_CLOSURE(handlerVal);
+				break;
+			}
+		}
+
+		if (handler != NULL) {
+			if (middlewares != NULL && middlewares->count > 0) {
+				_mwChainMiddlewares = middlewares;
+				_mwChainIndex = 0;
+				_mwChainHandler = handler;
+				_mwChainReq = reqVal;
+				_mwChainRes = resVal;
+				Value firstMw = middlewares->elements[0];
+				push(OBJ_VAL(firstMw));
+				push(reqVal);
+				push(resVal);
+				push(OBJ_VAL(newNative(resNextNative)));
+				if (call(AS_CLOSURE(firstMw), 3)) {
+					run();
+				}
+			} else {
+				push(OBJ_VAL(handler));
+				push(reqVal);
+				push(resVal);
+				if (call(handler, 2)) {
+					run();
+				}
+			}
+		} else {
+			char errBody[256];
+			snprintf(errBody, sizeof(errBody), "{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
+			sendHttpResponse(client_fd, 404, "Not Found", errBody);
+		}
+		close(client_fd);
+	}
+	close(server_fd);
+	return BOOL_VAL(true);
 }
 
 /* httpServer(port) -> starts server */
@@ -2952,6 +3405,25 @@ void initVM() {
 	defineNative("httpRequest", httpRequestNative);
 	defineNative("httpServer", httpServerNative);
 	defineNative("sha256", sha256Native);
+
+	/* Server and Res classes for HTTP routing */
+	serverResClass = newClass(copyString("Res", 3));
+	tableSet(&serverResClass->methods, copyString("send", 4), OBJ_VAL(newNative(resSendNative)));
+	tableSet(&serverResClass->methods, copyString("json", 4), OBJ_VAL(newNative(resJsonNative)));
+	tableSet(&serverResClass->methods, copyString("status", 6), OBJ_VAL(newNative(resStatusNative)));
+
+	serverClass = newClass(copyString("Server", 6));
+	tableSet(&serverClass->methods, vm.initString, OBJ_VAL(newNative(serverInitNative)));
+	tableSet(&serverClass->methods, copyString("get", 3), OBJ_VAL(newNative(serverGetNative)));
+	tableSet(&serverClass->methods, copyString("post", 4), OBJ_VAL(newNative(serverPostNative)));
+	tableSet(&serverClass->methods, copyString("use", 3), OBJ_VAL(newNative(serverUseNative)));
+	tableSet(&serverClass->methods, copyString("static", 6), OBJ_VAL(newNative(serverStaticNative)));
+	tableSet(&serverClass->methods, copyString("start", 5), OBJ_VAL(newNative(serverStartNative)));
+	push(OBJ_VAL(copyString("Server", 6)));
+	push(OBJ_VAL(serverClass));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
+	pop();
+	pop();
 	defineNative("hmacSha256", hmacSha256Native);
 	defineNative("awsSignRequest", awsSignRequestNative);
 	defineNative("getAwsTimestamp", getAwsTimestampNative);
@@ -3011,14 +3483,15 @@ static bool callValue(Value callee, int argCount) {
 			case OBJ_BOUND_METHOD: {
 				ObjBoundMethod* bound = AS_BOUND_METHOD(callee);
 				vm.stackTop[-argCount -1] = bound->receiver;
-				return call(bound->method, argCount);
+				return call(bound->method, argCount + 1);
 			}
 			case OBJ_CLASS: {
 				ObjClass* klass = AS_CLASS(callee);
 				vm.stackTop[-argCount -1] = OBJ_VAL(newInstance(klass));
 				Value initializer;
 				if (tableGet(&klass->methods, vm.initString, &initializer)) {
-					return call(AS_CLOSURE(initializer), argCount);
+					push(initializer);
+					return callValue(initializer, argCount + 1);
 				} else if (argCount != 0 ) {
 					runtimeError("Expected 0 arguments but got %d.", argCount);
 					return false;
@@ -3028,8 +3501,11 @@ static bool callValue(Value callee, int argCount) {
 			case OBJ_CLOSURE:
 				return call(AS_CLOSURE(callee), argCount);
 			case OBJ_NATIVE: {
-				NativeFn native = AS_NATIVE(callee);	
-				Value result = native(argCount, vm.stackTop - argCount);
+				NativeFn native = AS_NATIVE(callee);
+				/* Callee at top [arg0..argN, callee] => args = stackTop - argCount - 1;
+				 * callee at bottom [callee, arg1..] => args = stackTop - argCount */
+				Value* args = (vm.stackTop[-1] == callee) ? vm.stackTop - argCount - 1 : vm.stackTop - argCount;
+				Value result = native(argCount, args);
 				vm.stackTop -= argCount + 1;
 				if (vm.nativePanic) {
 					vm.nativePanic = false;
@@ -3053,12 +3529,29 @@ static bool invokeFromClass(ObjClass* klass, ObjString* name, int argCount) {
 		runtimeError("Undefined property '%s'.", name->chars);
 		return false;
 	}
-	return call(AS_CLOSURE(method), argCount);
+	if (IS_NATIVE(method)) {
+		/* Stack: [receiver, arg1, ...]; args start at vm.stackTop - (argCount+1) */
+		NativeFn fn = AS_NATIVE(method);
+		Value result = fn(argCount + 1, vm.stackTop - argCount - 1);
+		vm.stackTop -= argCount + 1;
+		if (vm.nativePanic) {
+			vm.nativePanic = false;
+			runtimeError("%s", vm.nativePanicMsg);
+			return false;
+		}
+		push(result);
+		return true;
+	}
+	push(method);
+	return call(AS_CLOSURE(method), argCount + 1);
 }
 
 static bool invoke(ObjString* name, int argCount) {
 	Value receiver = peek(argCount);
 
+	if (IS_CLASS(receiver)) {
+		return invokeFromClass(AS_CLASS(receiver), name, argCount);
+	}
 	if (!IS_INSTANCE(receiver)) {
 		runtimeError("Only instances have methods.");
 		return false;
@@ -3311,6 +3804,17 @@ static InterpretResult run() {
 			}
 			case OP_GET_PROPERTY: {
 				ObjString* name = READ_STRING();
+				
+				/* Handle class methods (e.g. Server.new) */
+				if (IS_CLASS(peek(0))) {
+					ObjClass* klass = AS_CLASS(peek(0));
+					Value method;
+					if (tableGet(&klass->methods, name, &method)) {
+						pop();
+						push(method);
+						break;
+					}
+				}
 				
 				/* Handle array.length */
 				if (IS_ARRAY(peek(0))) {
