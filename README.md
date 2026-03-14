@@ -61,6 +61,13 @@ fun fib(n) {
 print fib(10);  // 55
 ```
 
+### Run One-Liner
+```bash
+./lux -c "print 1 + 2;"              # POSIX: Quick eval (scripting, CI)
+./lux -c "assert(len(\"hi\") == 2);" # Assertions for checks
+# Plan 9: 8.out -c 'print 1 + 2;'   (use single quotes; rc parses " differently)
+```
+
 ### Run Tests
 ```bash
 ./luxtest -t 5 tests/    # All tests with 5s timeout
@@ -449,6 +456,13 @@ Platform guides:
 ### Run a file:
 ```
 8.out script.lux
+```
+
+### Run one-liner (scripting / CI):
+```
+8.out -c 'print 1 + 2;'                    # Plan 9: use single quotes (rc shell)
+8.out -c 'assert(len("hello") == 5);'      # CI-style checks
+# POSIX: ./lux -c "print 1 + 2;"
 ```
 
 ### Example files:
