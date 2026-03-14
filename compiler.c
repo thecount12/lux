@@ -990,6 +990,8 @@ function(FunctionType type)
 	beginScope();
 
 	consume(TOKEN_LEFT_PAREN, "Expect '(' after functions names.");
+	if (type == TYPE_METHOD || type == TYPE_INITIALIZER)
+		current->function->arity = 1; /* implicit 'this' */
 	if (!check(TOKEN_RIGHT_PAREN)) {
 		do {
 			uchar constant;
