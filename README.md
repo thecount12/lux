@@ -65,7 +65,9 @@ print fib(10);  // 55
 ```bash
 ./lux -c "print 1 + 2;"              # POSIX: Quick eval (scripting, CI)
 ./lux -c "assert(len(\"hi\") == 2);" # Assertions for checks
+./lux -c 'var out = run("echo hello"); print out;'  # POSIX: Subprocess
 # Plan 9: 8.out -c 'print 1 + 2;'   (use single quotes; rc parses " differently)
+# Plan 9: 8.out -c 'var out = run("echo hello"); print out;'  # Subprocess
 ```
 
 ### Run Tests
@@ -151,6 +153,16 @@ print files;
 if (fileExists("config.json")) {
     var config = parseJSON(readFile("config.json"));
 }
+```
+
+### Subprocess
+```lux
+var out = run("echo hello");
+print out;  // hello
+
+// With file I/O
+var lines = run("wc -l config.json");
+print lines;
 ```
 
 ### JSON Data

@@ -34,6 +34,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"fileExists", "fileExists(path)", "Return whether a file exists."},
 	{"createDir", "createDir(path)", "Create a directory."},
 	{"listDir", "listDir(path)", "List directory entries as a newline-separated string."},
+	{"run", "run(cmd)", "Run a shell command and return stdout as string, or nil on failure."},
 	{"len", "len(value)", "Return length for strings and arrays."},
 	{"strFind", "strFind(haystack, needle)", "Return index of substring or -1."},
 	{"strSlice", "strSlice(s, start, end)", "Return substring from start to end."},
@@ -107,7 +108,7 @@ callableCategory(const char* name)
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
-	    strcmp(name, "listDir") == 0)
+	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0)
 		return "File and Directory";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
@@ -591,6 +592,97 @@ listDirNative(int argCount, Value* args)
 	retval = OBJ_VAL(copyString(result, resultLen));
 	free(result);
 	return retval;
+}
+
+/* run(cmd) -> string (stdout) or nil.  Uses fork/exec with rc -c. */
+static Value
+runNative(int argCount, Value* args)
+{
+	int pipeFd[2];
+	int pid;
+	int n, total;
+	long cap;
+	char *cmd;
+	char *buf;
+	char *newBuf;
+	Waitmsg *w;
+	Value result;
+
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	cmd = AS_CSTRING(args[0]);
+
+	if (pipe(pipeFd) < 0)
+		return NIL_VAL;
+
+	pid = fork();
+	if (pid < 0) {
+		close(pipeFd[0]);
+		close(pipeFd[1]);
+		return NIL_VAL;
+	}
+
+	if (pid == 0) {
+		char *args[4];
+
+		/* Child: redirect stdout to pipe, discard stderr */
+		close(pipeFd[0]);
+		dup(pipeFd[1], 1);
+		close(pipeFd[1]);
+		dup(open("/dev/null", OWRITE), 2);
+
+		args[0] = "rc";
+		args[1] = "-c";
+		args[2] = cmd;
+		args[3] = nil;
+		exec("/bin/rc", args);
+		exits("exec failed");
+	}
+
+	/* Parent: read stdout from pipe */
+	close(pipeFd[1]);
+	cap = 4096;
+	total = 0;
+	buf = malloc(cap);
+	if (buf == nil) {
+		close(pipeFd[0]);
+		return NIL_VAL;
+	}
+	for (;;) {
+		if ((long)total >= cap - 1) {
+			cap *= 2;
+			newBuf = realloc(buf, cap);
+			if (newBuf == nil) {
+				free(buf);
+				close(pipeFd[0]);
+				return NIL_VAL;
+			}
+			buf = newBuf;
+		}
+		n = read(pipeFd[0], buf + total, cap - 1 - total);
+		if (n <= 0)
+			break;
+		total += n;
+	}
+	buf[total] = '\0';
+	close(pipeFd[0]);
+
+	/* Wait for child */
+	for (;;) {
+		w = wait();
+		if (w == nil)
+			break;
+		if (w->pid == pid) {
+			free(w);
+			break;
+		}
+		free(w);
+	}
+
+	result = OBJ_VAL(copyString(buf, total));
+	free(buf);
+	return result;
 }
 
 static bool
@@ -3300,6 +3392,7 @@ initVM(void)
 	defineNative("fileExists", fileExistsNative);
 	defineNative("createDir", createDirNative);
 	defineNative("listDir", listDirNative);
+	defineNative("run", runNative);
 	defineNative("len", lenNative);
 	defineNative("strFind", strFindNative);
 	defineNative("strSlice", strSliceNative);
