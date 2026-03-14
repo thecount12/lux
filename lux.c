@@ -95,8 +95,12 @@ main(int argc, char *argv[])
 		repl();
 	} else if (argc == 2) {
 		runFile(argv[1]);
+	} else if (argc == 3 && strcmp(argv[1], "-c") == 0) {
+		InterpretResult result = interpret(argv[2]);
+		if (result == INTERPRET_COMPILE_ERROR) exits("compile error");
+		if (result == INTERPRET_RUNTIME_ERROR) exits("runtime error");
 	} else {
-		fprint(2, "Usage: lux [path]\n");
+		fprint(2, "Usage: lux [path] | lux -c \"code\"\n");
 		exits("usage");
 	}
 	
