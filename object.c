@@ -186,8 +186,25 @@ valueToString(Value value)
 	} else if (IS_NIL(value)) {
 		return copyString("nil", 3);
 	} else if (IS_NUMBER(value)) {
-		char buffer[32];
-		int length = snprint(buffer, sizeof(buffer), "%.15g", AS_NUMBER(value));
+		/* Use DBL_DECIMAL_DIG for round-trip accuracy, fallback to 17 if missing. */
+#ifndef DBL_DECIMAL_DIG
+#define DBL_DECIMAL_DIG 17
+#endif
+		char buffer[64];
+		int length = snprint(buffer, sizeof(buffer), "%.*g", DBL_DECIMAL_DIG, AS_NUMBER(value));
+		if (length < 0) length = 0;
+
+		/* If truncated, allocate larger buffer and reformat */
+		if (length >= (int)sizeof(buffer)) {
+			char* big = ALLOCATE(char, length + 1);
+			if (big != nil) {
+				snprint(big, length + 1, "%.*g", DBL_DECIMAL_DIG, AS_NUMBER(value));
+				ObjString* s = copyString(big, length);
+				reallocate(big, length + 1, 0);
+				return s;
+			}
+			/* Fall through to return truncated buffer if allocation fails */
+		}
 		return copyString(buffer, length);
 	} else if (IS_STRING(value)) {
 		return AS_STRING(value);
