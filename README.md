@@ -25,7 +25,8 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Code formatting** — `luxfmt` (gofmt-style)
 - **Testing** — `luxtest` with timeouts and reporting
 - **Assertions** — `assert(condition, message)` for test-driven development
-- **Syntax** - `luxcheck` Fast light weight syntax checker
+- **Syntax** — `luxcheck` fast lightweight syntax checker
+- **Documentation** — `luxdoc` generates callable docs from vm.c
 
 ## Quick Start
 
@@ -80,6 +81,13 @@ print fib(10);  // 55
 ```bash
 ./luxfmt --write myfile.lux   # In-place (POSIX)
 ./luxfmt -w myfile.lux        # In-place (Plan 9)
+```
+
+### Generate Documentation
+```bash
+./luxdoc vm.c                 # Print built-in callable docs (Markdown)
+./luxdoc vm.c -o docs.md      # Write to file
+./luxdoc vm.c -f json         # JSON output
 ```
 
 ## Detailed Build Instructions
