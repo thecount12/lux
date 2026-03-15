@@ -26,7 +26,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Testing** — `luxtest` with timeouts and reporting
 - **Assertions** — `assert(condition, message)` for test-driven development
 - **Syntax** — `luxcheck` fast lightweight syntax checker
-- **Documentation** — `luxdoc` generates callable docs from vm.c
+- **Linting** — `luxlint` static checks: unused vars, unreachable code, duplicate functions, shadowed globals
 
 ## Quick Start
 
@@ -81,14 +81,13 @@ print fib(10);  // 55
 ```bash
 ./luxfmt --write myfile.lux   # In-place (POSIX)
 ./luxfmt -w myfile.lux        # In-place (Plan 9)
-```
 
-### Generate Documentation
+### Lint
 ```bash
-./luxdoc vm.c                 # Print built-in callable docs (Markdown)
-./luxdoc vm.c -o docs.md      # Write to file
-./luxdoc vm.c -f json         # JSON output
+./luxlint myfile.lux   # Warn on unused vars, unreachable code, duplicate functions, shadowed globals
+# Plan 9: rc luxlint.rc  (build first)
 ```
+Exit codes: 0 = no issues, 1 = warnings, 65 = compile error, 64 = usage error.
 
 ## Detailed Build Instructions
 

@@ -26,5 +26,6 @@ void tableAddAll(Table* from, Table* to);
 ObjString* tableFindString(Table* table, char* chars, int length, unsigned long hash);
 void tableRemoveWhite(Table* table);
 void markTable(Table* table);
+void tableForEach(Table* table, void (*fn)(ObjString* key, Value value, void* arg), void* arg);
 
 #endif
