@@ -988,6 +988,15 @@ arrayBinarySearchNative(int argCount, Value* args)
 	return NUMBER_VAL(-1);
 }
 
+/* Plan 9: float64_available() returns false - Float64Array not supported */
+static Value
+float64AvailableNative(int argCount, Value* args)
+{
+	argCount = argCount;
+	args = args;
+	return BOOL_VAL(0);
+}
+
 /* JSON parsing helpers */
 typedef struct {
 	char* start;
@@ -3403,6 +3412,7 @@ initVM(void)
 	defineNative("arrayContains", arrayContainsNative);
 	defineNative("arraySort", arraySortNative);
 	defineNative("arrayBinarySearch", arrayBinarySearchNative);
+	defineNative("float64_available", float64AvailableNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
 	defineNative("parseXml", parseXmlNative);
@@ -3925,6 +3935,16 @@ run(void)
 				b = pop();
 				a = pop();
 				push(NUMBER_VAL(AS_NUMBER(a) + AS_NUMBER(b)));
+			} else if (IS_ARRAY(peek(0)) && IS_ARRAY(peek(1))) {
+				/* Both are arrays, concatenate them */
+				ObjArray* bArr = AS_ARRAY(pop());
+				ObjArray* aArr = AS_ARRAY(pop());
+				ObjArray* result = newArray();
+				for (int i = 0; i < aArr->count; i++)
+					writeArray(result, aArr->elements[i]);
+				for (int i = 0; i < bArr->count; i++)
+					writeArray(result, bArr->elements[i]);
+				push(OBJ_VAL(result));
 			} else {
 				/* At least one is not a number, convert both to strings and concatenate */
 				b = pop();

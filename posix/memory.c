@@ -115,6 +115,7 @@ static void blackenObject(Obj* object) {
 			break;
 		case OBJ_NATIVE:
 		case OBJ_STRING:
+		case OBJ_FLOATARRAY:
 			break;
 	}
 }
@@ -165,6 +166,12 @@ static void freeObject(Obj* object) {
 			ObjString* string = (ObjString*)object;
 			FREE_ARRAY(char, string->chars, string->length + 1);	
 			FREE(ObjString, object);
+			break;
+		}
+		case OBJ_FLOATARRAY: {
+			ObjFloatArray* fa = (ObjFloatArray*)object;
+			if (fa->elems != NULL) FREE_ARRAY(double, fa->elems, fa->length);
+			FREE(ObjFloatArray, object);
 			break;
 		}
 		case OBJ_UPVALUE:

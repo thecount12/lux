@@ -1,0 +1,40 @@
+// Example: Float64Array usage and native vs Lux dot product benchmark
+// Float64Array is POSIX-only; on Plan 9, prints a message and skips
+if (float64_available()) {
+    var N = 10000;
+
+    // Create Float64Array buffers
+    var a = float64_new(N);
+    var b = float64_new(N);
+
+    // Initialize arrays
+    var i = 0;
+    while (i < N) {
+        float64_set(a, i, i * 1.0);
+        float64_set(b, i, (N - i) * 1.0);
+        i = i + 1;
+    }
+
+    // Native dot (C-backed)
+    var start = clock();
+    var nativeSum = float64_dot(a, b);
+    var nativeTime = clock() - start;
+    print "BENCH_NATIVE=" + nativeTime;
+
+    // Dot computed in Lux using float64_get (interpreted)
+    start = clock();
+    var s = 0.0;
+    i = 0;
+    while (i < N) {
+        s = s + (float64_get(a, i) * float64_get(b, i));
+        i = i + 1;
+    }
+    var luxTime = clock() - start;
+    print "BENCH_LUX=" + luxTime;
+
+    // Print sums for correctness
+    print "SUMS=" + nativeSum + "," + s;
+} else {
+    print "Float64Array not available (POSIX only). Skipping.";
+}
+

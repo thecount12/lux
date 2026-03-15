@@ -24,12 +24,15 @@
 #define AS_FUNCTION(value) 	((ObjFunction*)AS_OBJ(value))
 #define AS_INSTANCE(value)  ((ObjInstance*)AS_OBJ(value))
 #define AS_ARRAY(value)     ((ObjArray*)AS_OBJ(value))
+#define IS_FLOATARRAY(value) isObjType(value, OBJ_FLOATARRAY)
+#define AS_FLOATARRAY(value) ((ObjFloatArray*)AS_OBJ(value))
 #define AS_NATIVE(value) 	(((ObjNative*)AS_OBJ(value))->function)
 #define AS_STRING(value)	((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value)	(((ObjString*)AS_OBJ(value))->chars)
 
 typedef enum {
 	OBJ_ARRAY,
+	OBJ_FLOATARRAY,
 	OBJ_BOUND_METHOD,
 	OBJ_CLASS,
 	OBJ_CLOSURE,
@@ -75,6 +78,12 @@ typedef struct {
 	Value* elements;
 } ObjArray;
 
+typedef struct {
+	Obj obj;
+	int length;
+	double* elems;
+} ObjFloatArray;
+
 typedef struct ObjUpvalue {
 	Obj obj;
 	Value* location;
@@ -114,6 +123,7 @@ ObjFunction* newFunction();
 ObjInstance* newInstance(ObjClass* klass);
 ObjNative* newNative(NativeFn function);
 ObjArray* newArray(void);
+ObjFloatArray* newFloatArray(int length);
 void writeArray(ObjArray* array, Value value);
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);
