@@ -48,7 +48,7 @@ def main() -> int:
     results = [
         benchmark("Python", [sys.executable, str(BENCH / "fib_bench.py")]),
         benchmark("POSIX C", [str(BENCH / "fib_bench_c")]),
-        benchmark("Lux POSIX", [str(ROOT / "posix" / "lux"), str(BENCH / "fib_bench.lux")]),,
+        benchmark("Lux POSIX", [str(ROOT / "posix" / "lux"), str(BENCH / "fib_bench.lux")]),
     ]
 
     print(f"Repeats per implementation: {REPEATS}")

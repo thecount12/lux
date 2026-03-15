@@ -3731,8 +3731,8 @@ importModule(ObjString* path)
 static InterpretResult 
 run(void)
 {
-	CallFrame* frame = &vm.frames[vm.frameCount -1];
-	uchar instruction;
+	register CallFrame* frame = &vm.frames[vm.frameCount -1];
+	register uchar instruction;
 	Value a, b, constant;
 	double da, db;
 
