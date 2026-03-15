@@ -352,6 +352,101 @@ static Value floorNative(int argCount, Value* args) {
 	return NUMBER_VAL((double)result);
 }
 
+/* Float64Array natives */
+static Value
+float64AvailableNative(int argCount, Value* args)
+{
+	(void)argCount;
+	(void)args;
+	Value dummy;
+	ObjString* key = copyString("float64_new", 11);
+	bool ok = tableGet(&vm.globals, key, &dummy);
+	return BOOL_VAL(ok);
+}
+
+static Value
+float64NewNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_NUMBER(args[0])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_new(length) expects 1 numeric argument.");
+		return NIL_VAL;
+	}
+	int len = (int)AS_NUMBER(args[0]);
+	if (len < 0) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_new(length) length must be non-negative.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* fa = newFloatArray(len);
+	return OBJ_VAL(fa);
+}
+
+static Value
+float64GetNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) || !IS_NUMBER(args[1])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_get(array, index) expects (Float64Array, number).");
+		return NIL_VAL;
+	}
+	ObjFloatArray* fa = AS_FLOATARRAY(args[0]);
+	int idx = (int)AS_NUMBER(args[1]);
+	if (idx < 0 || idx >= fa->length) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "Index out of bounds.");
+		return NIL_VAL;
+	}
+	return NUMBER_VAL(fa->elems[idx]);
+}
+
+static Value
+float64SetNative(int argCount, Value* args)
+{
+	if (argCount != 3 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) || !IS_NUMBER(args[1]) || !IS_NUMBER(args[2])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_set(array, index, value) expects (Float64Array, number, number).");
+		return NIL_VAL;
+	}
+	ObjFloatArray* fa = AS_FLOATARRAY(args[0]);
+	int idx = (int)AS_NUMBER(args[1]);
+	if (idx < 0 || idx >= fa->length) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "Index out of bounds.");
+		return NIL_VAL;
+	}
+	fa->elems[idx] = AS_NUMBER(args[2]);
+	return BOOL_VAL(true);
+}
+
+static Value
+float64DotNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) || !IS_OBJ(args[1]) || !IS_FLOATARRAY(args[1])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_dot(a, b) expects two Float64Array arguments.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* a = AS_FLOATARRAY(args[0]);
+	ObjFloatArray* b = AS_FLOATARRAY(args[1]);
+	if (a->length != b->length) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_dot: arrays must have same length.");
+		return NIL_VAL;
+	}
+	double sum = 0.0;
+	for (int i = 0; i < a->length; i++) sum += a->elems[i] * b->elems[i];
+	return NUMBER_VAL(sum);
+}
+
 /* Native function to read a file: readFile(path) -> string */
 static Value readFileNative(int argCount, Value* args) {
 	if (argCount != 1 || !IS_STRING(args[0]))
@@ -3440,6 +3535,11 @@ void initVM() {
 	defineNative("arrayContains", arrayContainsNative);
 	defineNative("arraySort", arraySortNative);
 	defineNative("arrayBinarySearch", arrayBinarySearchNative);
+	defineNative("float64_available", float64AvailableNative);
+	defineNative("float64_new", float64NewNative);
+	defineNative("float64_get", float64GetNative);
+	defineNative("float64_set", float64SetNative);
+	defineNative("float64_dot", float64DotNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
 	defineNative("parseXml", parseXmlNative);
@@ -3929,6 +4029,16 @@ static InterpretResult run() {
 					double b = AS_NUMBER(pop());
 					double a = AS_NUMBER(pop());
 					push(NUMBER_VAL(a + b));
+				} else if (IS_ARRAY(peek(0)) && IS_ARRAY(peek(1))) {
+					/* Both are arrays, concatenate them */
+					ObjArray* bArr = AS_ARRAY(pop());
+					ObjArray* aArr = AS_ARRAY(pop());
+					ObjArray* result = newArray();
+					for (int i = 0; i < aArr->count; i++)
+						writeArray(result, aArr->elements[i]);
+					for (int i = 0; i < bArr->count; i++)
+						writeArray(result, bArr->elements[i]);
+					push(OBJ_VAL(result));
 				} else {
 					/* At least one is not a number, convert both to strings and concatenate */
 					Value b = pop();

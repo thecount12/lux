@@ -83,6 +83,18 @@ ObjArray* newArray(void) {
 	return array;
 }
 
+ObjFloatArray* newFloatArray(int length) {
+	ObjFloatArray* arr = ALLOCATE_OBJ(ObjFloatArray, OBJ_FLOATARRAY);
+	arr->length = length;
+	if (length > 0) {
+		arr->elems = ALLOCATE(double, length);
+		for (int i = 0; i < length; i++) arr->elems[i] = 0.0;
+	} else {
+		arr->elems = NULL;
+	}
+	return arr;
+}
+
 void writeArray(ObjArray* array, Value value) {
 	if (array->capacity < array->count + 1) {
 		int oldCapacity = array->capacity;
@@ -242,6 +254,11 @@ void printObject(Value value) {
 		case OBJ_STRING:
 			printf("%s", AS_CSTRING(value));
 			break;
+		case OBJ_FLOATARRAY: {
+			ObjFloatArray* fa = (ObjFloatArray*)AS_OBJ(value);
+			printf("Float64Array(len=%d)", fa->length);
+			break;
+		}
 		case OBJ_UPVALUE:
 			printf("upvalue");
 			break;

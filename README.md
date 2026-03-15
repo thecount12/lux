@@ -17,7 +17,8 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **File I/O** — read, write, append, list directories
 - **JSON** — parse and serialize
 - **XML** — basic parsing
-- **Strings/Arrays** — slice, find, split, sort, binary search
+- **Strings/Arrays** — slice, find, split, sort, binary search, array concatenation (`+`)
+- **Float64Array** — typed double buffer, dot product (POSIX)
 - **HTTP** — client (GET/POST/PUT) and server
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
 - **Cloud** — AWS S3, STS, IAM operations
@@ -108,7 +109,8 @@ See [BUILD.md](BUILD.md) for comprehensive platform-specific build guides:
 - **Portable tools** — Single binary, runs on macOS, Linux, OpenBSD, Plan 9
 
 **Lux is NOT ideal for:**
-- Large numerical compute (use numerical Python/Julia)
+**Lux is NOT ideal for:**
+- Large numerical compute — Lux is not tuned for large-scale number‑crunching; prefer numerical Python/Julia for heavy workloads. For moderate numeric work you can use Float64Array (POSIX), BLAS wrappers, or build the POSIX runtime with optimizations (see `posix/Makefile` and `benchmark.md`).
 - GUI development (no graphics APIs)
 - Mobile development (not designed for mobile targets)
 
@@ -398,6 +400,10 @@ data[5] = 50;         // Auto-grows array
 print data.length;    // 6
 print data[3];        // nil (gap values are filled with nil)
 
+// Array concatenation with +
+var a = [1, 2];
+var b = a + [3];     // b is [1, 2, 3]
+
 // Nested arrays
 var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
 print matrix[1][2];   // 6
@@ -503,15 +509,16 @@ posix/lux tests/test_http.lux    # HTTP/HTTPS examples (POSIX)
 
 **Note**: Lux has a limit of 256 constants per source file. Very large files with many string literals may hit this limit.
 
-## String Concatenation
+## String and Array Concatenation
 
-Lux now supports **automatic type conversion** with the `+` operator:
+Lux supports **automatic type conversion** with the `+` operator:
 - **Numbers**: `1 + 2` → `3` (numeric addition)
+- **Arrays**: `[1, 2] + [3]` → `[1, 2, 3]` (array concatenation; both operands must be arrays)
 - **Strings**: `"Hello" + " World"` → `"Hello World"`
 - **Mixed types**: `"Score: " + 42` → `"Score: 42"` (auto-converts to string)
 - **Multiple types**: `"Player " + 1 + " wins!"` → `"Player 1 wins!"`
 
-Any type (number, boolean, nil) is automatically converted to string when used with `+` and at least one string operand.
+Any type (number, boolean, nil) is automatically converted to string when used with `+` and at least one string operand. For building large arrays, prefer index assignment (`arr[i] = x`) over repeated concatenation, since `arr + [x]` in a loop copies the whole array each time (O(n²)).
 
 ## Built-in Functions
 
@@ -916,6 +923,87 @@ var words = ["pear", "apple", "orange", "banana"];
 arraySort(words);
 print arrayBinarySearch(words, "banana"); // 1
 ```
+
+### Float64Array (POSIX)
+
+**Platform**: POSIX only (macOS, Linux, OpenBSD). Not available on Plan 9.
+
+Float64Array provides a typed double-precision buffer for numerical work. Use it for dot products, moving averages, or when you need faster element access than regular Lux arrays.
+
+#### `float64_available()` → bool
+
+Returns `true` if Float64Array natives are available in this build. Use this to conditionally run Float64Array code (e.g. in benchmarks that should work on both POSIX and Plan 9).
+
+```lux
+if (float64_available()) {
+    var a = float64_new(100);
+    // ...
+}
+```
+
+#### `float64_new(length)` → Float64Array
+
+Creates a new Float64Array of the given length, initialized to zeros.
+
+```lux
+var a = float64_new(100);
+```
+
+#### `float64_get(array, index)` → number
+
+Returns the element at `index`. Indices are 0-based. Fails if index is out of bounds.
+
+```lux
+var val = float64_get(a, 5);
+```
+
+#### `float64_set(array, index, value)` → bool
+
+Sets the element at `index` to `value`. Returns `true` on success. Fails if index is out of bounds.
+
+```lux
+float64_set(a, 0, 1.5);
+float64_set(a, i, (i % 100) * 0.01);
+```
+
+#### `float64_dot(a, b)` → number
+
+Computes the dot product of two Float64Arrays. Both arrays must have the same length. Uses a native C implementation for speed.
+
+```lux
+var a = float64_new(1000);
+var b = float64_new(1000);
+// ... fill a and b ...
+var sum = float64_dot(a, b);
+```
+
+**Example — moving average:**
+
+```lux
+var data = float64_new(10000);
+var kernel = float64_new(64);
+// Fill kernel with 1/64 for uniform average
+var i = 0;
+while (i < 64) {
+    float64_set(kernel, i, 1.0 / 64);
+    i = i + 1;
+}
+// Compute dot product of sliding window with kernel
+var view = float64_new(64);
+var idx = 0;
+while (idx + 64 <= 10000) {
+    var k = 0;
+    while (k < 64) {
+        float64_set(view, k, float64_get(data, idx + k));
+        k = k + 1;
+    }
+    var avg = float64_dot(view, kernel);
+    idx = idx + 1;
+}
+```
+
+**Tip**: Reuse a single `view` buffer in loops instead of allocating a new one each iteration to avoid GC pressure.
+
 ### HTTP Operations
 
 Lux includes HTTP client functions for making web requests on both Plan 9 and POSIX platforms.
