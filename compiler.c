@@ -610,6 +610,42 @@ binary(bool canAssign)
 	}
 }
 
+static void
+ternary(bool canAssign)
+{
+	(void)canAssign;
+	/* At this point the condition (left expression) is already evaluated
+	 * and its value is on the stack. Implement conditional expression:
+	 *
+	 * condition ? exprTrue : exprFalse
+	 *
+	 * Compile to:
+	 *  - jump if false -> elseJump
+	 *  - pop condition
+	 *  - compile exprTrue (leaves value)
+	 *  - jump -> endJump
+	 *  - patch elseJump, pop
+	 *  - consume ':' and compile exprFalse (leaves value)
+	 *  - patch endJump
+	 */
+	int elseJump = emitJump(OP_JUMP_IF_FALSE);
+	emitByte(OP_POP);
+
+	/* true branch */
+	parsePrecedence(PREC_ASSIGNMENT);
+
+	int endJump = emitJump(OP_JUMP);
+
+	/* else branch */
+	patchJump(elseJump);
+	emitByte(OP_POP);
+
+	consume(TOKEN_COLON, "Expect ':' after expression.");
+	parsePrecedence(PREC_ASSIGNMENT);
+
+	patchJump(endJump);
+}
+
 static void 
 call(bool canAssign) 
 {
@@ -981,6 +1017,10 @@ ParseRule rules[] = {
 	{nil,      binary, PREC_FACTOR},     /* TOKEN_SLASH */
 	{nil,      binary, PREC_FACTOR},     /* TOKEN_STAR */
 	{nil,      binary, PREC_FACTOR},     /* TOKEN_PERCENT */
+	{nil,      or_,    PREC_OR},         /* TOKEN_PIPE */
+	{nil,      and_,   PREC_AND},        /* TOKEN_AMPERSAND */
+	{nil,      ternary,PREC_ASSIGNMENT}, /* TOKEN_QUESTION */
+	{nil,      nil,    PREC_NONE},       /* TOKEN_COLON */
 	{unary,    nil,    PREC_NONE},       /* TOKEN_BANG */
 	{nil,      binary, PREC_EQUALITY},   /* TOKEN_BANG_EQUAL */
 	{nil,      binary, PREC_COMPARISON}, /* TOKEN_EQUAL */

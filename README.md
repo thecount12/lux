@@ -292,6 +292,14 @@ for (var i = 0; i < 10; i = i + 1) {
 }
 ```
 
+### Logical operators and ternary
+
+- `|` — logical OR (short-circuit). Example: `if (a | b) { ... }`
+- `&` — logical AND (short-circuit). Example: `if (a & b) { ... }`
+- Ternary conditional: `cond ? exprTrue : exprFalse` returns a value and can be used inside expressions.
+
+Note: these are logical (short-circuit) operators, not bitwise. `||` and `&&` are not currently aliases.
+
 ### Functions
 ```lux
 fun greet(name) {
