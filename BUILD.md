@@ -14,6 +14,7 @@ cd posix
 make              # Build lux interpreter (default)
 make luxfmt       # Build code formatter
 make luxtest      # Build test runner
+make luxdoc       # Build documentation generator
 make clean        # Clean object files and binaries
 ```
 
