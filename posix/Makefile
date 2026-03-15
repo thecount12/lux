@@ -3,6 +3,7 @@ UNAME_S := $(shell uname -s)
 
 # Define compiler and flags
 CC ?= cc
+OPT ?= -O2
 
 # Database configuration (set to 1 to enable, 0 to disable)
 # By default, all disabled to keep Lux lightweight
@@ -21,7 +22,7 @@ DB_FLAGS =
 DB_LDFLAGS =
 
 # Default flags for unknown POSIX systems.
-CFLAGS = -Wall -Wextra -std=c99 -g $(DB_FLAGS)
+CFLAGS = -Wall -Wextra -std=c99 -g $(OPT) $(DB_FLAGS)
 LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
 
 ifeq ($(USE_SQLITE),1)
@@ -47,17 +48,17 @@ endif
 # OS-specific flags
 ifeq ($(UNAME_S),Linux)
     # Linux: OpenSSL typically in standard paths
-    CFLAGS = -Wall -Wextra -std=c99 -g $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -g $(OPT) $(DB_FLAGS)
     LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),Darwin)
     # macOS: Use Homebrew OpenSSL, compile for x86_64
-    CFLAGS = -Wall -Wextra -std=c99 -g -arch x86_64 -I/usr/local/opt/openssl@3/include $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -g $(OPT) -arch x86_64 -I/usr/local/opt/openssl@3/include $(DB_FLAGS)
     LDFLAGS = -arch x86_64 -L/usr/local/opt/openssl@3/lib -lcurl -lcrypto $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),OpenBSD)
     # OpenBSD: use ports-installed curl and OpenSSL under /usr/local.
-    CFLAGS = -Wall -Wextra -std=c99 -g -I/usr/local/include $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -g $(OPT) -I/usr/local/include $(DB_FLAGS)
     LDFLAGS = -L/usr/local/lib -lcurl -lcrypto $(DB_LDFLAGS)
 endif
 

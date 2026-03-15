@@ -31,19 +31,20 @@ Notes:
 
 ## Dataset B: Apple Silicon M2 (Current, POSIX-only)
 
-Environment: current local macOS run via `benchmark/run_bench.py`.
+Environment: current local macOS run via `benchmark/run_bench.py`. Lux built with `OPT=-O2` (default).
 
 Runner output (9 repeats each, seconds):
 
 | Implementation | Min (s) | Median (s) | Max (s) |
 |---|---:|---:|---:|
-| Python | 0.429167000 | 0.432679459 | 0.451138209 |
-| POSIX C | 0.000001000 | 0.000001000 | 0.000004000 |
-| Lux POSIX | 1.283121000 | 1.327808000 | 1.406099000 |
+| Python | 0.269890834 | 0.271973792 | 0.274642208 |
+| POSIX C | 0.000000000 | 0.000000000 | 0.000001000 |
+| Lux POSIX | 0.614356000 | 0.660829000 | 0.861098000 |
 
 Notes:
 - No Plan 9-native result is included in this table.
 - This table must not be merged with Intel i5 data.
+- Lux POSIX ~2× faster than pre-OPT builds (previously ~1.33 s median).
 
 ## Dataset C: Intel i5 (Current, Comprehensive 200k ROUNDS)
 
@@ -118,12 +119,19 @@ for (i = 0; i < ROUNDS; i++) {
 
 Result: **6.7 ms** (down from 8.3 ms, ~19% improvement). The hints reduced spilling somewhat but 6c still performs stack operations across call boundaries due to its ABI prologue/epilogue requirements. The improvement plateaus because the `register` keyword is merely a hint; 6c's architecture doesn't allow true interprocedural register preservation within its calling convention.
 
+## Build Optimization
+
+**POSIX:** The Makefile uses `OPT ?= -O2` by default. Use `make OPT=-O3` for maximum optimization, or `make OPT=-O0` for unoptimized debug builds. Modern compilers (clang, gcc) handle register allocation well; no `register` hints are needed in benchmark harnesses.
+
+**Plan 9:** The 6c/8c compilers spill registers across function calls. Register hints help: use `fib_bench_plan9_opt.c` as the canonical Plan 9 C harness. The Lux VM `run()` loop also uses `register` hints on `frame` and `instruction` to reduce spilling in the interpreter hot path.
+
 ## Benchmark Files
 
 - `benchmark/fib_bench.py`
-- `benchmark/fib_bench.c`
+- `benchmark/fib_bench.c` (POSIX; clang/gcc optimize without register hints)
 - `benchmark/fib_bench.lux`
-- `benchmark/fib_bench_plan9.c`
+- `benchmark/fib_bench_plan9.c` (baseline)
+- `benchmark/fib_bench_plan9_opt.c` (canonical Plan 9 C harness with register hints)
 - `benchmark/run_bench.py`
 - `tests/fib-plan.c`
 - `tests/fib-posix.c`
