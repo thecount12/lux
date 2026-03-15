@@ -347,6 +347,26 @@ static void binary(bool canAssign __attribute__((unused))) {
 
 }
 
+static void ternary(bool canAssign __attribute__((unused))) {
+	/* condition ? exprTrue : exprFalse */
+	int elseJump = emitJump(OP_JUMP_IF_FALSE);
+	emitByte(OP_POP);
+
+	/* true branch */
+	parsePrecedence(PREC_ASSIGNMENT);
+
+	int endJump = emitJump(OP_JUMP);
+
+	/* else branch */
+	patchJump(elseJump);
+	emitByte(OP_POP);
+
+	consume(TOKEN_COLON, "Expect ':' after expression.");
+	parsePrecedence(PREC_ASSIGNMENT);
+
+	patchJump(endJump);
+}
+
 static void call(bool canAssign __attribute__((unused))) {
 	uint8_t argCount = argumentList();
 	emitBytes(OP_CALL, argCount);
@@ -683,6 +703,10 @@ ParseRule rules[] = {
 	[TOKEN_SLASH] 			= {NULL, binary, PREC_FACTOR},
 	[TOKEN_STAR] 			= {NULL, binary, PREC_FACTOR},
 	[TOKEN_PERCENT] 		= {NULL, binary, PREC_FACTOR},
+	[TOKEN_PIPE]			= {NULL, or_, PREC_OR},
+	[TOKEN_AMPERSAND]		= {NULL, and_, PREC_AND},
+	[TOKEN_QUESTION]		= {NULL, ternary, PREC_ASSIGNMENT},
+	[TOKEN_COLON]			= {NULL, NULL, PREC_NONE},
 	[TOKEN_BANG]			= {unary, NULL, PREC_NONE},
 	[TOKEN_BANG_EQUAL] 		= {NULL, binary, PREC_EQUALITY},
 	[TOKEN_EQUAL] 			= {NULL, binary, PREC_COMPARISON},

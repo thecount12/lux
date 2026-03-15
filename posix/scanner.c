@@ -237,6 +237,10 @@ Token scanToken() {
 		case '>':
 			return makeToken(
 				match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
+		case '|': return makeToken(TOKEN_PIPE);
+		case '&': return makeToken(TOKEN_AMPERSAND);
+		case '?': return makeToken(TOKEN_QUESTION);
+		case ':': return makeToken(TOKEN_COLON);
 		case '"': return string();
 	}
 
