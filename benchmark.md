@@ -56,16 +56,16 @@ Runner: `python3 benchmark/run_bench.py` (9 repeats, 200,000 iterations each)
 |---|---|---:|
 | Python | macOS | 0.966097 (median of 9, 200k rounds) |
 | POSIX C | macOS | 0.000002 (median of 9, 200k rounds) |
-| Lux POSIX | macOS | 1.721212 (median of 9, 200k rounds) |
-| Plan 9 C | Plan 9 | 0.008283 (200k rounds) |
-| Plan 9 C | Plan 9 | 0.004334 (100k rounds) |
-| Lux Plan 9 | Plan 9 | 2.677545 (200k rounds) |
+| Lux POSIX | macOS | 0.561555 (median of 9, 200k rounds, OPT=-O2) |
+| Plan 9 C | Plan 9 | 0.006700 (200k rounds, fib_bench_plan9_opt.c) |
+| Plan 9 C | Plan 9 | 0.003350 (100k rounds, fib_bench_plan9_opt.c) |
+| Lux Plan 9 | Plan 9 | 2.647785 (200k rounds) |
 
 Scaling Notes:
-- Plan 9 C scales linearly: 100k ROUNDS → 4.33 ms, 200k ROUNDS → 8.28 ms (~2.0× linear).
-- POSIX C is still ~4100× faster than Plan 9 C per iteration in the harness.
-- Python is ~1.78× slower than Lux POSIX.
-- Lux Plan 9 is ~1.56× slower than Lux POSIX.
+- Plan 9 C scales linearly: 100k ROUNDS → 3.35 ms, 200k ROUNDS → 6.7 ms (~2.0× linear, fib_bench_plan9_opt.c).
+- POSIX C is ~3350× faster than Plan 9 C per iteration (opt harness).
+- Python is ~1.72× slower than Lux POSIX.
+- Lux Plan 9 is ~4.7× slower than Lux POSIX (Lux POSIX now built with OPT=-O2).
 
 ## Plan 9 C Performance Analysis
 
