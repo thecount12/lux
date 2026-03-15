@@ -8,6 +8,15 @@
 #include "compiler.h"
 #include "debug.h"
 #include "table.h"
+/* Forward declarations for dict natives (avoid pulling types.h into vm.c) */
+Value dictInitNative(int argCount, Value* args);
+Value dictPutNative(int argCount, Value* args);
+Value dictGetNative(int argCount, Value* args);
+Value dictHasNative(int argCount, Value* args);
+Value dictRemoveNative(int argCount, Value* args);
+Value dictSizeNative(int argCount, Value* args);
+Value dictClearNative(int argCount, Value* args);
+Value dictIterNative(int argCount, Value* args);
 #include <libsec.h>
 
 /* SHA-256 produces 32 bytes */
@@ -2141,6 +2150,7 @@ getMimeType(char* path)
 
 static ObjClass* serverResClass;
 static ObjClass* serverClass;
+static ObjClass* dictClass;
 
 static bool call(ObjClosure* closure, int argCount);
 static bool callValue(Value callee, int argCount);
@@ -3387,6 +3397,19 @@ initVM(void)
 	tableSet(&serverClass->methods, copyString("start", 5), OBJ_VAL(newNative(serverStartNative)));
 	push(OBJ_VAL(copyString("Server", 6)));
 	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(serverClass));
+	pop();
+
+	dictClass = newClass(copyString("Dict", 4));
+	tableSet(&dictClass->methods, vm.initString, OBJ_VAL(newNative(dictInitNative)));
+	tableSet(&dictClass->methods, copyString("put", 3), OBJ_VAL(newNative(dictPutNative)));
+	tableSet(&dictClass->methods, copyString("get", 3), OBJ_VAL(newNative(dictGetNative)));
+	tableSet(&dictClass->methods, copyString("has", 3), OBJ_VAL(newNative(dictHasNative)));
+	tableSet(&dictClass->methods, copyString("remove", 6), OBJ_VAL(newNative(dictRemoveNative)));
+	tableSet(&dictClass->methods, copyString("size", 4), OBJ_VAL(newNative(dictSizeNative)));
+	tableSet(&dictClass->methods, copyString("clear", 5), OBJ_VAL(newNative(dictClearNative)));
+	tableSet(&dictClass->methods, copyString("iter", 4), OBJ_VAL(newNative(dictIterNative)));
+	push(OBJ_VAL(copyString("Dict", 4)));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(dictClass));
 	pop();
 
 	defineNative("assert", assertNative);
