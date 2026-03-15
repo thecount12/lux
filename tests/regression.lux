@@ -1,0 +1,45 @@
+// Quick regression smoke test (exclude float64 functionality)
+print "=== Regression: quick smoke (no float64) ===";
+
+// Basic arithmetic and strings
+assert(1 + 1 == 2, "math.basic");
+assert(len("hello") == 5, "string.len");
+
+// Arrays
+var arr = [1, 2, 3];
+assert(arr.length == 3, "array.length");
+arr[1] = 20;
+assert(arr[1] == 20, "array.set_get");
+
+// Classes and methods
+class Counter {
+    init(v) { this.v = v; }
+    inc() { this.v = this.v + 1; return this.v; }
+}
+var c = Counter(10);
+assert(c.inc() == 11, "class.method.inc");
+
+// Closures
+fun makeCounter() {
+    var n = 0;
+    fun inc() { n = n + 1; return n; }
+    return inc;
+}
+var ctr = makeCounter();
+assert(ctr() == 1, "closure.first");
+assert(ctr() == 2, "closure.second");
+
+// JSON round-trip (start from a JSON string)
+var obj = "{\"x\": 42}";
+var parsed = parseJSON(obj);
+print "test json";
+print parsed.x;
+assert(parsed.x == 42, "json.roundtrip");
+
+// File I/O (write/read within tests/ to avoid repo root pollution)
+
+assert(writeFile("../tests/tmp_reg_out.txt", "ok"), "file.write");
+var out = readFile("../tests/tmp_reg_out.txt");
+assert(out == "ok", "file.read");
+print "=== Regression smoke passed ===";
+
