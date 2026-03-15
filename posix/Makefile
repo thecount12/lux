@@ -65,19 +65,16 @@ endif
 TARGET = lux
 FMT_TARGET = luxfmt
 TEST_TARGET = luxtest
-DOC_TARGET = luxdoc
 
 # Define the source files
 SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c
 FMT_SRC = luxfmt.c
 TEST_SRC = luxtest.c
-DOC_SRC = luxdoc.c
 
 # Automatically determine object files from source files
 OBJS = $(SRCS:.c=.o)
 FMT_OBJ = $(FMT_SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
-DOC_OBJ = $(DOC_SRC:.c=.o)
 
 # Define the header files for dependency tracking
 DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h
@@ -91,10 +88,6 @@ $(FMT_TARGET): $(FMT_OBJ)
 
 # Build the test runner utility
 $(TEST_TARGET): $(TEST_OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
-
-# Build the documentation generator utility
-$(DOC_TARGET): $(DOC_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@
 
 # Rule to link the object files into the executable
@@ -120,10 +113,18 @@ LUXCHECK_OBJ = $(LUXCHECK_SRC:.c=.o)
 $(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o vm.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# Build the luxlint utility
+LUXLINT_TARGET = luxlint
+LUXLINT_SRC = luxlint.c
+LUXLINT_OBJ = $(LUXLINT_SRC:.c=.o)
+
+$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o vm.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # Phony targets don't create a file of the same name
-.PHONY: all clean $(FMT_TARGET) $(TEST_TARGET) $(DOC_TARGET) $(LUXCHECK_TARGET)
+.PHONY: all clean $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
 
 # Rule to clean up generated files
 clean:
-	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(DOC_OBJ) $(LUXCHECK_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(DOC_TARGET) $(LUXCHECK_TARGET)
+	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
 

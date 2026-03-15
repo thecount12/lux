@@ -14,7 +14,7 @@ cd posix
 make              # Build lux interpreter (default)
 make luxfmt       # Build code formatter
 make luxtest      # Build test runner
-make luxdoc       # Build documentation generator
+make luxlint      # Build linter (unused vars, unreachable code, etc.)
 make clean        # Clean object files and binaries
 ```
 
@@ -131,10 +131,17 @@ The resulting binary is `8.out`. Run:
 ./luxtest tests/
 ```
 
+**luxlint (linter):**
+```bash
+rc luxlint.rc
+./luxlint myfile.lux
+```
+
 Using `$O` and `$objtype` variables (more portable):
 ```bash
 $objtype^c luxfmt_plan9.c
 $objtype^l -o luxfmt luxfmt_plan9.$O
+rc luxlint.rc
 ```
 
 ### Plan 9 Compiler Notes

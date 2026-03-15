@@ -6,10 +6,25 @@
 #include "compiler.h"
 #include "memory.h"
 #include "scanner.h"
+#include "table.h"
 
 #ifdef DEBUG_PRINT_CODE
 #include "debug.h"
 #endif
+
+/* Lint state (when opts && opts->lint) */
+#define MAX_REACHABLE_DEPTH 64
+static CompileOptions* lintOpts = NULL;
+static Table lintGlobals;
+static bool lintReachable = true;
+static bool lintReachableStack[MAX_REACHABLE_DEPTH];
+static int lintReachableDepth = 0;
+
+/* Encode global info: (line << 8) | (type << 1) | used. type: 0=var, 1=fun, 2=class */
+#define LINT_LINE(v) ((int)(AS_NUMBER(v)) >> 8)
+#define LINT_TYPE(v) (((int)(AS_NUMBER(v)) >> 1) & 3)
+#define LINT_USED(v) ((int)(AS_NUMBER(v)) & 1)
+#define LINT_VAL(line, type, used) NUMBER_VAL((double)(((line) << 8) | ((type) << 1) | (used)))
 
 typedef struct {
 	Token current;
@@ -44,6 +59,7 @@ typedef struct {
 	Token name;
 	int depth;
 	bool isCaptured;
+	bool used;  /* for lint: variable was read or written */
 } Local;
 
 typedef struct {
@@ -113,6 +129,21 @@ static void errorAtCurrent(const char* message) {
 	errorAt(&parser.current, message);
 }
 
+static void warnAt(Token* token, const char* message) {
+	if (!lintOpts || !lintOpts->lint) return;
+	lintOpts->warningCount++;
+	fprintf(stderr, "[line %d] Warning", token->line);
+	if (token->type != TOKEN_EOF && token->type != TOKEN_ERROR && token->length > 0) {
+		fprintf(stderr, " at '%.*s'", token->length, token->start);
+	}
+	fprintf(stderr, ": %s\n", message);
+}
+
+static void warnAtLine(int line, const char* message) {
+	if (!lintOpts || !lintOpts->lint) return;
+	lintOpts->warningCount++;
+	fprintf(stderr, "[line %d] Warning: %s\n", line, message);
+}
 
 static void advance() {
 	parser.previous = parser.current;
@@ -231,6 +262,7 @@ static void initCompiler(Compiler* compiler, FunctionType type) {
 		Local* local = &current->locals[current->localCount++];
 		local->depth = 0;
 		local->isCaptured = false;
+		local->used = true;  /* this: always "used" */
 		local->name.start = "this";
 		local->name.length = 4;
 	} else if (type == TYPE_FUNCTION || type == TYPE_SCRIPT) {
@@ -238,6 +270,7 @@ static void initCompiler(Compiler* compiler, FunctionType type) {
 		Local* local = &current->locals[current->localCount++];
 		local->depth = 0;
 		local->isCaptured = false;
+		local->used = true;  /* slot 0: not a real variable */
 		local->name.start = "";
 		local->name.length = 0;
 	}
@@ -268,7 +301,11 @@ static void endScope() {
 	while (current->localCount > 0 &&
 		current->locals[current->localCount -1].depth >
 			current->scopeDepth){
-		if (current->locals[current->localCount - 1].isCaptured) {
+		Local* local = &current->locals[current->localCount - 1];
+		if (lintOpts && lintOpts->lint && !local->used && local->name.length > 0) {
+			warnAt(&local->name, "Unused variable.");
+		}
+		if (local->isCaptured) {
 			emitByte(OP_CLOSE_UPVALUE);
 		} else {
 			emitByte(OP_POP);
@@ -415,6 +452,7 @@ static void returnStatement() {
 		consume(TOKEN_SEMICOLON, "Expect ';' after return value.");
 		emitByte(OP_RETURN);
 	}
+	if (lintOpts && lintOpts->lint) lintReachable = false;
 }
 
 static void whileStatement() {
@@ -542,15 +580,26 @@ static void namedVariable(Token name, bool canAssign) {
 
 	int arg = resolveLocal(current, &name);
 	if (arg != -1) {
+		if (lintOpts && lintOpts->lint) current->locals[arg].used = true;
 		getOp = OP_GET_LOCAL;
 		setOp = OP_SET_LOCAL;
 	} else if ((arg = resolveUpvalue(current, &name)) != -1) {
+		if (lintOpts && lintOpts->lint && current->upvalues[arg].isLocal) {
+			current->enclosing->locals[current->upvalues[arg].index].used = true;
+		}
 		getOp = OP_GET_UPVALUE;
 		setOp = OP_SET_UPVALUE;
 	} else {
 		arg = identifierConstant(&name);
 		getOp = OP_GET_GLOBAL;
 		setOp = OP_SET_GLOBAL;
+		if (lintOpts && lintOpts->lint) {
+			ObjString* key = copyString(name.start, name.length);
+			Value val;
+			if (tableGet(&lintGlobals, key, &val)) {
+				tableSet(&lintGlobals, key, LINT_VAL(LINT_LINE(val), LINT_TYPE(val), 1));
+			}
+		}
 	}
 
 	if (canAssign && match(TOKEN_EQUAL)) {
@@ -764,6 +813,7 @@ static void addLocal(Token name) {
 	local->name = name;
 	local->depth = -1;
 	local->isCaptured = false;
+	local->used = false;
 }	
 
 static void declareVariable() {
@@ -778,6 +828,14 @@ static void declareVariable() {
 
 		if (identifiersEqual(name, &local->name)) {
 			error("Already a variable with this name in this scope.");
+		}
+	}
+
+	if (lintOpts && lintOpts->lint) {
+		ObjString* key = copyString(name->start, name->length);
+		Value dummy;
+		if (tableGet(&lintGlobals, key, &dummy)) {
+			warnAt(name, "Local variable shadows global.");
 		}
 	}
 
@@ -797,13 +855,30 @@ static void markInitialized() {
 		current->scopeDepth;
 }
 
-static void defineVariable(uint8_t global) {
+static void defineVariableWithType(uint8_t global, int type, int line) {
 	if (current->scopeDepth > 0) {
 		markInitialized();
 		return;
 	}
 
+	if (lintOpts && lintOpts->lint) {
+		ObjString* key = AS_STRING(currentChunk()->constants.values[global]);
+		Value existing;
+		if (tableGet(&lintGlobals, key, &existing)) {
+			if (type == 1) {
+				warnAtLine(line, "Duplicate function name.");
+			} else {
+				warnAtLine(line, "Duplicate global name.");
+			}
+		}
+		tableSet(&lintGlobals, key, LINT_VAL(line, type, 0));
+	}
+
 	emitBytes(OP_DEFINE_GLOBAL, global);
+}
+
+static void defineVariable(uint8_t global) {
+	defineVariableWithType(global, 0, parser.previous.line);
 }
 
 static uint8_t argumentList() {
@@ -839,10 +914,15 @@ static void expression() {
 }
 
 static void block() {
+	if (lintOpts && lintOpts->lint && lintReachableDepth < MAX_REACHABLE_DEPTH) {
+		lintReachableStack[lintReachableDepth++] = lintReachable;
+	}
 	while (!check(TOKEN_RIGHT_BRACE) && !check(TOKEN_EOF)) {
 		declaration();
 	}
-
+	if (lintOpts && lintOpts->lint && lintReachableDepth > 0) {
+		lintReachable = lintReachableStack[--lintReachableDepth];
+	}
 	consume(TOKEN_RIGHT_BRACE, "Expect '}' after block.");
 }
 
@@ -896,7 +976,7 @@ static void classDeclaration() {
 	declareVariable();
 
 	emitBytes(OP_CLASS, nameConstant);
-	defineVariable(nameConstant);
+	defineVariableWithType(nameConstant, 2, className.line);
 
 	ClassCompiler classCompiler;
 	classCompiler.hasSuperclass = false;
@@ -913,6 +993,7 @@ static void classDeclaration() {
 
 		beginScope();
 		addLocal(syntheticToken("super"));
+		current->locals[current->localCount - 1].used = true;  /* super: always "used" */
 		defineVariable(0);
 
 		namedVariable(className, false);
@@ -937,13 +1018,15 @@ static void classDeclaration() {
 
 static void funDeclaration() {
 	uint8_t global = parseVariable("Expect function name.");
+	int line = parser.previous.line;
 	markInitialized();
 	function(TYPE_FUNCTION);
-	defineVariable(global);
+	defineVariableWithType(global, 1, line);
 }
 
 static void varDeclaration() {
 	uint8_t global = parseVariable("Expect variable name.");
+	int line = parser.previous.line;
 
 	if (match(TOKEN_EQUAL)) {
 		expression();
@@ -952,8 +1035,7 @@ static void varDeclaration() {
 	}
 	consume(TOKEN_SEMICOLON, 
 		"Expect ';' after variable declaration.");
-	//defineVariable(global);
-	defineVariable(global);
+	defineVariableWithType(global, 0, line);
 }
 
 static void expressionStatement() {
@@ -1030,11 +1112,17 @@ static void ifStatement() {
 	patchJump(thenJump);
 	emitByte(OP_POP);
 
-	if (match(TOKEN_ELSE)) statement();
+	if (match(TOKEN_ELSE)) {
+		if (lintOpts && lintOpts->lint) lintReachable = true;
+		statement();
+	}
 	patchJump(elseJump);
 }
 
 static void declaration() {
+	if (lintOpts && lintOpts->lint && !lintReachable) {
+		warnAtLine(parser.current.line, "Unreachable code after return.");
+	}
 	if (match(TOKEN_CLASS)) {
 		classDeclaration();
 	} else if (match(TOKEN_FUN)) {
@@ -1072,7 +1160,28 @@ static void statement() {
 	}
 }
 
+static void reportUnusedGlobal(ObjString* key, Value value, void* arg) {
+	(void)arg;
+	if (!LINT_USED(value)) {
+		char buf[256];
+		snprintf(buf, sizeof(buf), "Unused variable '%.*s'.", key->length, key->chars);
+		warnAtLine(LINT_LINE(value), buf);
+	}
+}
+
 ObjFunction* compile(const char* source) {
+	return compileWithOptions(source, NULL);
+}
+
+ObjFunction* compileWithOptions(const char* source, CompileOptions* opts) {
+	lintOpts = opts;
+	if (opts && opts->lint) {
+		opts->warningCount = 0;
+		initTable(&lintGlobals);
+		lintReachable = true;
+		lintReachableDepth = 0;
+	}
+
 	initScanner(source);
 	Compiler compiler;
 	initCompiler(&compiler, TYPE_SCRIPT);
@@ -1086,6 +1195,13 @@ ObjFunction* compile(const char* source) {
 	}
 
 	ObjFunction* function = endCompiler();
+
+	if (opts && opts->lint && !parser.hadError) {
+		tableForEach(&lintGlobals, reportUnusedGlobal, NULL);
+		freeTable(&lintGlobals);
+	}
+	lintOpts = NULL;
+
 	return parser.hadError ? NULL : function;
 }
 

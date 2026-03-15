@@ -20,6 +20,8 @@ posix/*.o
 posix/lux
 posix/luxfmt
 posix/luxtest
+posix/luxcheck
+posix/luxlint
 
 # Plan 9 object files
 *.8

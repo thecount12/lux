@@ -170,7 +170,20 @@ markTable(Table* table)
 {
 	for (int i = 0; i < table->capacity; i++) {
 		Entry* entry = &table->entries[i];
-		markObject((Obj*)entry->key);
-		markValue(entry->value);
+		if (entry->key != nil) {
+			markObject((Obj*)entry->key);
+			markValue(entry->value);
+		}
+	}
+}
+
+void 
+tableForEach(Table* table, void (*fn)(ObjString* key, Value value, void* arg), void* arg)
+{
+	for (int i = 0; i < table->capacity; i++) {
+		Entry* entry = &table->entries[i];
+		if (entry->key != nil) {
+			fn(entry->key, entry->value, arg);
+		}
 	}
 }
