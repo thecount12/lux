@@ -68,7 +68,7 @@ FMT_TARGET = luxfmt
 TEST_TARGET = luxtest
 
 # Define the source files
-SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c
+SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c dict.c dict_native.c
 FMT_SRC = luxfmt.c
 TEST_SRC = luxtest.c
 
@@ -78,7 +78,7 @@ FMT_OBJ = $(FMT_SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 
 # Define the header files for dependency tracking
-DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h
+DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h
 
 # The default target, which builds the executable
 all: $(TARGET)

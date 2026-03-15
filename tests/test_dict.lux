@@ -1,0 +1,67 @@
+/* dict.lux - Example usage of the native Dict class.
+ *
+ * Demonstrates creating a Dict, putting/getting string values, checking
+ * membership, removing keys, overwriting values, and clearing the dict.
+ */
+print "=== Dict example ===";
+
+var d = Dict();
+print "put a->apple";
+d.put("a", "apple");
+print "put b->banana";
+d.put("b", "banana");
+
+print "a -> " + d.get("a");
+
+if (d.has("c")) {
+  print "has c";
+} else {
+  print "does not have c";
+}
+
+print "size: " + d.size();
+
+print "remove b -> " + d.remove("b");
+print "size after remove: " + d.size();
+
+print "overwrite a -> apricot";
+d.put("a", "apricot");
+print "a -> " + d.get("a");
+
+d.clear();
+print "size after clear: " + d.size();
+
+print "=== Address book example ===";
+var book = Dict();
+var alice = "{\"name\":\"Alice\",\"email\":\"alice@example.com\",\"phone\":\"555-0101\"}";
+var bob = "{\"name\":\"Bob\",\"email\":\"bob@example.com\",\"phone\":\"555-0202\"}";
+
+book.put("alice", alice);
+book.put("bob", bob);
+
+var entries = book.iter();
+var jsonText = "{";
+var first = 1;
+var k = 0;
+var count = entries.length;
+while (k < count) {
+  var entry = entries[k];
+  if (first == 0) {
+    jsonText = jsonText + ",";
+  } else {
+    first = 0;
+  }
+  jsonText = jsonText + "\"" + entry.key + "\":" + entry.value;
+  k = k + 1;
+}
+jsonText = jsonText + "}";
+print "address book JSON: " + jsonText;
+
+print "=== Json book exampe ===";
+var addressBook = parseJSON("{}");
+addressBook.alice = parseJSON(book.get("alice"));
+addressBook.bob = parseJSON(book.get("bob"));
+
+print "address book JSON: " + toJSON(addressBook);
+
+

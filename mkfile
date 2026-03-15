@@ -11,6 +11,8 @@ OFILES=lux.$O\
 	compiler.$O\
 	object.$O\
 	table.$O\
+	dict.$O\
+	dict_native.$O\
 
 
 HFILES=chunk.h\
@@ -22,6 +24,7 @@ HFILES=chunk.h\
 	compiler.h\
 	object.h\
 	table.h\
+	dict.h\
 
 BIN=$home/bin/$objtype
 

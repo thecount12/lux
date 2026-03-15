@@ -13,11 +13,12 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Modules** — `import "path.lux"` for code organization
 - **Automatic GC** — mark-and-sweep garbage collector
 
-**Standard Library:**
+- **Standard Library:**
 - **File I/O** — read, write, append, list directories
 - **JSON** — parse and serialize
 - **XML** — basic parsing
 - **Strings/Arrays** — slice, find, split, sort, binary search, array concatenation (`+`)
+- **Dictionaries** — native `Dict` class with `put`/`get`/`has`/`remove`/`size`/`clear` plus `iter()` returning an array of `{key, value}` entries
 - **Float64Array** — typed double buffer, dot product (POSIX)
 - **HTTP** — client (GET/POST/PUT) and server
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
@@ -423,6 +424,28 @@ for (var j = 0; j < xmlResponse.length; j = j + 1) {
     print xmlResponse[j];
 }
 ```
+
+### Native Dictionary (`Dict`)
+Lux now exposes a native `Dict` class for string→string maps. The class supports `put`, `get`, `has`, `remove`, `size`, `clear`, and `iter()`. Calling `iter()` returns an array of `{key, value}` objects that you can loop over from Lux.
+
+```lux
+var book = Dict();
+book.put("alice", "{\"name\":\"Alice\",\"email\":\"alice@example.com\"}");
+book.put("bob",   "{\"name\":\"Bob\",\"email\":\"bob@example.com\"}");
+
+var entries = book.iter();
+var table = {};
+var i = 0;
+while (i < entries.length) {
+  var entry = entries[i];
+  table[entry.key] = parseJSON(entry.value);
+  i = i + 1;
+}
+
+print toJSON(table);
+```
+
+The iterator is handy for rebuilding structured data or producing JSON output without importing helper libraries.
 
 ### Modules and Imports
 ```lux
@@ -1465,7 +1488,7 @@ To disable NaN boxing, edit `common.h` and comment out:
 6. **AWS S3 integration**: Direct S3 access with `s3ListObjects`, `s3GetObject`, `s3PutObject` using AWS credentials or STS tokens
 7. **Error handling**: File, JSON, HTTP, and S3 operations return `nil` or `false` on failure - always check return values
 8. **Arrays**: Native array support with bracket syntax - create with `[1, 2, 3]`, access with `arr[0]`, get size with `arr.length`. **Important**: Arrays have fixed size - you can only modify existing indices, not add new ones. To build arrays dynamically, pre-allocate with nil values.
-9. **Dictionary pattern**: Use object properties for key-value storage (no built-in hashmap/dictionary type)
+9. **Dict class**: Use the native `Dict` class for efficient string→string maps and caches (`put`, `get`, `has`, `remove`, `size`, `clear`, `iter()`).
 10. **No exceptions**: Use return values to indicate success/failure
 11. **Global scope**: All functions and classes are global
 12. **Numeric addition**: `+` performs addition when both operands are numbers
