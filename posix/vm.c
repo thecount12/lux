@@ -1388,6 +1388,7 @@ static Value parseXmlNative(int argCount, Value* args) {
 static Value getAwsTimestampNative(int argCount, Value* args) {
 	if (argCount != 0)
 		return NIL_VAL;
+	(void)args;
 	
 	time_t now = time(NULL);
 	struct tm* tm = gmtime(&now);
@@ -2365,6 +2366,8 @@ static Value _mwChainReq;
 static Value _mwChainRes;
 
 static Value resNextNative(int argCount, Value* args) {
+	(void)argCount;
+	(void)args;
 	if (_mwChainMiddlewares == NULL) return NIL_VAL;
 	_mwChainIndex++;
 	if (_mwChainIndex < _mwChainMiddlewares->count) {
@@ -3067,6 +3070,8 @@ static Value dbConnectNative(int argCount, Value* args) {
 	
 	char* driver = AS_CSTRING(args[0]);
 	char* connString = AS_CSTRING(args[1]);
+	(void)driver;
+	(void)connString;
 	DbConnection* conn = NULL;
 	
 	#ifdef DB_SQLITE
@@ -3372,6 +3377,7 @@ static Value dbQueryNative(int argCount, Value* args) {
 	
 	DbConnection* conn = (DbConnection*)(uintptr_t)AS_NUMBER(args[0]);
 	char* sql = AS_CSTRING(args[1]);
+	(void)sql;
 	
 	if (conn == NULL) {
 		return NIL_VAL;
@@ -3793,7 +3799,8 @@ static bool isFalsey(Value value) {
 	return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
 
-static void concatenate() {
+static void __attribute__((unused))
+concatenate() {
 	ObjString* b = AS_STRING(peek(0));
 	ObjString* a = AS_STRING(peek(1));
 

@@ -1001,8 +1001,8 @@ arrayBinarySearchNative(int argCount, Value* args)
 static Value
 float64AvailableNative(int argCount, Value* args)
 {
-	argCount = argCount;
-	args = args;
+	USED(argCount);
+	USED(args);
 	return BOOL_VAL(0);
 }
 
@@ -2420,7 +2420,7 @@ serverStartNative(int argCount, Value* args)
 			continue;
 
 		char buffer[8192];
-		int totalRead = 0;
+		int totalRead;
 		int n;
 
 		n = read(dfd, buffer, sizeof(buffer) - 1);
@@ -2473,8 +2473,6 @@ serverStartNative(int argCount, Value* args)
 			char* content;
 			char* mime;
 			char header[512];
-
-			content = nil;
 			reqPath = req.path;
 			if (strstr(reqPath, "..") == nil) {
 				dirLen = strlen(staticDir);
@@ -2591,8 +2589,6 @@ serverStartNative(int argCount, Value* args)
 		}
 		close(dfd);
 	}
-	close(afd);
-	return BOOL_VAL(true);
 }
 
 /* ========== AWS Signature V4 Implementation ========== */
@@ -3175,7 +3171,7 @@ httpServerNative(int argCount, Value* args)
 		
 		/* Read the request - may need multiple reads for POST body */
 		char buffer[8192];
-		int totalRead = 0;
+		int totalRead;
 		int n;
 		
 		/* Read initial chunk (headers + maybe body) */
@@ -3274,9 +3270,6 @@ httpServerNative(int argCount, Value* args)
 		
 		close(dfd);
 	}
-	
-	close(afd);
-	return BOOL_VAL(true);
 }
 
 
