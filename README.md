@@ -2,6 +2,9 @@
 
 Lux is a dynamically-typed scripting language for system automation, cloud integration, and embedded scripting. Originally written in Plan 9 C, it runs on **macOS, Linux, OpenBSD, and Plan 9**.
 
+## 🌟 Why "Lux"?
+The name **Lux** (Latin for "light") signifies the evolution of this project. While it maintains full parity with the original Lox specification, it has been "enlightened" with new features, better performance, and first-class support for the **Plan 9** operating system.
+
 Built from first principles (inspired by "Crafting Interpreters"), Lux combines a clean language design with modern features: HTTP/HTTPS, cryptography, AWS integration, databases, and file I/O.
 
 ## Features
@@ -13,7 +16,8 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Modules** — `import "path.lux"` for code organization
 - **Automatic GC** — mark-and-sweep garbage collector
 
-- **Standard Library:**
+**Standard Library:**
+
 - **File I/O** — read, write, append, list directories
 - **JSON** — parse and serialize
 - **XML** — basic parsing
