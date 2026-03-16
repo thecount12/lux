@@ -578,6 +578,7 @@ argumentList()
 static void
 and_(bool canAssign)
 {
+	USED(canAssign);
 	int endJump = emitJump(OP_JUMP_IF_FALSE);
 
 	emitByte(OP_POP);
@@ -589,6 +590,7 @@ and_(bool canAssign)
 static void
 binary(bool canAssign)
 {
+	USED(canAssign);
 	TokenType operatorType = parser.previous.type;
 	ParseRule* rule = getRule(operatorType);
 	parsePrecedence((Precedence)(rule->precedence + 1));
@@ -649,6 +651,7 @@ ternary(bool canAssign)
 static void 
 call(bool canAssign) 
 {
+	USED(canAssign);
 	unsigned int argCount = argumentList();
 	emitBytes(OP_CALL, argCount);
 }
@@ -656,6 +659,7 @@ call(bool canAssign)
 static void 
 dot(bool canAssign)
 {
+	USED(canAssign);
 	consume(TOKEN_IDENTIFIER, "Expect property name after '.'.");
 	unsigned char name = identifierConstant(&parser.previous);
 
@@ -674,6 +678,7 @@ dot(bool canAssign)
 static void
 literal(bool canAssign)
 {
+	USED(canAssign);
 	switch (parser.previous.type) {
 		case TOKEN_FALSE: emitByte(OP_FALSE); break;
 		case TOKEN_NIL: emitByte(OP_NIL); break;
@@ -685,6 +690,7 @@ literal(bool canAssign)
 static void
 array(bool canAssign)
 {
+	USED(canAssign);
 	int itemCount = 0;
 	
 	if (!check(TOKEN_RIGHT_BRACKET)) {
@@ -851,6 +857,7 @@ synchronize(void)
 static void
 number(bool canAssign)
 {
+	USED(canAssign);
 	double value = strtod(parser.previous.start, nil);
 	emitConstant(NUMBER_VAL(value));
 }
@@ -858,6 +865,7 @@ number(bool canAssign)
 static void
 or_(bool canAssign)
 {
+	USED(canAssign);
 	int elseJump = emitJump(OP_JUMP_IF_FALSE);
 	int endJump = emitJump(OP_JUMP);
 
@@ -869,6 +877,7 @@ or_(bool canAssign)
 static void
 string(bool canAssign)
 {
+	USED(canAssign);
 	const char *src;
 	int rawLen, outLen, i;
 	char *buf;
@@ -944,7 +953,7 @@ static Token
 syntheticToken(const char* text)
 {
 	Token token;
-	token.start = text;
+	token.start = (char*)text;
 	token.length = (int)strlen(text);
 	return token;
 }
@@ -978,6 +987,7 @@ super_(bool canAssign)
 static void 
 this_(bool canAssign)
 {
+	USED(canAssign);
 	if (currentClass == nil) {
 		error("Cean't use 'this' outside of a class.");
 		return;
@@ -988,6 +998,7 @@ this_(bool canAssign)
 static void
 unary(bool canAssign)
 {
+	USED(canAssign);
 	TokenType operatorType = parser.previous.type;
 	parsePrecedence(PREC_UNARY);
 
