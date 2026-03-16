@@ -1,7 +1,0 @@
-In the C implementation of Lox (clox), you control the internal "debug" output by defining or commenting out specific macros in src/common.h. 1.4.1, 1.4.5
-DEBUG_TRACE_EXECUTION: When enabled, the VM prints the current stack contents and disassembles each instruction as it executes. 1.4.10
-DEBUG_PRINT_CODE: When enabled, the compiler prints the disassembled bytecode for every function it finishes compiling. 1.2.9
-DEBUG_LOG_GC: (Added in later chapters) Prints detailed logs whenever the garbage collector runs. 1.4.4
-To disable them, simply comment out the #define line (e.g., // #define DEBUG_TRACE_EXECUTION).
-
-all of this from ch21

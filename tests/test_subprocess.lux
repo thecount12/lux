@@ -1,8 +1,0 @@
-var out = run("echo hello");
-print out;  // hello
-
-var lines = run("ls -l");
-if (lines != nil) {
-    print lines;
-}
-

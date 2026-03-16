@@ -1,4 +1,0 @@
-help("floor");
-print "";
-print "Testing floor:";
-print floor(3.7);
