@@ -3424,6 +3424,40 @@ exitNative(int argCount, Value* args)
 }
 
 
+static void
+luxExit(int status)
+{
+	if (status == 0) {
+		exits(nil);
+	}
+
+	char msg[32];
+	snprint(msg, sizeof(msg), "exit %d", status);
+	exits(msg);
+}
+
+static Value
+exitNative(int argCount, Value* args)
+{
+	if (argCount > 1) {
+		nativeError("exit() expects 0 or 1 arguments, got %d.", argCount);
+		return NIL_VAL;
+	}
+
+	int status = 0;
+	if (argCount == 1) {
+		if (!IS_NUMBER(args[0])) {
+			nativeError("exit() expects a numeric status code.");
+			return NIL_VAL;
+		}
+		status = (int)AS_NUMBER(args[0]);
+	}
+
+	luxExit(status);
+	return NIL_VAL;
+}
+
+
 static void 
 defineNative(const char* name, NativeFn function)
 {
