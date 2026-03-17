@@ -35,6 +35,7 @@ typedef struct {
 static const NativeDoc kNativeDocs[] = {
 	{"clock", "clock()", "Return process uptime in seconds."},
 	{"epoch", "epoch()", "Return Unix epoch time in seconds (UTC)."},
+	{"exit", "exit([code])", "Terminate the Lux process with an optional numeric status (default 0)."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"writeFile", "writeFile(path, content)", "Write content to a file."},
@@ -3342,6 +3343,40 @@ nativeError(char *format, ...)
 }
 
 
+static void
+luxExit(int status)
+{
+	if (status == 0) {
+		exits(nil);
+	}
+
+	char msg[32];
+	snprint(msg, sizeof(msg), "exit %d", status);
+	exits(msg);
+}
+
+static Value
+exitNative(int argCount, Value* args)
+{
+	if (argCount > 1) {
+		nativeError("exit() expects 0 or 1 arguments, got %d.", argCount);
+		return NIL_VAL;
+	}
+
+	int status = 0;
+	if (argCount == 1) {
+		if (!IS_NUMBER(args[0])) {
+			nativeError("exit() expects a numeric status code.");
+			return NIL_VAL;
+		}
+		status = (int)AS_NUMBER(args[0]);
+	}
+
+	luxExit(status);
+	return NIL_VAL;
+}
+
+
 static void 
 defineNative(const char* name, NativeFn function)
 {
@@ -3410,6 +3445,7 @@ initVM(void)
 	defineNative("epoch", epochNative);
 	defineNative("floor", floorNative);
 	defineNative("help", helpNative);
+	defineNative("exit", exitNative);
 	defineNative("readFile", readFileNative);
 	defineNative("writeFile", writeFileNative);
 	defineNative("appendFile", appendFileNative);

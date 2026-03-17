@@ -599,6 +599,21 @@ dbQuery
     Type: native function
 ```
 
+### Runtime Control
+
+#### `exit([code])` → never returns
+Terminate the Lux runtime immediately. The optional numeric `code` defaults to `0` (success); non-zero values signal failure and make `luxtest`/shell detect an error. On POSIX builds the process exit code matches `code`, while on Plan 9 the interpreter exits with reason `exit <code>`.
+
+```lux
+if (!fileExists("config.json")) {
+    print "Missing config file";
+    exit(1); // abort with failure
+}
+
+// Normal shutdown
+exit();
+```
+
 ### File Operations
 
 Lux includes native file I/O functions for both Plan 9 and POSIX systems:
