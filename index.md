@@ -1,7 +1,7 @@
 # 🚀 LUX
 **The Lox language, enlightened for Plan 9.**
 
-[View on GitHub](https://github.com/thecount12/lux) • [Download v1.0.0](https://github.com/thecount12/lux/releases)
+[View on GitHub](https://github.com/thecount12/lux) • [Download v1.0.3](https://github.com/thecount12/lux/releases)
 
 ---
 
