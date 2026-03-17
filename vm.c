@@ -65,6 +65,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"httpServer", "httpServer(port, handler)", "Start a simple HTTP server."},
 	{"sha256", "sha256(text)", "Compute SHA-256 hash."},
 	{"hmacSha256", "hmacSha256(key, text)", "Compute HMAC-SHA256."},
+	{"typeof", "typeof(value)", "Return the runtime type name or class name for objects."},
 	{"awsSignRequest", "awsSignRequest(method, path, query, headers, payloadHash, region, service, accessKey, secretKey)", "Build AWS Signature V4 headers."},
 	{"getAwsTimestamp", "getAwsTimestamp()", "Return AWS timestamp fields."},
 	{"s3ListObjects", "s3ListObjects(endpoint, bucket, prefix, region, accessKey, secretKey)", "List S3 objects."},
@@ -113,7 +114,7 @@ isCallableGlobal(Value value)
 static const char*
 callableCategory(const char* name)
 {
-	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0)
+	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0 || strcmp(name, "typeof") == 0 || strcmp(name, "exit") == 0)
 		return "Core";
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
@@ -143,6 +144,53 @@ callableCategory(const char* name)
 	    strcmp(name, "dbClose") == 0)
 		return "Database";
 	return "User or Other";
+}
+
+static Value
+typeLiteral(const char* literal)
+{
+	int len = 0;
+	while (literal[len] != '\0')
+		len++;
+	return OBJ_VAL(copyString(literal, len));
+}
+
+static Value
+typeofNative(int argCount, Value* args)
+{
+	if (argCount != 1)
+		return NIL_VAL;
+
+	Value value = args[0];
+	if (IS_BOOL(value))
+		return typeLiteral("bool");
+	if (IS_NIL(value))
+		return typeLiteral("nil");
+	if (IS_NUMBER(value))
+		return typeLiteral("number");
+	if (IS_STRING(value))
+		return typeLiteral("string");
+	if (IS_ARRAY(value))
+		return typeLiteral("array");
+	if (IS_CLASS(value))
+		return typeLiteral("class");
+	if (IS_CLOSURE(value))
+		return typeLiteral("closure");
+	if (IS_FUNCTION(value))
+		return typeLiteral("function");
+	if (IS_NATIVE(value))
+		return typeLiteral("native");
+	if (IS_BOUND_METHOD(value))
+		return typeLiteral("bound_method");
+	if (IS_INSTANCE(value)) {
+		ObjInstance* inst = AS_INSTANCE(value);
+		if (inst->klass != nil && inst->klass->name != nil)
+			return OBJ_VAL(copyString(inst->klass->name->chars, inst->klass->name->length));
+		return typeLiteral("object");
+	}
+	if (IS_OBJ(value))
+		return typeLiteral("object");
+	return typeLiteral("value");
 }
 
 static Value
@@ -3342,6 +3390,39 @@ nativeError(char *format, ...)
 	}
 }
 
+static void
+luxExit(int status)
+{
+	if (status == 0) {
+		exits(nil);
+	}
+
+	char msg[32];
+	snprint(msg, sizeof(msg), "exit %d", status);
+	exits(msg);
+}
+
+static Value
+exitNative(int argCount, Value* args)
+{
+	if (argCount > 1) {
+		nativeError("exit() expects 0 or 1 arguments, got %d.", argCount);
+		return NIL_VAL;
+	}
+
+	int status = 0;
+	if (argCount == 1) {
+		if (!IS_NUMBER(args[0])) {
+			nativeError("exit() expects a numeric status code.");
+			return NIL_VAL;
+		}
+		status = (int)AS_NUMBER(args[0]);
+	}
+
+	luxExit(status);
+	return NIL_VAL;
+}
+
 
 static void
 luxExit(int status)
@@ -3455,6 +3536,7 @@ initVM(void)
 	defineNative("listDir", listDirNative);
 	defineNative("run", runNative);
 	defineNative("len", lenNative);
+	defineNative("typeof", typeofNative);
 	defineNative("strFind", strFindNative);
 	defineNative("strSlice", strSliceNative);
 	defineNative("strStartsWithAt", strStartsWithAtNative);
@@ -3534,24 +3616,34 @@ call(ObjClosure* closure, int argCount)
 static bool callValue(Value callee, int argCount) {
 	if (IS_OBJ(callee)) {
 		switch (OBJ_TYPE(callee)) {
-			case OBJ_BOUND_METHOD: {
-				ObjBoundMethod* bound = AS_BOUND_METHOD(callee);
-				vm.stackTop[-argCount -1] = bound->receiver;
-				return call(bound->method, argCount + 1);
-			}
-			case OBJ_CLASS: {
-				ObjClass* klass = AS_CLASS(callee);
-				vm.stackTop[-argCount -1] = OBJ_VAL(newInstance(klass));
-				Value initializer;
-				if (tableGet(&klass->methods, vm.initString, &initializer)) {
-					push(initializer);
-					return callValue(initializer, argCount + 1);
-				} else if (argCount != 0) {
-					runtimeError("Expected 0 arguments but got %d.", argCount);
-					return false;
+		case OBJ_BOUND_METHOD: {
+			ObjBoundMethod* bound = AS_BOUND_METHOD(callee);
+			vm.stackTop[-argCount -1] = bound->receiver;
+			return call(bound->method, argCount);
+		}
+		case OBJ_CLASS: {
+			ObjClass* klass = AS_CLASS(callee);
+			vm.stackTop[-argCount -1] = OBJ_VAL(newInstance(klass));
+			Value initializer;
+			if (tableGet(&klass->methods, vm.initString, &initializer)) {
+				if (IS_NATIVE(initializer)) {
+					NativeFn fn = AS_NATIVE(initializer);
+					fn(argCount + 1, vm.stackTop - argCount - 1);
+					vm.stackTop -= argCount;
+					if (vm.nativePanic) {
+						vm.nativePanic = 0;
+						runtimeError("%s", vm.nativePanicMsg);
+						return false;
+					}
+					return true;
 				}
-				return true;
+				return call(AS_CLOSURE(initializer), argCount);
+			} else if (argCount != 0) {
+				runtimeError("Expected 0 arguments but got %d.", argCount);
+				return false;
 			}
+			return true;
+		}
 			case OBJ_CLOSURE:
 				return call(AS_CLOSURE(callee), argCount);
 			case OBJ_NATIVE: {
@@ -3600,8 +3692,7 @@ invokeFromClass(ObjClass* klass, ObjString* name, int argCount)
 		push(result);
 		return true;
 	}
-	push(method);
-	return call(AS_CLOSURE(method), argCount + 1);
+	return call(AS_CLOSURE(method), argCount);
 }
 
 static bool 
