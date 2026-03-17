@@ -730,6 +730,7 @@ subscript(bool canAssign)
 static void
 grouping(bool canAssign)
 {
+	USED(canAssign);
 	expression();
 	consume(TOKEN_RIGHT_PAREN, "expect ')' after expression.");
 }
