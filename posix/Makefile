@@ -111,7 +111,7 @@ LUXCHECK_TARGET = luxcheck
 LUXCHECK_SRC = luxcheck.c
 LUXCHECK_OBJ = $(LUXCHECK_SRC:.c=.o)
 
-$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o vm.o
+$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o vm.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Build the luxlint utility
@@ -119,7 +119,7 @@ LUXLINT_TARGET = luxlint
 LUXLINT_SRC = luxlint.c
 LUXLINT_OBJ = $(LUXLINT_SRC:.c=.o)
 
-$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o vm.o
+$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o vm.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Phony targets don't create a file of the same name

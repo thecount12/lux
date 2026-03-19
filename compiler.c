@@ -791,6 +791,13 @@ whileStatement()
 
 	int exitJump = emitJump(OP_JUMP_IF_FALSE);
 	emitByte(OP_POP);
+	/* If linting enabled, warn when the while body is not a braced block.
+	 * Single-statement while bodies are valid but often error-prone. */
+	if (lintOpts != nil && lintOpts->lint) {
+		if (parser.current.type != TOKEN_LEFT_BRACE) {
+			warnAtLine(parser.previous.line, "While body should be wrapped in '{ }'.");
+		}
+	}
 	statement();
 	emitLoop(loopStart);
 

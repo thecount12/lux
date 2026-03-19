@@ -18,6 +18,8 @@ CC=$O^c
 LD=$O^l
 # Compile the main file
 $CC -FVw luxlint.c
+$CC -FVw dict.c
+$CC -FVw dict_native.c
 
 # Link all required objects either .8 or .6 files
-$LD -o luxlint luxlint.$O compiler.$O scanner.$O object.$O memory.$O value.$O chunk.$O table.$O vm.$O
+$LD -o luxlint luxlint.$O compiler.$O scanner.$O object.$O memory.$O value.$O chunk.$O table.$O dict.$O dict_native.$O vm.$O

@@ -486,6 +486,13 @@ static void whileStatement() {
 
 	int exitJump = emitJump(OP_JUMP_IF_FALSE);
 	emitByte(OP_POP);
+	/* If linting enabled, warn when the while body is not a braced block.
+	 * Single-statement while bodies are valid but often error-prone. */
+	if (lintOpts && lintOpts->lint) {
+		if (parser.current.type != TOKEN_LEFT_BRACE) {
+			warnAtLine(parser.previous.line, "While body should be wrapped in '{ }'.");
+		}
+	}
 	statement();
 	emitLoop(loopStart);
 
@@ -1103,6 +1110,12 @@ static void forStatement() {
 		patchJump(bodyJump);
 	}
 
+	/* If linting enabled, warn when the for body is not a braced block. */
+	if (lintOpts && lintOpts->lint) {
+		if (parser.current.type != TOKEN_LEFT_BRACE) {
+			warnAtLine(parser.previous.line, "For body should be wrapped in '{ }'.");
+		}
+	}
 	statement();
 	emitLoop(loopStart);
 	
@@ -1127,6 +1140,12 @@ static void ifStatement() {
 
 	int thenJump = emitJump(OP_JUMP_IF_FALSE);
 	emitByte(OP_POP);
+	/* If linting enabled, warn when the 'then' body is not a braced block. */
+	if (lintOpts && lintOpts->lint) {
+		if (parser.current.type != TOKEN_LEFT_BRACE) {
+			warnAtLine(parser.previous.line, "If 'then' body should be wrapped in '{ }'.");
+		}
+	}
 	statement();
 
 	int elseJump = emitJump(OP_JUMP);
@@ -1136,6 +1155,12 @@ static void ifStatement() {
 
 	if (match(TOKEN_ELSE)) {
 		if (lintOpts && lintOpts->lint) lintReachable = true;
+		/* Warn when the else body is not a braced block. */
+		if (lintOpts && lintOpts->lint) {
+			if (parser.current.type != TOKEN_LEFT_BRACE) {
+				warnAtLine(parser.previous.line, "If 'else' body should be wrapped in '{ }'.");
+			}
+		}
 		statement();
 	}
 	patchJump(elseJump);
