@@ -191,7 +191,8 @@ freeObject(Obj* object)
 		case OBJ_CLOSURE: {
 			ObjClosure* closure = (ObjClosure*)object;
 			//FREE_ARRAY(ObjUpvalue*, closure->upvalues, closure->upvalueCount);
-			reallocate(closure->upvalues, closure->upvalueCount, 0);
+			//reallocate(closure->upvalues, closure->upvalueCount, 0);
+			reallocate(closure->upvalues, sizeof(ObjUpvalue*) * closure->upvalueCount, 0);
 			//FREE(ObjClosure, object); // posix
 			reallocate(object, sizeof(ObjClosure), 0);
 			break;
