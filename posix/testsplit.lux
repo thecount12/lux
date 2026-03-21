@@ -1,9 +1,0 @@
-var data = "asdf";
-print typeof(data);
-var i = 0;
-while (i < len(data)) {
-	data = strSplit(data, "f");
-	print data;
-	print typeof(data);
-}
-
