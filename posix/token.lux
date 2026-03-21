@@ -1,0 +1,39 @@
+fun tokenize(text) {
+    var chars = strSplit(text, "");    // split into characters
+    var tokens = [];                   // result array
+    var cur = "";
+    var i = 0;
+    while (i < chars.length) {
+        var c = chars[i];
+        // whitespace: flush current token
+        if (c == " " | c == "\t" | c == "\n") {
+            if (len(cur) > 0) {
+                tokens = tokens + [cur];
+                cur = "";
+            }
+        }
+        // punctuation we want as separate tokens:
+        else if (c == "." | c == ",") {
+            if (len(cur) > 0) {
+                tokens = tokens + [cur];
+                cur = "";
+            }
+            tokens = tokens + [c];
+        }
+        // normal char: accumulate
+        else {
+            cur = cur + c;
+        }
+        i = i + 1;
+    }
+    // final flush
+    if (len(cur) > 0) {
+        tokens = tokens + [cur];
+    }
+    return tokens;
+}
+var text = "Hello, world, This, is a test.";
+var out = tokenize(text);
+print out;   // expected: ["Hello", ",", "world", ",", "This", ",", "is", "a", "test", "."]
+
+

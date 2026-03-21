@@ -4049,11 +4049,12 @@ run(void)
 				ObjArray* bArr = AS_ARRAY(pop());
 				ObjArray* aArr = AS_ARRAY(pop());
 				ObjArray* result = newArray();
+				push(OBJ_VAL(result));	/* root for GC before writeArray can trigger it */
 				for (int i = 0; i < aArr->count; i++)
 					writeArray(result, aArr->elements[i]);
 				for (int i = 0; i < bArr->count; i++)
 					writeArray(result, bArr->elements[i]);
-				push(OBJ_VAL(result));
+				/* result already on stack */
 			} else {
 				/* At least one is not a number, convert both to strings and concatenate */
 				b = pop();
