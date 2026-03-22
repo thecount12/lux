@@ -438,15 +438,18 @@ book.put("alice", "{\"name\":\"Alice\",\"email\":\"alice@example.com\"}");
 book.put("bob",   "{\"name\":\"Bob\",\"email\":\"bob@example.com\"}");
 
 var entries = book.iter();
-var table = {};
+var json = "{";
+var first = 1;
 var i = 0;
 while (i < entries.length) {
   var entry = entries[i];
-  table[entry.key] = parseJSON(entry.value);
+  if (first == 0) { json = json + ","; }
+  first = 0;
+  json = json + "\"" + entry.key + "\":" + entry.value;
   i = i + 1;
 }
-
-print toJSON(table);
+json = json + "}";
+print json;
 ```
 
 The iterator is handy for rebuilding structured data or producing JSON output without importing helper libraries.
