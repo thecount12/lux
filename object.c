@@ -206,7 +206,7 @@ valueToString(Value value)
 			/* Fall through to return truncated buffer if allocation fails */
 		}
 		return copyString(buffer, length);
-	} else if (IS_STRING(value)) {
+	} else if (IS_OBJ(value) && AS_OBJ(value)->type == OBJ_STRING) {
 		return AS_STRING(value);
 	}
 	/* For other objects, return a simple representation */
