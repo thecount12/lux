@@ -4049,25 +4049,36 @@ run(void)
 				ObjArray* bArr = AS_ARRAY(pop());
 				ObjArray* aArr = AS_ARRAY(pop());
 				ObjArray* result = newArray();
-				push(OBJ_VAL(result));	/* root for GC before writeArray can trigger it */
+				/* Push result first, then aArr, bArr so GC blackens sources before result */
+				push(OBJ_VAL(result));
+				push(OBJ_VAL(aArr));
+				push(OBJ_VAL(bArr));
 				for (int i = 0; i < aArr->count; i++)
 					writeArray(result, aArr->elements[i]);
 				for (int i = 0; i < bArr->count; i++)
 					writeArray(result, bArr->elements[i]);
-				/* result already on stack */
+				/* stack: [result, aArr, bArr] -> leave result on top */
+				pop(); /* bArr */
+				pop(); /* aArr */
+				/* result already at top */
 			} else {
 				/* At least one is not a number, convert both to strings and concatenate */
 				b = pop();
 				a = pop();
 				ObjString* bStr = valueToString(b);
 				ObjString* aStr = valueToString(a);
-				
-				int length = aStr->length + bStr->length;
+
+				/* Sanity check: prevent memcpy with corrupt length (e.g. array treated as string) */
+				int aLen = aStr->length, bLen = bStr->length;
+				if (aLen < 0 || aLen > 16*1024*1024) aLen = 0;
+				if (bLen < 0 || bLen > 16*1024*1024) bLen = 0;
+
+				int length = aLen + bLen;
 				char* chars = ALLOCATE(char, length + 1);
-				memcpy(chars, aStr->chars, aStr->length);
-				memcpy(chars + aStr->length, bStr->chars, bStr->length);
+				memcpy(chars, aStr->chars, aLen);
+				memcpy(chars + aLen, bStr->chars, bLen);
 				chars[length] = '\0';
-				
+
 				ObjString* result = takeString(chars, length);
 				push(OBJ_VAL(result));
 			}
