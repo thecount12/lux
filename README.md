@@ -1178,42 +1178,85 @@ curl -X POST http://localhost:8080/echo -d '{"test":"data"}'
 - **Plan 9**: Uses native `announce()`, `listen()`, `accept()` system calls
 - **POSIX**: Uses standard BSD sockets API (`socket()`, `bind()`, `listen()`, `accept()`)
 
-#### `Server` class (POSIX) - Routing, Middleware, Static Files
-Create a configurable HTTP server with user-defined routes:
+#### `Server` class — routing, static files, middleware (Plan 9 and POSIX)
+
+Create a configurable HTTP server with user-defined routes. See `examples/static_server.lux` and `tests/test_http_server_routes.lux`.
 
 ```lux
 fun handleHello(req, res) { res.send("Hello from Lux!"); }
+
 fun handleData(req, res) {
   var body = parseJSON(req.body);
-  res.status(201).json({"status": "received"});
+  if (body == nil) {
+    res.status(400);
+    res.send("{\"error\":\"invalid json\"}");
+    return;
+  }
+  print body;
+  res.status(201);
+  res.json(body);   /* echo parsed JSON, e.g. {"name":"John"} */
 }
+
+/* Fixed JSON response (not a Lux object literal — use parseJSON): */
+fun handleAck(req, res) {
+  res.status(201);
+  res.json(parseJSON("{\"status\":\"received\"}"));
+}
+
+var server = Server(8080);
+server.get("/hello", handleHello);
+server.post("/data", handleData);
+server.static("public");   /* serve GET files from ./public/ */
+server.start();
+```
+
+**`res.json` notes:**
+- Pass a **value** to serialize (`parseJSON` objects, class instances with fields), not pre-built JSON text.
+- `res.json("{\"a\":1}")` returns a JSON **string** (`"{\"a\":1}"`), not an object.
+- `Dict` data lives in native storage; `res.json(aDict)` only sees internal fields (e.g. `_ptr`). Use `parseJSON`/`toJSON`, `dict.iter()`, or `res.send` with a string you build. See `tests/test_dict.lux`.
+
+**Middleware (`server.use`) — known issue:** `server.use(logger)` can crash the interpreter after a request on Plan 9 (re-entrant `run()` in the HTTP server). Use `print` inside handlers until fixed. See [TODO.md](TODO.md).
+
+```lux
+/* Disabled until middleware stack is fixed — do not uncomment on Plan 9 yet */
 fun logger(req, res, next) {
   print "Request: " + req.method + " " + req.path;
   next();
 }
-var server = Server.new(8080);
-server.get("/hello", handleHello);
-server.post("/data", handleData);
-server.use(logger);
-server.static("public");  /* serve files from ./public/ */
-server.start();
+/* server.use(logger); */
+```
+
+**Test from another machine:**
+```sh
+curl http://10.0.0.31:8080/hello
+curl -H "Content-Type: application/json" -d '{"name":"John"}' http://10.0.0.31:8080/data
 ```
 
 **Controller imports:** Define `server` before importing route modules so they can register routes:
 ```lux
-var server = Server.new(8080);
+var server = Server(8080);
 import "routes/user.lux";   /* routes/user.lux calls server.get(...) */
 server.start();
 ```
 
-**Simple persistence:** Use global variables for in-process state:
+**Simple persistence:** Use globals holding `parseJSON` results (not `{}` map literals):
 ```lux
-var store = {};
+var lastPost = nil;
+
 fun postData(req, res) {
-  store["last"] = parseJSON(req.body);
-  res.status(201).json({"ok": true});
+  lastPost = parseJSON(req.body);
+  res.status(201);
+  res.json(parseJSON("{\"ok\":true}"));
 }
-fun getData(req, res) { res.json(store); }
+
+fun getData(req, res) {
+  if (lastPost == nil) {
+    res.json(parseJSON("{\"data\":null}"));
+  } else {
+    res.json(lastPost);
+  }
+}
+
 var server = Server(8080);
 server.post("/data", postData);
 server.get("/data", getData);
