@@ -35,6 +35,8 @@ typedef struct {
 
 	bool nativePanic;
 	char nativePanicMsg[256];
+
+	ObjArray* scriptArgs;
 } VM;
 
 typedef enum {
@@ -47,6 +49,7 @@ extern VM vm;
 
 void initVM();
 void freeVM();
+void setScriptArgs(int argc, char** argv);
 //InterpretResult interpret(Chunk* chunk);
 InterpretResult interpret(const char* source);
 void push(Value value);

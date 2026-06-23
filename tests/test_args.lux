@@ -1,0 +1,11 @@
+// Command-line args: args() builtin
+print "=== Script Args Test ===";
+
+var empty = args();
+assert(empty.length == 0, "no args when run without extras");
+
+var out = run("./lux ../tests/test_args_child.lux alpha beta gamma");
+assert(out != nil, "child process ran");
+assert(strFind(out, "CHILD_OK") >= 0, "child received args");
+
+print "All args tests passed";

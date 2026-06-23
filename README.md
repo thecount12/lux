@@ -528,6 +528,22 @@ Platform guides:
 # POSIX: ./lux -c "print 1 + 2;"
 ```
 
+### Script arguments:
+Pass arguments after the script path. Inside the script, call `args()` to get them as an array of strings:
+
+```
+./lux script.lux foo bar
+```
+
+```lux
+var a = args();
+print a.length;  // 2
+print a[0];      // foo
+print a[1];      // bar
+```
+
+`args()` returns an empty array in the REPL, with `lux -c`, or when no extra arguments are given.
+
 ### Example files:
 ```
 8.out examples/demo.lux                 # Simple working demo

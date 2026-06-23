@@ -256,6 +256,8 @@ markRoots()
 	markTable(&vm.globals);
 	markCompilerRoots();
 	markObject((Obj*)vm.initString);
+	if (vm.scriptArgs != nil)
+		markObject((Obj*)vm.scriptArgs);
 }
 
 static void 

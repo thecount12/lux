@@ -49,8 +49,9 @@ static char* readFile(const char* path) {
 	return buffer;
 }
 
-static void runFile(const char* path) {
+static void runFile(const char* path, int scriptArgc, char** scriptArgv) {
 	char* source = readFile(path);
+	setScriptArgs(scriptArgc, scriptArgv);
 	InterpretResult result = interpret(source);
 	free(source);
 
@@ -62,15 +63,21 @@ static void runFile(const char* path) {
 int main(int argc, const char* argv[]) {
 	initVM();
 	if (argc == 1) {
+		setScriptArgs(0, NULL);
 		repl();
-	} else if (argc == 2) {
-		runFile(argv[1]);
-	} else if (argc == 3 && strcmp(argv[1], "-c") == 0) {
+	} else if (strcmp(argv[1], "-c") == 0) {
+		if (argc != 3) {
+			fprintf(stderr, "Usage: lux [script] [args...] | lux -c \"code\"\n");
+			exit(64);
+		}
+		setScriptArgs(0, NULL);
 		InterpretResult result = interpret(argv[2]);
 		if (result == INTERPRET_COMPILE_ERROR) exit(65);
 		if (result == INTERPRET_RUNTIME_ERROR) exit(70);
+	} else if (argc >= 2) {
+		runFile(argv[1], argc - 2, (char**)(argv + 2));
 	} else {
-		fprintf(stderr, "Usage: lux [script] | lux -c \"code\"\n");
+		fprintf(stderr, "Usage: lux [script] [args...] | lux -c \"code\"\n");
 		exit(64);
 	}
 	

@@ -198,6 +198,8 @@ static void markRoots() {
 	markTable(&vm.globals);
 	markCompilerRoots();
 	markObject((Obj*)vm.initString);
+	if (vm.scriptArgs != NULL)
+		markObject((Obj*)vm.scriptArgs);
 }
 
 static void traceReferences() {

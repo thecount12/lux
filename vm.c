@@ -36,6 +36,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"clock", "clock()", "Return process uptime in seconds."},
 	{"epoch", "epoch()", "Return Unix epoch time in seconds (UTC)."},
 	{"exit", "exit([code])", "Terminate the Lux process with an optional numeric status (default 0)."},
+	{"args", "args()", "Return command-line arguments passed after the script path."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"writeFile", "writeFile(path, content)", "Write content to a file."},
@@ -114,7 +115,7 @@ isCallableGlobal(Value value)
 static const char*
 callableCategory(const char* name)
 {
-	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0 || strcmp(name, "typeof") == 0 || strcmp(name, "exit") == 0)
+	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0 || strcmp(name, "typeof") == 0 || strcmp(name, "exit") == 0 || strcmp(name, "args") == 0)
 		return "Core";
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
@@ -771,6 +772,32 @@ lenNative(int argCount, Value* args)
 		return NIL_VAL;
 
 	return NUMBER_VAL(AS_STRING(args[0])->length);
+}
+
+/* args() -> array of strings (script arguments after path) */
+static Value
+argsNative(int argCount, Value* args)
+{
+	(void)args;
+	if (argCount != 0)
+		return NIL_VAL;
+	if (vm.scriptArgs == nil)
+		return OBJ_VAL(newArray());
+	return OBJ_VAL(vm.scriptArgs);
+}
+
+void
+setScriptArgs(int argc, char** argv)
+{
+	ObjArray* arr;
+	int i;
+
+	arr = newArray();
+	push(OBJ_VAL(arr));
+	for (i = 0; i < argc; i++)
+		writeArray(arr, OBJ_VAL(copyString(argv[i], (int)strlen(argv[i]))));
+	vm.scriptArgs = arr;
+	pop();
 }
 
 /* strFind(haystack, needle, [start]) -> number index or -1 */
@@ -3449,6 +3476,7 @@ initVM(void)
 	vm.nextGC = 1024 * 1024;
 	vm.nativePanic = 0;
 	vm.nativePanicMsg[0] = '\0';
+	vm.scriptArgs = nil;
 
 
 	initTable(&vm.globals);
@@ -3493,6 +3521,7 @@ initVM(void)
 	defineNative("floor", floorNative);
 	defineNative("help", helpNative);
 	defineNative("exit", exitNative);
+	defineNative("args", argsNative);
 	defineNative("readFile", readFileNative);
 	defineNative("writeFile", writeFileNative);
 	defineNative("appendFile", appendFileNative);

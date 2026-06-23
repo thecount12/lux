@@ -9,6 +9,7 @@
 
 void initVM(void);
 void freeVM(void);
+void setScriptArgs(int argc, char** argv);
 
 static void 
 repl(void) 
@@ -73,9 +74,10 @@ readFile(char* path)
 }
 
 static void 
-runFile(char* path) 
+runFile(char* path, int scriptArgc, char** scriptArgv) 
 {
 	char* source = readFile(path);
+	setScriptArgs(scriptArgc, scriptArgv);
 	InterpretResult result = interpret(source);
 	free(source);
 
@@ -92,15 +94,21 @@ main(int argc, char *argv[])
 	initVM();
 
 	if (argc == 1) {
+		setScriptArgs(0, nil);
 		repl();
-	} else if (argc == 2) {
-		runFile(argv[1]);
-	} else if (argc == 3 && strcmp(argv[1], "-c") == 0) {
+	} else if (strcmp(argv[1], "-c") == 0) {
+		if (argc != 3) {
+			fprint(2, "Usage: lux [path] [args...] | lux -c \"code\"\n");
+			exits("usage");
+		}
+		setScriptArgs(0, nil);
 		InterpretResult result = interpret(argv[2]);
 		if (result == INTERPRET_COMPILE_ERROR) exits("compile error");
 		if (result == INTERPRET_RUNTIME_ERROR) exits("runtime error");
+	} else if (argc >= 2) {
+		runFile(argv[1], argc - 2, argv + 2);
 	} else {
-		fprint(2, "Usage: lux [path] | lux -c \"code\"\n");
+		fprint(2, "Usage: lux [path] [args...] | lux -c \"code\"\n");
 		exits("usage");
 	}
 	

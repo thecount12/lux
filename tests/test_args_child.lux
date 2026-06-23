@@ -1,0 +1,7 @@
+// Helper for test_args.lux — run via: lux test_args_child.lux <args...>
+var a = args();
+assert(a.length == 3, "expected 3 args");
+assert(a[0] == "alpha", "arg 0");
+assert(a[1] == "beta", "arg 1");
+assert(a[2] == "gamma", "arg 2");
+print "CHILD_OK";

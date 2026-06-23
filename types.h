@@ -210,6 +210,8 @@ struct VM {
 
 	int nativePanic;
 	char nativePanicMsg[256];
+
+	ObjArray* scriptArgs;
 };
 
 /* Object types */
