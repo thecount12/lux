@@ -45,4 +45,5 @@ Tracked work for the `Server` class and `server.use()` middleware. Check in and 
 
 ## 9front deployment (separate from VM bug)
 
-- [ ] Document rc-httpd + redirect to Lux port 8080 vs Lux on :80 (TLS/`tlssrv` notes) if we add `docs/` or README section.
+- [x] Lux `Server` supports multi-domain via `req.host`, `server.vhost`, `getHost`/`postHost` (one process on `:8080`). See `examples/vhost_server.lux` and README Server section.
+- Deployment sketch: `tcp443` → `tlssrv` (SNI/acmed) → Lux `:8080`; `tcp80` → `rc-httpd` for ACME + `www.*` → apex redirects; register only apex Host names in Lux.

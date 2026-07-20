@@ -1,0 +1,42 @@
+/* Multi-domain example: one Lux process, Host-based vhosts.
+ *
+ * Run (from repo root, POSIX):
+ *   ./posix/lux examples/vhost_server.lux
+ * Plan 9:
+ *   8.out examples/vhost_server.lux
+ *
+ * Test with Host header (luxtest cannot curl):
+ *   curl -H 'Host: technomancy.site' http://127.0.0.1:8080/
+ *   curl -H 'Host: williamgunnells.com' http://127.0.0.1:8080/
+ *   curl -H 'Host: technomancy.site' http://127.0.0.1:8080/api/hello
+ *   curl http://127.0.0.1:8080/health
+ *
+ * On 9front: put tlssrv + www→apex redirects in front; Lux listens on :8080
+ * and only registers apex Host names (matching your select-handler pattern).
+ */
+
+fun helloTech(req, res) {
+  res.json(parseJSON("{\"site\":\"technomancy.site\",\"path\":\"/api/hello\"}"));
+}
+
+fun helloWill(req, res) {
+  print "Host is: " + req.host;
+  res.json(parseJSON("{\"site\":\"williamgunnells.com\",\"path\":\"/api/hello\"}"));
+}
+
+fun health(req, res) {
+  res.json(parseJSON("{\"ok\":true}"));
+}
+
+var server = Server(8080);
+
+server.vhost("technomancy.site", "examples/vhost/technomancy.site");
+server.vhost("williamgunnells.com", "examples/vhost/williamgunnells.com");
+
+server.getHost("technomancy.site", "/api/hello", helloTech);
+server.getHost("williamgunnells.com", "/api/hello", helloWill);
+server.get("/health", health);
+
+print "vhost server on http://127.0.0.1:8080/";
+print "curl -H 'Host: technomancy.site' http://127.0.0.1:8080/";
+server.start();

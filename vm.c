@@ -2120,15 +2120,60 @@ httpPutNative(int argCount, Value* args)
 typedef struct {
 	char method[16];
 	char path[1024];
+	char host[256];
 	char body[4096];
 	int bodyLen;
 } HttpRequest;
+
+/* Strip :port from Host value; keep [ipv6] without trailing :port. */
+static void
+httpStripHostPort(char* host)
+{
+	char* p;
+	char* q;
+
+	if (host[0] == '\0')
+		return;
+	if (host[0] == '[') {
+		p = strchr(host, ']');
+		if (p != nil && p[1] == ':')
+			p[1] = '\0';
+		return;
+	}
+	p = strrchr(host, ':');
+	if (p == nil || p[1] == '\0')
+		return;
+	for (q = p + 1; *q; q++) {
+		if (*q < '0' || *q > '9')
+			return;
+	}
+	*p = '\0';
+}
+
+static int
+httpHeaderNameIs(char* line, char* name)
+{
+	int i;
+	for (i = 0; name[i] != '\0'; i++) {
+		char a = line[i];
+		char b = name[i];
+		if (a >= 'A' && a <= 'Z') a = a - 'A' + 'a';
+		if (b >= 'A' && b <= 'Z') b = b - 'A' + 'a';
+		if (a != b) return 0;
+	}
+	return line[i] == ':';
+}
 
 static int
 parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 {
 	char* p = buffer;
+	char* bodyStart;
+	char* line;
+	char* endHeaders;
 	
+	req->host[0] = '\0';
+
 	/* Parse method (GET, POST, etc.) */
 	char* methodEnd = strchr(p, ' ');
 	if (methodEnd == nil) return -1;
@@ -2147,7 +2192,7 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 	req->path[pathLen] = '\0';
 	
 	/* Find body (after headers) */
-	char* bodyStart = strstr(buffer, "\r\n\r\n");
+	bodyStart = strstr(buffer, "\r\n\r\n");
 	if (bodyStart != nil) {
 		bodyStart += 4;
 	} else {
@@ -2156,6 +2201,33 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 			bodyStart += 2;
 		else
 			bodyStart = nil;
+	}
+
+	/* Parse Host header */
+	endHeaders = bodyStart != nil ? bodyStart : buffer + bufLen;
+	line = strchr(buffer, '\n');
+	if (line != nil) line++;
+	while (line != nil && line < endHeaders) {
+		char* next = strchr(line, '\n');
+		char* lineEnd = next != nil ? next : endHeaders;
+		if (lineEnd > line && lineEnd[-1] == '\r')
+			lineEnd--;
+		if (httpHeaderNameIs(line, "host")) {
+			char* v = line + 5;
+			int hostLen;
+			while (v < lineEnd && (*v == ' ' || *v == '\t'))
+				v++;
+			hostLen = lineEnd - v;
+			if (hostLen >= 256) hostLen = 255;
+			if (hostLen > 0) {
+				strncpy(req->host, v, hostLen);
+				req->host[hostLen] = '\0';
+				httpStripHostPort(req->host);
+			}
+			break;
+		}
+		if (next == nil) break;
+		line = next + 1;
 	}
 	
 	/* Extract body if present */
@@ -2372,7 +2444,7 @@ serverInitNative(int argCount, Value* args)
 	return args[0];
 }
 
-/* Server.get(path, handler) */
+/* Server.get(path, handler) — global route (any Host) */
 static Value
 serverGetNative(int argCount, Value* args)
 {
@@ -2394,7 +2466,7 @@ serverGetNative(int argCount, Value* args)
 	return NIL_VAL;
 }
 
-/* Server.post(path, handler) */
+/* Server.post(path, handler) — global route (any Host) */
 static Value
 serverPostNative(int argCount, Value* args)
 {
@@ -2414,6 +2486,92 @@ serverPostNative(int argCount, Value* args)
 	writeArray(routes, OBJ_VAL(entry));
 	pop();
 	return NIL_VAL;
+}
+
+/* Server.getHost(host, path, handler) */
+static Value
+serverGetHostNative(int argCount, Value* args)
+{
+	if (argCount != 4 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) ||
+	    !IS_STRING(args[2]) || !IS_CLOSURE(args[3]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjArray* routes = serverGetRoutes(server, "_routes");
+	if (routes == nil) return NIL_VAL;
+	ObjInstance* entry = newInstance(nil);
+	push(OBJ_VAL(entry));
+	tableSet(&entry->fields, copyString("method", 6), OBJ_VAL(copyString("GET", 3)));
+	tableSet(&entry->fields, copyString("host", 4), args[1]);
+	tableSet(&entry->fields, copyString("path", 4), args[2]);
+	tableSet(&entry->fields, copyString("handler", 7), args[3]);
+	writeArray(routes, OBJ_VAL(entry));
+	pop();
+	return NIL_VAL;
+}
+
+/* Server.postHost(host, path, handler) */
+static Value
+serverPostHostNative(int argCount, Value* args)
+{
+	if (argCount != 4 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) ||
+	    !IS_STRING(args[2]) || !IS_CLOSURE(args[3]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjArray* routes = serverGetRoutes(server, "_routes");
+	if (routes == nil) return NIL_VAL;
+	ObjInstance* entry = newInstance(nil);
+	push(OBJ_VAL(entry));
+	tableSet(&entry->fields, copyString("method", 6), OBJ_VAL(copyString("POST", 4)));
+	tableSet(&entry->fields, copyString("host", 4), args[1]);
+	tableSet(&entry->fields, copyString("path", 4), args[2]);
+	tableSet(&entry->fields, copyString("handler", 7), args[3]);
+	writeArray(routes, OBJ_VAL(entry));
+	pop();
+	return NIL_VAL;
+}
+
+/* Server.vhost(host, root) — map Host to static document root */
+static Value
+serverVhostNative(int argCount, Value* args)
+{
+	if (argCount != 3 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) || !IS_STRING(args[2]))
+		return NIL_VAL;
+	ObjInstance* server = AS_INSTANCE(args[0]);
+	ObjArray* vhosts = serverGetRoutes(server, "_vhosts");
+	if (vhosts == nil) return NIL_VAL;
+	ObjInstance* entry = newInstance(nil);
+	push(OBJ_VAL(entry));
+	tableSet(&entry->fields, copyString("host", 4), args[1]);
+	tableSet(&entry->fields, copyString("root", 4), args[2]);
+	writeArray(vhosts, OBJ_VAL(entry));
+	pop();
+	return NIL_VAL;
+}
+
+/* Lookup static root for Host from _vhosts; nil if none. */
+static char*
+serverLookupVhostRoot(ObjInstance* server, char* host)
+{
+	Value vhostsVal;
+	ObjArray* vhosts;
+	int i;
+
+	if (host == nil || host[0] == '\0')
+		return nil;
+	if (!tableGet(&server->fields, copyString("_vhosts", 7), &vhostsVal) || !IS_ARRAY(vhostsVal))
+		return nil;
+	vhosts = AS_ARRAY(vhostsVal);
+	for (i = 0; i < vhosts->count; i++) {
+		Value entVal = vhosts->elements[i];
+		Value hostVal, rootVal;
+		if (!IS_INSTANCE(entVal)) continue;
+		if (!tableGet(&AS_INSTANCE(entVal)->fields, copyString("host", 4), &hostVal)) continue;
+		if (!tableGet(&AS_INSTANCE(entVal)->fields, copyString("root", 4), &rootVal)) continue;
+		if (!IS_STRING(hostVal) || !IS_STRING(rootVal)) continue;
+		if (cistrcmp(AS_CSTRING(hostVal), host) == 0)
+			return AS_CSTRING(rootVal);
+	}
+	return nil;
 }
 
 /* Server.use(middleware) */
@@ -2479,9 +2637,9 @@ serverStartNative(int argCount, Value* args)
 		routes = AS_ARRAY(routesVal);
 
 	Value staticVal;
-	char* staticDir = nil;
+	char* defaultStaticDir = nil;
 	if (tableGet(&server->fields, copyString("_static_dir", 11), &staticVal) && IS_STRING(staticVal))
-		staticDir = AS_CSTRING(staticVal);
+		defaultStaticDir = AS_CSTRING(staticVal);
 
 	while (1) {
 		int lcfd = listen(adir, ldir);
@@ -2537,10 +2695,14 @@ serverStartNative(int argCount, Value* args)
 			close(dfd);
 			continue;
 		}
-		fprint(1, "%s %s\n", req.method, req.path);
+		fprint(1, "%s %s Host:%s\n", req.method, req.path, req.host);
 
-		/* Static file serving */
-		if (staticDir != nil && strcmp(req.method, "GET") == 0) {
+		/* Static file serving: vhost root, else server.static fallback */
+		{
+			char* staticDir = serverLookupVhostRoot(server, req.host);
+			if (staticDir == nil)
+				staticDir = defaultStaticDir;
+			if (staticDir != nil && strcmp(req.method, "GET") == 0) {
 			char filepath[2048];
 			char* reqPath;
 			int dirLen, pathLen, ffd, nread, hlen;
@@ -2593,6 +2755,7 @@ serverStartNative(int argCount, Value* args)
 					}
 				}
 			}
+			}
 		}
 
 		Value mwVal;
@@ -2602,19 +2765,32 @@ serverStartNative(int argCount, Value* args)
 
 		ObjClosure* handler = nil;
 		if (routes != nil) {
-			for (int i = 0; i < routes->count; i++) {
-				Value entVal = routes->elements[i];
-				if (!IS_INSTANCE(entVal)) continue;
-				ObjInstance* ent = AS_INSTANCE(entVal);
-				Value methodVal, pathVal, handlerVal;
-				if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
-				if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
-				if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
-				if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
-				if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
-				if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
-				handler = AS_CLOSURE(handlerVal);
-				break;
+			int pass;
+			/* Pass 0: host-specific getHost/postHost; pass 1: global get/post */
+			for (pass = 0; pass < 2 && handler == nil; pass++) {
+				int i;
+				for (i = 0; i < routes->count; i++) {
+					Value entVal = routes->elements[i];
+					Value methodVal, pathVal, handlerVal, hostVal;
+					int hasHost;
+					if (!IS_INSTANCE(entVal)) continue;
+					ObjInstance* ent = AS_INSTANCE(entVal);
+					if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
+					if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
+					if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
+					if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
+					hasHost = tableGet(&ent->fields, copyString("host", 4), &hostVal) && IS_STRING(hostVal);
+					if (pass == 0) {
+						if (!hasHost) continue;
+						if (cistrcmp(AS_CSTRING(hostVal), req.host) != 0) continue;
+					} else {
+						if (hasHost) continue;
+					}
+					if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
+					if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
+					handler = AS_CLOSURE(handlerVal);
+					break;
+				}
 			}
 		}
 
@@ -2623,6 +2799,7 @@ serverStartNative(int argCount, Value* args)
 		push(OBJ_VAL(reqObj));
 		tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(req.method, strlen(req.method))));
 		tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(req.path, strlen(req.path))));
+		tableSet(&reqObj->fields, copyString("host", 4), OBJ_VAL(copyString(req.host, strlen(req.host))));
 		tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(req.body, strlen(req.body))));
 
 		ObjInstance* resObj = newInstance(serverResClass);
@@ -3495,6 +3672,9 @@ initVM(void)
 	tableSet(&serverClass->methods, vm.initString, OBJ_VAL(newNative(serverInitNative)));
 	tableSet(&serverClass->methods, copyString("get", 3), OBJ_VAL(newNative(serverGetNative)));
 	tableSet(&serverClass->methods, copyString("post", 4), OBJ_VAL(newNative(serverPostNative)));
+	tableSet(&serverClass->methods, copyString("getHost", 7), OBJ_VAL(newNative(serverGetHostNative)));
+	tableSet(&serverClass->methods, copyString("postHost", 8), OBJ_VAL(newNative(serverPostHostNative)));
+	tableSet(&serverClass->methods, copyString("vhost", 5), OBJ_VAL(newNative(serverVhostNative)));
 	tableSet(&serverClass->methods, copyString("use", 3), OBJ_VAL(newNative(serverUseNative)));
 	tableSet(&serverClass->methods, copyString("static", 6), OBJ_VAL(newNative(serverStaticNative)));
 	tableSet(&serverClass->methods, copyString("start", 5), OBJ_VAL(newNative(serverStartNative)));

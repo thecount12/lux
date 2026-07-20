@@ -24,7 +24,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Strings/Arrays** — slice, find, split, sort, binary search, array concatenation (`+`)
 - **Dictionaries** — native `Dict` class with `put`/`get`/`has`/`remove`/`size`/`clear` plus `iter()` returning an array of `{key, value}` entries
 - **Float64Array** — typed double buffer, dot product (POSIX)
-- **HTTP** — client (GET/POST/PUT) and server
+- **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts)
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
 - **Cloud** — AWS S3, STS, IAM operations
 - **Databases** — SQLite, PostgreSQL, MySQL (opt-in)
@@ -140,11 +140,15 @@ if (resp.statusCode == 201) {
 
 ### HTTP Server
 ```lux
-// Start a simple HTTP server on port 8080
+// Configurable Server: routes, static, multi-domain vhosts (see examples/vhost_server.lux)
+var server = Server(8080);
+server.vhost("example.com", "public/example");
+server.get("/health", handleHealth);
+server.start();
+
+// Legacy one-liner with built-in routes:
 httpServer(8080);
 // Handles GET /, GET /echo, POST /echo automatically
-// Try: curl http://localhost:8080/
-// Try: curl -X POST http://localhost:8080/echo -d 'hello'
 ```
 
 ### File I/O
@@ -1194,9 +1198,9 @@ curl -X POST http://localhost:8080/echo -d '{"test":"data"}'
 - **Plan 9**: Uses native `announce()`, `listen()`, `accept()` system calls
 - **POSIX**: Uses standard BSD sockets API (`socket()`, `bind()`, `listen()`, `accept()`)
 
-#### `Server` class — routing, static files, middleware (Plan 9 and POSIX)
+#### `Server` class — routing, static files, virtual hosts, middleware (Plan 9 and POSIX)
 
-Create a configurable HTTP server with user-defined routes. See `examples/static_server.lux` and `tests/test_http_server_routes.lux`.
+Create a configurable HTTP server with user-defined routes. See `examples/static_server.lux`, `examples/vhost_server.lux`, and `tests/test_http_server_routes.lux`.
 
 ```lux
 fun handleHello(req, res) { res.send("Hello from Lux!"); }
@@ -1225,6 +1229,36 @@ server.post("/data", handleData);
 server.static("public");   /* serve GET files from ./public/ */
 server.start();
 ```
+
+**Virtual hosts (many domains, one port):** Lux parses the `Host` header into `req.host` (port stripped). Use `server.vhost(host, root)` for per-domain static trees and `server.getHost` / `server.postHost` for host-scoped routes. Global `get`/`post` still match any Host. Host matching is case-insensitive. GET static files are tried first (vhost root, else `server.static`), then host-specific routes, then global routes.
+
+```lux
+fun helloTech(req, res) {
+  res.json(parseJSON("{\"site\":\"technomancy\"}"));
+}
+fun helloWill(req, res) {
+  print req.host;
+  res.json(parseJSON("{\"site\":\"william\"}"));
+}
+fun health(req, res) {
+  res.json(parseJSON("{\"ok\":true}"));
+}
+
+var server = Server(8080);
+server.vhost("technomancy.site", "/usr/www/sites/technomancy.site");
+server.vhost("williamgunnells.com", "/usr/www/sites/williamgunnells.com");
+server.getHost("technomancy.site", "/api/hello", helloTech);
+server.getHost("williamgunnells.com", "/api/hello", helloWill);
+server.get("/health", health);   /* any Host */
+server.start();
+```
+
+```sh
+curl -H 'Host: technomancy.site' http://127.0.0.1:8080/
+curl -H 'Host: williamgunnells.com' http://127.0.0.1:8080/api/hello
+```
+
+**9front edge (TLS / www redirects stay outside Lux):** run Lux on `:8080` behind `tlssrv` (SNI/acmed certificates). Keep `rc-httpd` for ACME http-01 on port 80 and `www.*` → apex redirects; register only apex names with `vhost`/`getHost`. See also [TODO.md](TODO.md).
 
 **`res.json` notes:**
 - Pass a **value** to serialize (`parseJSON` objects, class instances with fields), not pre-built JSON text.

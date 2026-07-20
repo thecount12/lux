@@ -27,7 +27,7 @@ The name **Lux** (Latin for "light") signifies the evolution of this project. Wh
 - **Strings/Arrays:** slice, find, split, sort, binary search, array concatenation (+)
 - **Dictionaries:** native Dict class with put/get/has/remove/size/clear plus iter() returning an array of {key, value} entries
 - **Float64Array:** typed double buffer, dot product (POSIX)
-- **HTTP:** client (GET/POST/PUT) and server
+- **HTTP:** client (GET/POST/PUT) and server (routing, static, virtual hosts)
 - **Crypto:** SHA-256, HMAC-SHA256, AWS request signing
 - **Cloud:** AWS S3, STS, IAM operations
 - **Databases:** SQLite, PostgreSQL, MySQL (opt-in)
