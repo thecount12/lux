@@ -47,8 +47,8 @@ endif
 
 # OS-specific flags
 ifeq ($(UNAME_S),Linux)
-    # Linux: OpenSSL typically in standard paths
-    CFLAGS = -Wall -Wextra -std=c99 -g $(OPT) $(DB_FLAGS)
+    # Linux: OpenSSL typically in standard paths; feature macro for popen/pclose
+    CFLAGS = -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200809L -g $(OPT) $(DB_FLAGS)
     LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),Darwin)

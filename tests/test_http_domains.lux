@@ -1,0 +1,27 @@
+/* Domain registration smoke test (does not listen). */
+print "=== HTTP multi-domain registration ===";
+
+fun handleA(req, res) { res.send("a"); }
+fun handleB(req, res) { res.send("b"); }
+fun handleHealth(req, res) { res.send("ok"); }
+
+var server = Server(8099);
+assert(server != nil, "Server(8099) should return instance");
+
+server.domain("a.example");
+server.get("/", handleA);
+
+server.domain("b.example");
+server.get("/", handleB);
+server.post("/echo", handleB);
+
+server.domain("*");
+server.get("/health", handleHealth);
+server.static("examples/static/www");
+
+/* domain() returns server for chaining */
+var chained = server.domain("c.example");
+assert(chained != nil, "domain() should return server");
+
+print "domain routes registered";
+print "PASS";

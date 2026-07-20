@@ -46,3 +46,10 @@ Tracked work for the `Server` class and `server.use()` middleware. Check in and 
 ## 9front deployment (separate from VM bug)
 
 - [ ] Document rc-httpd + redirect to Lux port 8080 vs Lux on :80 (TLS/`tlssrv` notes) if we add `docs/` or README section.
+
+## Multi-domain / virtual hosts
+
+- [x] `Server.domain(name)` + Host-based route/static matching (Plan 9 + POSIX).
+- [x] Expose `req.host`; example `examples/multi_domain_server.lux`.
+- [ ] Optional: per-domain middleware (`server.use` scoped by domain).
+- [ ] Optional: TLS/`tlssrv` fronting multiple names on Plan 9.

@@ -1,0 +1,61 @@
+/* Multi-domain (virtual host) HTTP server — Plan 9 and POSIX.
+ *
+ * One Lux Server can serve several Host names on the same port.
+ * Use /lib/ndb/local (or /etc/hosts) so names resolve to the machine,
+ * then curl with -H "Host: ..." or browse by name.
+ *
+ * Plan 9:
+ *   mk
+ *   8.out examples/multi_domain_server.lux
+ *   hget -h 'Host: blog.local' http://sysname:8084/
+ *
+ * POSIX:
+ *   cd posix && make && ./lux ../examples/multi_domain_server.lux
+ *   curl -H 'Host: blog.local' http://127.0.0.1:8084/
+ */
+
+fun blogHello(req, res) {
+  res.send("blog.local hello (host=" + req.host + ")");
+}
+
+fun apiStatus(req, res) {
+  res.json(parseJSON("{\"service\":\"api\",\"host\":\"" + req.host + "\",\"ok\":true}"));
+}
+
+fun defaultHome(req, res) {
+  res.send("default site (host=" + req.host + ")");
+}
+
+fun health(req, res) {
+  res.send("ok");
+}
+
+var server = Server(8084);
+
+/* Default / fallback routes (no Host match required) */
+server.get("/", defaultHome);
+server.get("/health", health);
+
+/* blog.local — static files + a Host-scoped route
+ * Run from repo root so examples/static/www resolves
+ * (Plan 9: 8.out examples/multi_domain_server.lux)
+ * (POSIX: ./posix/lux examples/multi_domain_server.lux)
+ */
+server.domain("blog.local");
+server.static("examples/static/www");
+server.get("/hello", blogHello);
+
+/* api.local */
+server.domain("api.local");
+server.get("/status", apiStatus);
+
+/* Clear domain scope (* or "") for more default routes if needed */
+server.domain("*");
+
+print "Multi-domain server on :8084";
+print "  Host blog.local /       -> static examples/static/www";
+print "  Host blog.local /hello  -> blog hello";
+print "  Host api.local  /status -> JSON status";
+print "  any Host        /health -> ok";
+print "  unmatched Host  /       -> default home";
+server.start();

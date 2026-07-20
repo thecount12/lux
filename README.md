@@ -1196,7 +1196,24 @@ curl -X POST http://localhost:8080/echo -d '{"test":"data"}'
 
 #### `Server` class — routing, static files, middleware (Plan 9 and POSIX)
 
-Create a configurable HTTP server with user-defined routes. See `examples/static_server.lux` and `tests/test_http_server_routes.lux`.
+Create a configurable HTTP server with user-defined routes. See `examples/static_server.lux`, `examples/multi_domain_server.lux`, and `tests/test_http_server_routes.lux`.
+
+**Multi-domain (virtual hosts):** `server.domain("name")` scopes later `get` / `post` / `static` calls to that `Host` header. Pass `""` or `"*"` to clear the scope (default / any-host fallback). Domain-specific routes win over default routes for the same path. `req.host` is the normalized Host (lowercase, port stripped). One `announce`/`bind` on a single port can serve several names — on Plan 9 point ndb/DNS at the machine and use `hget`/`curl` with a Host header.
+
+```lux
+var server = Server(8084);
+server.get("/health", fun(req, res) { res.send("ok"); });  /* default */
+
+server.domain("blog.local");
+server.static("sites/blog");
+server.get("/hello", fun(req, res) { res.send("blog " + req.host); });
+
+server.domain("api.local");
+server.get("/status", fun(req, res) { res.json(parseJSON("{\"ok\":true}")); });
+
+server.domain("*");  /* back to default scope */
+server.start();
+```
 
 ```lux
 fun handleHello(req, res) { res.send("Hello from Lux!"); }
