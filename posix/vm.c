@@ -1125,46 +1125,28 @@ static Value parseJsonNumber(JsonParser* parser) {
 static Value parseJsonArray(JsonParser* parser) {
 	parser->current++; /* skip [ */
 	skipWhitespace(parser);
-	
-	/* Create an instance to hold array elements */
-	ObjClass* arrayClass = newClass(copyString("Array", 5));
-	push(OBJ_VAL(arrayClass)); /* protect from GC */
-	ObjInstance* instance = newInstance(arrayClass);
-	push(OBJ_VAL(instance)); /* protect from GC */
-	
-	int index = 0;
-	
+
+	ObjArray* array = newArray();
+	push(OBJ_VAL(array)); /* protect from GC */
+
 	if (*parser->current != ']') {
 		for (;;) {
 			skipWhitespace(parser);
 			Value elem = parseJsonValue(parser);
-			
-			/* Set numeric key as string */
-			char key[32];
-			snprintf(key, sizeof(key), "%d", index);
-			ObjString* keyStr = copyString(key, strlen(key));
-			push(OBJ_VAL(keyStr)); /* protect from GC */
-			tableSet(&instance->fields, keyStr, elem);
+			push(elem); /* protect from GC during grow */
+			writeArray(array, elem);
 			pop();
-			index++;
-			
+
 			skipWhitespace(parser);
 			if (!matchChar(parser, ',')) break;
 		}
 	}
-	
+
 	skipWhitespace(parser);
 	if (*parser->current == ']') parser->current++;
-	
-	/* Set length property */
-	ObjString* lenKey = copyString("length", 6);
-	push(OBJ_VAL(lenKey));
-	tableSet(&instance->fields, lenKey, NUMBER_VAL(index));
-	pop();
-	
-	pop(); /* instance */
-	pop(); /* arrayClass */
-	return OBJ_VAL(instance);
+
+	pop(); /* array */
+	return OBJ_VAL(array);
 }
 
 static Value parseJsonObject(JsonParser* parser) {
