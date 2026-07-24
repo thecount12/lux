@@ -1,0 +1,36 @@
+// post to fakestoreapi.com/products
+//
+// Two ways to build a JSON body:
+// 1) Hand-written JSON string — escape every " as \" inside the Lux string
+// 2) Class + toJSON() — preferred; no backslashes needed
+
+var url = "https://fakestoreapi.com/products";
+
+// --- 1) Raw JSON string (remember the backslashes) ---
+// Already JSON text — pass it straight to httpRequest. Do NOT wrap with toJSON().
+var body = "{\"title\":\"New Product\",\"price\":29.99}";
+var res = httpRequest("POST", url, body);
+print res;
+if (res != nil) {
+	print "cool: " + res;
+
+	var data = parseJSON(res);
+	if (data != nil) {
+		print data.id;
+	}
+} else {
+	print "failed";
+}
+
+// --- 2) Object + toJSON (no escaping) ---
+class Product {
+	init(title, price) {
+		this.title = title;
+		this.price = price;
+	}
+}
+var body2 = toJSON(Product("Product 3", 52.99));
+var res2 = httpRequest("POST", url, body2);
+if (res2 != nil) {
+	print "results: " + res2;
+}

@@ -1,0 +1,81 @@
+// GraphQL against https://graphqlplaceholder.vercel.app/graphql
+// Query + mutation examples (POST + Content-Type: application/json)
+
+var url = "https://graphqlplaceholder.vercel.app/graphql";
+
+class GraphQLRequest {
+	init(query) {
+		this.query = query;
+	}
+}
+
+class Headers {
+	init() {}
+}
+
+var headers = Headers();
+headers.Content_Type = "application/json";
+
+fun gql(document) {
+	var body = toJSON(GraphQLRequest(document));
+	return httpRequest("POST", url, body, headers);
+}
+
+// --- Query ---
+var query = "
+query {
+	userById(id: 1) {
+		id
+		name
+		email
+		phone
+	}
+}
+";
+
+var res = gql(query);
+if (res == nil) {
+	print "query failed";
+} else {
+	print res;
+	var data = parseJSON(res);
+	if (data != nil) {
+		var user = data.data.userById;
+		print "id: " + user.id;
+		print "name: " + user.name;
+		print "email: " + user.email;
+		print "phone: " + user.phone;
+	}
+}
+
+print "";
+
+// --- Mutation ---
+// String literals inside the GraphQL document still need \" in Lux.
+var mutation = "
+mutation {
+	createPost(post: {
+		title: \"Lorem Ipsum\",
+		body: \"Lorem Ipsum is simply dummy text.\",
+		userId: 1
+	}) {
+		id
+		title
+		body
+	}
+}
+";
+
+var res2 = gql(mutation);
+if (res2 == nil) {
+	print "mutation failed";
+} else {
+	print res2;
+	var data2 = parseJSON(res2);
+	if (data2 != nil) {
+		var post = data2.data.createPost;
+		print "created id: " + post.id;
+		print "title: " + post.title;
+		print "body: " + post.body;
+	}
+}

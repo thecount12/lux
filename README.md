@@ -123,17 +123,36 @@ See [BUILD.md](BUILD.md) for comprehensive platform-specific build guides:
 
 ### HTTP Client
 ```lux
-// GET request
-var resp = httpGet("https://api.example.com/users");
-print resp.statusCode;
-var data = parseJSON(resp.body);
-print data["name"];
+// GET — returns response body string, or nil on failure
+// Single object endpoint (property access works on all builds):
+var res = httpGet("https://fakestoreapi.com/products/1");
+if (res != nil) {
+    var data = parseJSON(res);
+    if (data != nil) {
+        print data.title;
+        print data.price;
+    }
+}
 
-// POST with custom headers
-var headers = {"Authorization": "Bearer token123", "Content-Type": "application/json"};
-var body = toJSON({"username": "alice", "email": "alice@example.com"});
+// Array endpoint (requires lux built with JSON→native-array parseJSON):
+// var list = parseJSON(httpGet("https://fakestoreapi.com/products"));
+// print list[0].title;
+
+// POST with custom headers (httpRequest also returns body string or nil)
+class Headers { init() {} }
+var headers = Headers();
+headers.Authorization = "Bearer token123";
+headers.Content_Type = "application/json";
+
+class User {
+    init(username, email) {
+        this.username = username;
+        this.email = email;
+    }
+}
+var body = toJSON(User("alice", "alice@example.com"));
 var resp = httpRequest("POST", "https://api.example.com/users", body, headers);
-if (resp.statusCode == 201) {
+if (resp != nil) {
     print "User created!";
 }
 ```
@@ -720,7 +739,7 @@ print "Elapsed: " + elapsed + " seconds";
 Lux includes native JSON parsing and serialization for easy data interchange.
 
 #### `parseJSON(jsonString)` → value or nil
-Parses a JSON string and returns a Lux value. JSON objects become Lux class instances with properties, and JSON arrays become objects with numeric string keys ("0", "1", "2", etc.) plus a `length` property.
+Parses a JSON string and returns a Lux value. JSON objects become Lux class instances with properties. JSON arrays become native Lux arrays (index with `arr[0]`, size with `arr.length`).
 
 ```lux
 var jsonStr = "{\"name\":\"Alice\",\"age\":30,\"active\":true}";
@@ -736,8 +755,8 @@ var arrStr = "[1,2,3,4,5]";
 var arr = parseJSON(arrStr);
 if (arr != nil) {
     print arr.length; // 5
-    print arr.0;      // 1
-    print arr.4;      // 5
+    print arr[0];     // 1
+    print arr[4];     // 5
 }
 
 // Nested objects
@@ -748,6 +767,12 @@ print data.user.name;  // Bob
 
 #### `toJSON(value)` → string or nil
 Converts a Lux value to a JSON string. Supports numbers, strings, booleans, nil, and objects (class instances).
+
+**JSON in Lux scripts — escaping tip:**
+- Inside a Lux string literal, every JSON `"` must be written as `\"`:
+  `parseJSON("{\"name\":\"Alice\"}")` or `httpPost(url, "{\"ok\":true}")`
+- Prefer building objects (classes) and calling `toJSON(...)` so you never hand-escape quotes.
+- Do **not** call `toJSON` on a string that is already JSON text — that double-encodes it into a JSON string value (`"{\"ok\":true}"` instead of `{"ok":true}`).
 
 ```lux
 class Person {
@@ -1086,18 +1111,18 @@ Lux includes HTTP client functions for making web requests on both Plan 9 and PO
 - **POSIX**: HTTP and HTTPS (uses libcurl)
 
 #### `httpGet(url)` → string or nil
-Makes an HTTP GET request and returns the response body as a string.
+Makes an HTTP GET request and returns the response body as a string (not a response object — there is no `statusCode` or `.body` field).
 
 ```lux
-// HTTPS example (both platforms)
-var response = httpGet("https://api.example.com/data");
+// HTTPS example (both platforms) — single product object
+var response = httpGet("https://fakestoreapi.com/products/1");
 if (response != nil) {
     print "Received: " + response;
-    
-    // Parse JSON responses
+
     var data = parseJSON(response);
     if (data != nil) {
-        print "Status: " + data.status;
+        print "Title: " + data.title;
+        print "Price: " + data.price;
     }
 } else {
     print "Request failed";

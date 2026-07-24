@@ -1,0 +1,17 @@
+// fakestoreapi.com
+// GET /products returns a JSON array (use data[0].title after rebuilding lux).
+// GET /products/1 returns one product object — works with property access.
+
+var url = "https://fakestoreapi.com/products/1";
+var res = httpGet(url);
+if (res != nil ) {
+	print "rec: " + res;
+
+	var data = parseJSON(res);
+	if (data != nil) {
+		print "title: " + data.title;
+		print "price: " + data.price;
+	}
+} else {
+	print "req failed";
+}

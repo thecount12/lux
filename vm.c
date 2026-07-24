@@ -1181,46 +1181,28 @@ static Value parseJsonNumber(JsonParser* parser) {
 static Value parseJsonArray(JsonParser* parser) {
 	parser->current++; /* skip [ */
 	skipWhitespace(parser);
-	
-	/* Create an instance to hold array elements */
-	ObjClass* arrayClass = newClass(copyString("Array", 5));
-	push(OBJ_VAL(arrayClass)); /* protect from GC */
-	ObjInstance* instance = newInstance(arrayClass);
-	push(OBJ_VAL(instance)); /* protect from GC */
-	
-	int index = 0;
-	
+
+	ObjArray* array = newArray();
+	push(OBJ_VAL(array)); /* protect from GC */
+
 	if (*parser->current != ']') {
 		for (;;) {
 			skipWhitespace(parser);
 			Value elem = parseJsonValue(parser);
-			
-			/* Set numeric key as string */
-			char key[32];
-			sprint(key, "%d", index);
-			ObjString* keyStr = copyString(key, strlen(key));
-			push(OBJ_VAL(keyStr)); /* protect from GC */
-			tableSet(&instance->fields, keyStr, elem);
+			push(elem); /* protect from GC during grow */
+			writeArray(array, elem);
 			pop();
-			index++;
-			
+
 			skipWhitespace(parser);
 			if (!matchChar(parser, ',')) break;
 		}
 	}
-	
+
 	skipWhitespace(parser);
 	if (*parser->current == ']') parser->current++;
-	
-	/* Set length property */
-	ObjString* lenKey = copyString("length", 6);
-	push(OBJ_VAL(lenKey));
-	tableSet(&instance->fields, lenKey, NUMBER_VAL(index));
-	pop();
-	
-	pop(); /* instance */
-	pop(); /* arrayClass */
-	return OBJ_VAL(instance);
+
+	pop(); /* array */
+	return OBJ_VAL(array);
 }
 
 static Value parseJsonObject(JsonParser* parser) {
@@ -1428,6 +1410,14 @@ static void serializeJsonValue(Value value, char** buffer, int* len, int* cap) {
 			str++;
 		}
 		appendChar(buffer, len, cap, '"');
+	} else if (IS_ARRAY(value)) {
+		ObjArray* arr = AS_ARRAY(value);
+		appendChar(buffer, len, cap, '[');
+		for (int i = 0; i < arr->count; i++) {
+			if (i > 0) appendChar(buffer, len, cap, ',');
+			serializeJsonValue(arr->elements[i], buffer, len, cap);
+		}
+		appendChar(buffer, len, cap, ']');
 	} else if (IS_INSTANCE(value)) {
 		serializeJsonObject(AS_INSTANCE(value), buffer, len, cap);
 	}
