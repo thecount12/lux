@@ -768,6 +768,12 @@ print data.user.name;  // Bob
 #### `toJSON(value)` → string or nil
 Converts a Lux value to a JSON string. Supports numbers, strings, booleans, nil, and objects (class instances).
 
+**JSON in Lux scripts — escaping tip:**
+- Inside a Lux string literal, every JSON `"` must be written as `\"`:
+  `parseJSON("{\"name\":\"Alice\"}")` or `httpPost(url, "{\"ok\":true}")`
+- Prefer building objects (classes) and calling `toJSON(...)` so you never hand-escape quotes.
+- Do **not** call `toJSON` on a string that is already JSON text — that double-encodes it into a JSON string value (`"{\"ok\":true}"` instead of `{"ok":true}`).
+
 ```lux
 class Person {
     init(name, age) {
