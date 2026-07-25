@@ -2510,6 +2510,7 @@ static Value _mwChainReq;
 static Value _mwChainRes;
 
 static Value resNextNative(int argCount, Value* args) {
+	Value* savedTop;
 	(void)argCount;
 	(void)args;
 	if (_mwChainMiddlewares == NULL) return NIL_VAL;
@@ -2517,6 +2518,7 @@ static Value resNextNative(int argCount, Value* args) {
 	if (_mwChainIndex < _mwChainMiddlewares->count) {
 		Value mwVal = _mwChainMiddlewares->elements[_mwChainIndex];
 		if (IS_CLOSURE(mwVal)) {
+			savedTop = vm.stackTop;
 			push(OBJ_VAL(mwVal));
 			push(_mwChainReq);
 			push(_mwChainRes);
@@ -2524,17 +2526,20 @@ static Value resNextNative(int argCount, Value* args) {
 			if (call(AS_CLOSURE(mwVal), 3)) {
 				run();
 			}
+			vm.stackTop = savedTop;
 		}
 	} else if (_mwChainHandler != NULL) {
 		ObjClosure* h = _mwChainHandler;
 		_mwChainHandler = NULL;
 		_mwChainMiddlewares = NULL;
+		savedTop = vm.stackTop;
 		push(OBJ_VAL(h));
 		push(_mwChainReq);
 		push(_mwChainRes);
 		if (call(h, 2)) {
 			run();
 		}
+		vm.stackTop = savedTop;
 	}
 	return NIL_VAL;
 }
@@ -2933,6 +2938,7 @@ static Value serverStartNative(int argCount, Value* args) {
 		}
 
 		if (handler != NULL) {
+			Value* savedTop = vm.stackTop;
 			if (middlewares != NULL && middlewares->count > 0) {
 				_mwChainMiddlewares = middlewares;
 				_mwChainIndex = 0;
@@ -2955,6 +2961,7 @@ static Value serverStartNative(int argCount, Value* args) {
 					run();
 				}
 			}
+			vm.stackTop = savedTop;
 		} else {
 			char errBody[256];
 			snprintf(errBody, sizeof(errBody), "{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
@@ -4135,6 +4142,9 @@ static bool importModule(ObjString* path) {
 
 static InterpretResult run() {
 	CallFrame* frame = &vm.frames[vm.frameCount -1];
+	/* Nested run() (HTTP handlers / middleware) must stop when its
+	 * callee returns, not continue into the suspended outer frames. */
+	int baseFrameCount = vm.frameCount - 1;
 
 #define READ_BYTE() (*frame->ip++)
 
@@ -4447,8 +4457,13 @@ static InterpretResult run() {
 				Value result = pop();
 				closeUpvalues(frame->slots);
 				vm.frameCount--;
-				if (vm.frameCount == 0) {
-					pop();
+				if (vm.frameCount == baseFrameCount) {
+					if (baseFrameCount == 0) {
+						pop();
+						return INTERPRET_OK;
+					}
+					vm.stackTop = frame->slots;
+					push(result);
 					return INTERPRET_OK;
 				}
 			

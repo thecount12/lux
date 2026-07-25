@@ -2341,6 +2341,7 @@ static Value _mwChainRes;
 static Value
 resNextNative(int argCount, Value* args)
 {
+	Value* savedTop;
 	(void)argCount;
 	(void)args;
 	if (_mwChainMiddlewares == nil) return NIL_VAL;
@@ -2348,6 +2349,7 @@ resNextNative(int argCount, Value* args)
 	if (_mwChainIndex < _mwChainMiddlewares->count) {
 		Value mwVal = _mwChainMiddlewares->elements[_mwChainIndex];
 		if (IS_CLOSURE(mwVal)) {
+			savedTop = vm.stackTop;
 			push(OBJ_VAL(mwVal));
 			push(_mwChainReq);
 			push(_mwChainRes);
@@ -2355,17 +2357,20 @@ resNextNative(int argCount, Value* args)
 			if (call(AS_CLOSURE(mwVal), 3)) {
 				run();
 			}
+			vm.stackTop = savedTop;
 		}
 	} else if (_mwChainHandler != nil) {
 		ObjClosure* h = _mwChainHandler;
 		_mwChainHandler = nil;
 		_mwChainMiddlewares = nil;
+		savedTop = vm.stackTop;
 		push(OBJ_VAL(h));
 		push(_mwChainReq);
 		push(_mwChainRes);
 		if (call(h, 2)) {
 			run();
 		}
+		vm.stackTop = savedTop;
 	}
 	return NIL_VAL;
 }
@@ -2803,6 +2808,7 @@ serverStartNative(int argCount, Value* args)
 		pop();
 
 		if (handler != nil) {
+			Value* savedTop = vm.stackTop;
 			if (middlewares != nil && middlewares->count > 0) {
 				_mwChainMiddlewares = middlewares;
 				_mwChainIndex = 0;
@@ -2825,6 +2831,7 @@ serverStartNative(int argCount, Value* args)
 					run();
 				}
 			}
+			vm.stackTop = savedTop;
 		} else {
 			char errBody[256];
 			snprint(errBody, sizeof(errBody), "{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
@@ -4053,6 +4060,9 @@ run(void)
 	register uchar instruction;
 	Value a, b, constant;
 	double da, db;
+	/* Nested run() (HTTP handlers / middleware) must stop when its
+	 * callee returns, not continue into the suspended outer frames. */
+	int baseFrameCount = vm.frameCount - 1;
 
 #define READ_BYTE() (*frame->ip++)
 
@@ -4430,8 +4440,13 @@ run(void)
 			result = pop();
 			closeUpvalues(frame->slots);
 			vm.frameCount--;
-			if (vm.frameCount == 0) {
-				pop();
+			if (vm.frameCount == baseFrameCount) {
+				if (baseFrameCount == 0) {
+					pop();
+					return INTERPRET_OK;
+				}
+				vm.stackTop = frame->slots;
+				push(result);
 				return INTERPRET_OK;
 			}
 			
