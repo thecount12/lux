@@ -1290,15 +1290,14 @@ curl -H 'Host: williamgunnells.com' http://127.0.0.1:8080/api/hello
 - `res.json("{\"a\":1}")` returns a JSON **string** (`"{\"a\":1}"`), not an object.
 - `Dict` data lives in native storage; `res.json(aDict)` only sees internal fields (e.g. `_ptr`). Use `parseJSON`/`toJSON`, `dict.iter()`, or `res.send` with a string you build. See `tests/test_dict.lux`.
 
-**Middleware (`server.use`) — known issue:** `server.use(logger)` can crash the interpreter after a request on Plan 9 (re-entrant `run()` in the HTTP server). Use `print` inside handlers until fixed. See [TODO.md](TODO.md).
+**Middleware (`server.use`):** Register functions with signature `(req, res, next)`. Call `next()` to continue the chain (more middleware, then the matched route handler). See `examples/server_middleware.lux`.
 
 ```lux
-/* Disabled until middleware stack is fixed — do not uncomment on Plan 9 yet */
 fun logger(req, res, next) {
   print "Request: " + req.method + " " + req.path;
   next();
 }
-/* server.use(logger); */
+server.use(logger);
 ```
 
 **Test from another machine:**

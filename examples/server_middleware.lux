@@ -1,0 +1,37 @@
+/* HTTP server with request-logging middleware.
+ * Middleware signature: fun name(req, res, next) { ...; next(); }
+ * Call next() to continue the chain (more middleware, then the route handler).
+ */
+
+fun handleHello(req, res) { res.send("Hello from Lux!"); }
+
+fun handleData(req, res) {
+  var body = parseJSON(req.body);
+  if (body == nil) {
+    res.status(400);
+    res.send("{\"error\":\"invalid json\"}");
+    return;
+  }
+  print body;
+  res.status(201);
+  res.json(body);   /* echo parsed JSON, e.g. {"name":"John"} */
+}
+
+/* Fixed JSON response (not a Lux object literal — use parseJSON): */
+fun handleAck(req, res) {
+  res.status(201);
+  res.json(parseJSON("{\"status\":\"received\"}"));
+}
+
+fun logger(req, res, next) {
+  print "Request: " + req.method + " " + req.path;
+  next();
+}
+
+var server = Server(8080);
+server.get("/hello", handleHello);
+server.post("/data", handleData);
+server.post("/ack", handleAck);
+server.use(logger);
+server.static("public");   /* serve GET files from ./public/ */
+server.start();
