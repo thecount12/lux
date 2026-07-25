@@ -1300,6 +1300,20 @@ fun logger(req, res, next) {
 server.use(logger);
 ```
 
+Omit `next()` to short-circuit — send a response yourself and the route handler never runs:
+
+```lux
+fun requireAuth(req, res, next) {
+  if (req.path == "/secret") {
+    res.status(401);
+    res.send("unauthorized");
+    return;   /* no next() → handler never runs */
+  }
+  next();
+}
+server.use(requireAuth);
+```
+
 **Test from another machine:**
 ```sh
 curl http://10.0.0.31:8080/hello
