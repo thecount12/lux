@@ -16,4 +16,3 @@
   {% include "footer.tpl" %}
 </body>
 </html>
-

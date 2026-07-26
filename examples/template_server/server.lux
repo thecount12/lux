@@ -1,0 +1,233 @@
+/* Template server — isolated from examples/static (JS static files).
+ *
+ * Supports:
+ *   {{ var }}              string interpolation (HTML-escaped)
+ *   {% for x in items %}   array loops (non-nested)
+ *   {% include "file" %}   includes relative to the template path
+ *
+ * Run from this directory:
+ *   cd examples/template_server && ../../posix/lux server.lux
+ *
+ *   curl http://127.0.0.1:8083/
+ *   curl http://127.0.0.1:8083/list
+ *
+ * Notes:
+ *   - Dict is string→string only, so context is a small class.
+ *   - Array length is `.length` (len() is for strings).
+ */
+
+fun escapeHtml(s) {
+  if (s == nil) return "";
+  var out = s + "";
+  var parts = strSplit(out, "&");
+  out = "";
+  var i = 0;
+  while (i < parts.length) {
+    if (i > 0) out = out + "&amp;";
+    out = out + parts[i];
+    i = i + 1;
+  }
+  parts = strSplit(out, "<");
+  out = "";
+  i = 0;
+  while (i < parts.length) {
+    if (i > 0) out = out + "&lt;";
+    out = out + parts[i];
+    i = i + 1;
+  }
+  parts = strSplit(out, ">");
+  out = "";
+  i = 0;
+  while (i < parts.length) {
+    if (i > 0) out = out + "&gt;";
+    out = out + parts[i];
+    i = i + 1;
+  }
+  parts = strSplit(out, "\"");
+  out = "";
+  i = 0;
+  while (i < parts.length) {
+    if (i > 0) out = out + "&quot;";
+    out = out + parts[i];
+    i = i + 1;
+  }
+  parts = strSplit(out, "'");
+  out = "";
+  i = 0;
+  while (i < parts.length) {
+    if (i > 0) out = out + "&#39;";
+    out = out + parts[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+/* Fields used by templates/index.tpl */
+fun lookup(ctx, key) {
+  if (key == nil) return nil;
+  key = strTrim(key + "");
+  if (key == "title") return ctx.title;
+  if (key == "items") return ctx.items;
+  return nil;
+}
+
+fun lastIndexOf(text, needle) {
+  var last = -1;
+  var cursor = 0;
+  while (true) {
+    var idx = strFind(text, needle, cursor);
+    if (idx == -1) break;
+    last = idx;
+    cursor = idx + 1;
+  }
+  return last;
+}
+
+fun replaceLoopVar(src, varName, elem) {
+  var out = "";
+  var cursor = 0;
+  while (cursor < len(src)) {
+    var openIdx = strFind(src, "{{", cursor);
+    if (openIdx == -1) {
+      out = out + strSlice(src, cursor, len(src));
+      break;
+    }
+    out = out + strSlice(src, cursor, openIdx);
+    var closeIdx = strFind(src, "}}", openIdx + 2);
+    if (closeIdx == -1) {
+      out = out + strSlice(src, openIdx, len(src));
+      break;
+    }
+    var key = strTrim(strSlice(src, openIdx + 2, closeIdx));
+    if (key == varName) {
+      out = out + escapeHtml(elem + "");
+    } else {
+      out = out + strSlice(src, openIdx, closeIdx + 2);
+    }
+    cursor = closeIdx + 2;
+  }
+  return out;
+}
+
+fun interpolateString(src, ctx) {
+  var out = "";
+  var cursor = 0;
+  while (cursor < len(src)) {
+    var openIdx = strFind(src, "{{", cursor);
+    if (openIdx == -1) {
+      out = out + strSlice(src, cursor, len(src));
+      break;
+    }
+    out = out + strSlice(src, cursor, openIdx);
+    var closeIdx = strFind(src, "}}", openIdx + 2);
+    if (closeIdx == -1) {
+      out = out + strSlice(src, openIdx, len(src));
+      break;
+    }
+    var key = strTrim(strSlice(src, openIdx + 2, closeIdx));
+    var val = lookup(ctx, key);
+    if (val == nil) {
+      out = out + "";
+    } else {
+      out = out + escapeHtml(val + "");
+    }
+    cursor = closeIdx + 2;
+  }
+  return out;
+}
+
+/* Flatten {% include "file" %} only (no for / interpolate). */
+fun expandIncludes(path) {
+  var src = readFile(path);
+  if (src == nil) {
+    return "Template not found: " + path;
+  }
+  var cursor = 0;
+  while (true) {
+    var incStart = strFind(src, "{% include \"", cursor);
+    if (incStart == -1) break;
+    var quoteStart = incStart + len("{% include \"");
+    var quoteEnd = strFind(src, "\"", quoteStart);
+    if (quoteEnd == -1) break;
+    var incPath = strSlice(src, quoteStart, quoteEnd);
+    var slashIdx = lastIndexOf(path, "/");
+    var base = "";
+    if (slashIdx != -1) {
+      base = strSlice(path, 0, slashIdx + 1);
+    }
+    var incContent = expandIncludes(base + incPath);
+    var tagEnd = strFind(src, "%}", quoteEnd);
+    if (tagEnd == -1) break;
+    tagEnd = tagEnd + len("%}");
+    src = strSlice(src, 0, incStart) + incContent + strSlice(src, tagEnd, len(src));
+    cursor = incStart + len(incContent);
+  }
+  return src;
+}
+
+/* Expand {% for item in items %} ... {% endfor %} (non-nested). */
+fun renderFors(outSrc, ctx) {
+  var cursor = 0;
+  while (true) {
+    var forStart = strFind(outSrc, "{% for ", cursor);
+    if (forStart == -1) break;
+    var forTagEnd = strFind(outSrc, "%}", forStart);
+    if (forTagEnd == -1) break;
+    var forExpr = strSlice(outSrc, forStart + len("{% for "), forTagEnd);
+    var inIdx = strFind(forExpr, " in ");
+    if (inIdx == -1) {
+      cursor = forTagEnd + 2;
+      continue;
+    }
+    var varName = strTrim(strSlice(forExpr, 0, inIdx));
+    var iterableKey = strTrim(strSlice(forExpr, inIdx + len(" in "), len(forExpr)));
+    var endTag = strFind(outSrc, "{% endfor %}", forTagEnd);
+    if (endTag == -1) break;
+
+    var inner = strSlice(outSrc, forTagEnd + len("%}"), endTag);
+    var iterable = lookup(ctx, iterableKey);
+    var rendered = "";
+    if (iterable != nil) {
+      var j = 0;
+      while (j < iterable.length) {
+        var elem = iterable[j];
+        rendered = rendered + interpolateString(replaceLoopVar(inner, varName, elem), ctx);
+        j = j + 1;
+      }
+    }
+    outSrc = strSlice(outSrc, 0, forStart) + rendered +
+             strSlice(outSrc, endTag + len("{% endfor %}"), len(outSrc));
+    cursor = forStart + len(rendered);
+  }
+  return outSrc;
+}
+
+fun renderTemplate(path, ctx) {
+  var src = expandIncludes(path);
+  src = renderFors(src, ctx);
+  return interpolateString(src, ctx);
+}
+
+class TplCtx {
+  init(title, items) {
+    this.title = title;
+    this.items = items;
+  }
+}
+
+fun handleRoot(req, res) {
+  var ctx = TplCtx("Lux Template Example", ["One", "Two", "Three"]);
+  res.html(renderTemplate("templates/index.tpl", ctx));
+}
+
+fun handleList(req, res) {
+  var ctx = TplCtx("Lux Template List", ["Apple", "Banana", "Cherry", "Date"]);
+  res.html(renderTemplate("templates/index.tpl", ctx));
+}
+
+var server = Server(8083);
+server.get("/", handleRoot);
+server.get("/list", handleList);
+print "Starting template server on http://localhost:8083/";
+print "Run from examples/template_server so templates/ resolves.";
+server.start();

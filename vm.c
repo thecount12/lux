@@ -2331,6 +2331,31 @@ resSendNative(int argCount, Value* args)
 	return NIL_VAL;
 }
 
+/* res.html(body) */
+static Value
+resHtmlNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	ObjInstance* res = AS_INSTANCE(args[0]);
+	Value fdVal;
+	ObjString* fdKey = copyString("_fd", 3);
+	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
+		return NIL_VAL;
+	int fd = (int)AS_NUMBER(fdVal);
+	Value statusVal;
+	ObjString* statusKey = copyString("_statusCode", 11);
+	int statusCode = 200;
+	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
+		statusCode = (int)AS_NUMBER(statusVal);
+	char* statusText = (statusCode == 200) ? "OK" :
+		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
+		(statusCode == 500) ? "Internal Server Error" : "OK";
+	ObjString* bodyObj = valueToString(args[1]);
+	sendHttpResponseEx(fd, statusCode, statusText, "text/html; charset=utf-8", bodyObj->chars);
+	return NIL_VAL;
+}
+
 /* res.next() - advances middleware chain */
 static ObjArray* _mwChainMiddlewares;
 static int _mwChainIndex;
@@ -2692,67 +2717,6 @@ serverStartNative(int argCount, Value* args)
 		}
 		fprint(1, "%s %s Host:%s\n", req.method, req.path, req.host);
 
-		/* Static file serving: vhost root, else server.static fallback */
-		{
-			char* staticDir = serverLookupVhostRoot(server, req.host);
-			if (staticDir == nil)
-				staticDir = defaultStaticDir;
-			if (staticDir != nil && strcmp(req.method, "GET") == 0) {
-			char filepath[2048];
-			char* reqPath;
-			int dirLen, pathLen, ffd, nread, hlen;
-			long fileLen;
-			Dir* d;
-			char* content;
-			char* mime;
-			char header[512];
-			reqPath = req.path;
-			if (strstr(reqPath, "..") == nil) {
-				dirLen = strlen(staticDir);
-				pathLen = strlen(reqPath);
-				if (dirLen + pathLen + 2 < sizeof(filepath)) {
-					snprint(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
-					if (pathLen > 0 && (reqPath[pathLen - 1] == '/' || (pathLen == 1 && reqPath[0] == '/')))
-						strncat(filepath, "index.html", sizeof(filepath) - strlen(filepath) - 1);
-					ffd = open(filepath, OREAD);
-					if (ffd >= 0) {
-						d = dirfstat(ffd);
-						if (d != nil) {
-							fileLen = d->length;
-							free(d);
-							if (fileLen > 0 && fileLen < (long)(1024*1024)) {
-								content = malloc((ulong)fileLen);
-								if (content != nil) {
-									nread = read(ffd, content, (int)fileLen);
-									mime = getMimeType(filepath);
-									hlen = snprint(header, sizeof(header),
-										"HTTP/1.0 200 OK\r\n"
-										"Content-Type: %s\r\n"
-										"Content-Length: %ld\r\n"
-										"Server: lux/1.0\r\n"
-										"Connection: close\r\n\r\n",
-										mime, (long)fileLen);
-									if (hlen > 0) write(dfd, header, hlen);
-									if (nread > 0) write(dfd, content, nread);
-									free(content);
-								} else {
-									sendHttpResponse(dfd, 500, "Internal Server Error",
-										"{\"error\":\"out of memory\"}");
-								}
-							} else {
-								sendHttpResponse(dfd, 500, "Internal Server Error",
-									"{\"error\":\"file too large or empty\"}");
-							}
-						}
-						close(ffd);
-						close(dfd);
-						continue;
-					}
-				}
-			}
-			}
-		}
-
 		Value mwVal;
 		ObjArray* middlewares = nil;
 		if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
@@ -2833,9 +2797,74 @@ serverStartNative(int argCount, Value* args)
 			}
 			vm.stackTop = savedTop;
 		} else {
-			char errBody[256];
-			snprint(errBody, sizeof(errBody), "{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
-			sendHttpResponse(dfd, 404, "Not Found", errBody);
+			/* No route: server.static / vhost root fallback */
+			int servedStatic = 0;
+			char* staticDir = serverLookupVhostRoot(server, req.host);
+			if (staticDir == nil)
+				staticDir = defaultStaticDir;
+			if (staticDir != nil && strcmp(req.method, "GET") == 0) {
+				char filepath[2048];
+				char* reqPath;
+				int dirLen, pathLen, ffd, nread, hlen;
+				long fileLen;
+				Dir* d;
+				char* content;
+				char* mime;
+				char header[512];
+				reqPath = req.path;
+				if (strstr(reqPath, "..") == nil) {
+					dirLen = strlen(staticDir);
+					pathLen = strlen(reqPath);
+					if (dirLen + pathLen + 2 < sizeof(filepath)) {
+						snprint(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
+						if (pathLen > 0 && (reqPath[pathLen - 1] == '/' ||
+						    (pathLen == 1 && reqPath[0] == '/')))
+							strncat(filepath, "index.html",
+								sizeof(filepath) - strlen(filepath) - 1);
+						ffd = open(filepath, OREAD);
+						if (ffd >= 0) {
+							d = dirfstat(ffd);
+							if (d != nil) {
+								fileLen = d->length;
+								free(d);
+								if (fileLen > 0 && fileLen < (long)(1024*1024)) {
+									content = malloc((ulong)fileLen);
+									if (content != nil) {
+										nread = read(ffd, content, (int)fileLen);
+										mime = getMimeType(filepath);
+										hlen = snprint(header, sizeof(header),
+											"HTTP/1.0 200 OK\r\n"
+											"Content-Type: %s\r\n"
+											"Content-Length: %ld\r\n"
+											"Server: lux/1.0\r\n"
+											"Connection: close\r\n\r\n",
+											mime, (long)fileLen);
+										if (hlen > 0) write(dfd, header, hlen);
+										if (nread > 0) write(dfd, content, nread);
+										free(content);
+										servedStatic = 1;
+									} else {
+										sendHttpResponse(dfd, 500, "Internal Server Error",
+											"{\"error\":\"out of memory\"}");
+										servedStatic = 1;
+									}
+								} else {
+									sendHttpResponse(dfd, 500, "Internal Server Error",
+										"{\"error\":\"file too large or empty\"}");
+									servedStatic = 1;
+								}
+							}
+							close(ffd);
+						}
+					}
+				}
+			}
+			if (!servedStatic) {
+				char errBody[256];
+				snprint(errBody, sizeof(errBody),
+					"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
+				sendHttpResponse(dfd, 404, "Not Found", errBody);
+			}
 		}
 		close(dfd);
 	}
@@ -3662,6 +3691,7 @@ initVM(void)
 
 	serverResClass = newClass(copyString("Res", 3));
 	tableSet(&serverResClass->methods, copyString("send", 4), OBJ_VAL(newNative(resSendNative)));
+	tableSet(&serverResClass->methods, copyString("html", 4), OBJ_VAL(newNative(resHtmlNative)));
 	tableSet(&serverResClass->methods, copyString("json", 4), OBJ_VAL(newNative(resJsonNative)));
 	tableSet(&serverResClass->methods, copyString("status", 6), OBJ_VAL(newNative(resStatusNative)));
 

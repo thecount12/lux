@@ -2502,6 +2502,29 @@ static Value resSendNative(int argCount, Value* args) {
 	return NIL_VAL;
 }
 
+/* res.html(body) */
+static Value resHtmlNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	ObjInstance* res = AS_INSTANCE(args[0]);
+	Value fdVal;
+	ObjString* fdKey = copyString("_fd", 3);
+	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
+		return NIL_VAL;
+	int fd = (int)AS_NUMBER(fdVal);
+	Value statusVal;
+	ObjString* statusKey = copyString("_statusCode", 11);
+	int statusCode = 200;
+	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
+		statusCode = (int)AS_NUMBER(statusVal);
+	const char* statusText = (statusCode == 200) ? "OK" :
+		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
+		(statusCode == 500) ? "Internal Server Error" : "OK";
+	ObjString* bodyObj = valueToString(args[1]);
+	sendHttpResponseEx(fd, statusCode, statusText, "text/html; charset=utf-8", bodyObj->chars);
+	return NIL_VAL;
+}
+
 /* res.next() - advances middleware chain, called by middleware */
 static ObjArray* _mwChainMiddlewares;
 static int _mwChainIndex;
@@ -2855,53 +2878,6 @@ static Value serverStartNative(int argCount, Value* args) {
 		pop();
 		pop();
 
-		/* Static file serving: vhost root, else server.static fallback */
-		{
-			const char* staticDir = serverLookupVhostRoot(server, req.host);
-			if (staticDir == NULL)
-				staticDir = defaultStaticDir;
-			if (staticDir != NULL && strcmp(req.method, "GET") == 0) {
-			char filepath[2048];
-			const char* reqPath = req.path;
-			if (strstr(reqPath, "..") != NULL) {
-				/* Reject path traversal */
-			} else {
-				size_t dirLen = strlen(staticDir);
-				size_t pathLen = strlen(reqPath);
-				if (dirLen + pathLen + 2 < sizeof(filepath)) {
-					snprintf(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
-					if (pathLen > 0 && (reqPath[pathLen - 1] == '/' || (pathLen == 1 && reqPath[0] == '/'))) {
-						strncat(filepath, "index.html", sizeof(filepath) - strlen(filepath) - 1);
-					}
-					FILE* f = fopen(filepath, "rb");
-					if (f != NULL) {
-						fseek(f, 0, SEEK_END);
-						long fsize = ftell(f);
-						rewind(f);
-						if (fsize > 0 && fsize < 1024 * 1024) {
-							char* content = malloc((size_t)fsize);
-							if (content != NULL) {
-								size_t nread = fread(content, 1, (size_t)fsize, f);
-								const char* mime = getMimeType(filepath);
-								sendHttpResponseBinary(client_fd, 200, "OK", mime, content, (int)nread);
-								free(content);
-							} else {
-								sendHttpResponse(client_fd, 500, "Internal Server Error",
-									"{\"error\":\"out of memory\"}");
-							}
-						} else {
-							sendHttpResponse(client_fd, 500, "Internal Server Error",
-								"{\"error\":\"file too large or empty\"}");
-						}
-						fclose(f);
-						close(client_fd);
-						continue;
-					}
-				}
-			}
-			}
-		}
-
 		Value mwVal;
 		ObjArray* middlewares = NULL;
 		if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
@@ -2963,9 +2939,59 @@ static Value serverStartNative(int argCount, Value* args) {
 			}
 			vm.stackTop = savedTop;
 		} else {
-			char errBody[256];
-			snprintf(errBody, sizeof(errBody), "{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
-			sendHttpResponse(client_fd, 404, "Not Found", errBody);
+			/* No route: server.static / vhost root fallback */
+			int servedStatic = 0;
+			const char* staticDir = serverLookupVhostRoot(server, req.host);
+			if (staticDir == NULL)
+				staticDir = defaultStaticDir;
+			if (staticDir != NULL && strcmp(req.method, "GET") == 0) {
+				char filepath[2048];
+				const char* reqPath = req.path;
+				if (strstr(reqPath, "..") == NULL) {
+					size_t dirLen = strlen(staticDir);
+					size_t pathLen = strlen(reqPath);
+					if (dirLen + pathLen + 2 < sizeof(filepath)) {
+						snprintf(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
+						if (pathLen > 0 && (reqPath[pathLen - 1] == '/' ||
+						    (pathLen == 1 && reqPath[0] == '/'))) {
+							strncat(filepath, "index.html",
+								sizeof(filepath) - strlen(filepath) - 1);
+						}
+						FILE* f = fopen(filepath, "rb");
+						if (f != NULL) {
+							fseek(f, 0, SEEK_END);
+							long fsize = ftell(f);
+							rewind(f);
+							if (fsize > 0 && fsize < 1024 * 1024) {
+								char* content = malloc((size_t)fsize);
+								if (content != NULL) {
+									size_t nread = fread(content, 1, (size_t)fsize, f);
+									const char* mime = getMimeType(filepath);
+									sendHttpResponseBinary(client_fd, 200, "OK", mime,
+										content, (int)nread);
+									free(content);
+									servedStatic = 1;
+								} else {
+									sendHttpResponse(client_fd, 500, "Internal Server Error",
+										"{\"error\":\"out of memory\"}");
+									servedStatic = 1;
+								}
+							} else {
+								sendHttpResponse(client_fd, 500, "Internal Server Error",
+									"{\"error\":\"file too large or empty\"}");
+								servedStatic = 1;
+							}
+							fclose(f);
+						}
+					}
+				}
+			}
+			if (!servedStatic) {
+				char errBody[256];
+				snprintf(errBody, sizeof(errBody),
+					"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
+				sendHttpResponse(client_fd, 404, "Not Found", errBody);
+			}
 		}
 		close(client_fd);
 	}
@@ -3821,6 +3847,7 @@ void initVM() {
 	/* Server and Res classes for HTTP routing */
 	serverResClass = newClass(copyString("Res", 3));
 	tableSet(&serverResClass->methods, copyString("send", 4), OBJ_VAL(newNative(resSendNative)));
+	tableSet(&serverResClass->methods, copyString("html", 4), OBJ_VAL(newNative(resHtmlNative)));
 	tableSet(&serverResClass->methods, copyString("json", 4), OBJ_VAL(newNative(resJsonNative)));
 	tableSet(&serverResClass->methods, copyString("status", 6), OBJ_VAL(newNative(resStatusNative)));
 

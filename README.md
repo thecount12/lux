@@ -1225,10 +1225,11 @@ curl -X POST http://localhost:8080/echo -d '{"test":"data"}'
 
 #### `Server` class — routing, static files, virtual hosts, middleware (Plan 9 and POSIX)
 
-Create a configurable HTTP server with user-defined routes. See `examples/static_server.lux`, `examples/vhost_server.lux`, and `tests/test_http_server_routes.lux`.
+Create a configurable HTTP server with user-defined routes. See `examples/static_server.lux`, `examples/template_server/server.lux`, `examples/vhost_server.lux`, and `tests/test_http_server_routes.lux`.
 
 ```lux
 fun handleHello(req, res) { res.send("Hello from Lux!"); }
+/* res.send → text/plain; res.html → text/html; res.json → application/json */
 
 fun handleData(req, res) {
   var body = parseJSON(req.body);
