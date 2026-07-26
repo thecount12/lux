@@ -764,14 +764,17 @@ stringMatchAt(const char* text, int textLen, int index, const char* pattern, int
 	return true;
 }
 
-/* len(string) -> number */
+/* len(string|array) -> number */
 static Value
 lenNative(int argCount, Value* args)
 {
-	if (argCount != 1 || !IS_STRING(args[0]))
+	if (argCount != 1)
 		return NIL_VAL;
-
-	return NUMBER_VAL(AS_STRING(args[0])->length);
+	if (IS_STRING(args[0]))
+		return NUMBER_VAL(AS_STRING(args[0])->length);
+	if (IS_ARRAY(args[0]))
+		return NUMBER_VAL((double)AS_ARRAY(args[0])->count);
+	return NIL_VAL;
 }
 
 /* args() -> array of strings (script arguments after path) */
@@ -4284,7 +4287,9 @@ run(void)
 		case OP_LESS:
 			b = pop(); a = pop();
 			if (!IS_NUMBER(a) || !IS_NUMBER(b)) {
-				runtimeError("Operands must be numbers.");
+				runtimeError("Operands must be numbers (got %s < %s).",
+					IS_OBJ(a) ? "obj" : (IS_NIL(a) ? "nil" : "other"),
+					IS_OBJ(b) ? "obj" : (IS_NUMBER(b) ? "num" : (IS_NIL(b) ? "nil" : "other")));
 				return INTERPRET_RUNTIME_ERROR;
 			}
 			push(BOOL_VAL(AS_NUMBER(a) < AS_NUMBER(b)));

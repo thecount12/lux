@@ -746,12 +746,15 @@ static bool stringMatchAt(const char* text, int textLen, int index, const char* 
 	return true;
 }
 
-/* len(string) -> number */
+/* len(string|array) -> number */
 static Value lenNative(int argCount, Value* args) {
-	if (argCount != 1 || !IS_STRING(args[0]))
+	if (argCount != 1)
 		return NIL_VAL;
-
-	return NUMBER_VAL(AS_STRING(args[0])->length);
+	if (IS_STRING(args[0]))
+		return NUMBER_VAL(AS_STRING(args[0])->length);
+	if (IS_ARRAY(args[0]))
+		return NUMBER_VAL((double)AS_ARRAY(args[0])->count);
+	return NIL_VAL;
 }
 
 /* args() -> array of strings (script arguments after path) */
