@@ -171,6 +171,8 @@ fun renderFors(outSrc, ctx) {
   var iterable = nil;
   var rendered = "";
   var elem = nil;
+  var replaced = "";
+  var piece = "";
   while (true) {
     var forStart = strFind(outSrc, "{% for ", cursor);
     if (forStart == -1) break;
@@ -195,7 +197,10 @@ fun renderFors(outSrc, ctx) {
       j = 0;
       while (j < L) {
         elem = iterable[j];
-        rendered = rendered + interpolateString(replaceLoopVar(inner, varName, elem), ctx);
+        /* Flatten nested calls — Plan 9 mishandles stacked calls. */
+        replaced = replaceLoopVar(inner, varName, elem);
+        piece = interpolateString(replaced, ctx);
+        rendered = rendered + piece;
         j = j + 1;
       }
     }
