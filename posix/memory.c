@@ -200,6 +200,7 @@ static void markRoots() {
 	markObject((Obj*)vm.initString);
 	if (vm.scriptArgs != NULL)
 		markObject((Obj*)vm.scriptArgs);
+	markServerRoots();
 }
 
 static void traceReferences() {

@@ -258,6 +258,8 @@ markRoots()
 	markObject((Obj*)vm.initString);
 	if (vm.scriptArgs != nil)
 		markObject((Obj*)vm.scriptArgs);
+	/* C-owned classes used by HTTP / Dict natives (not always in globals). */
+	markServerRoots();
 }
 
 static void 

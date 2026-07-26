@@ -2875,9 +2875,8 @@ static Value serverStartNative(int argCount, Value* args) {
 
 		Value reqVal = OBJ_VAL(reqObj);
 		Value resVal = OBJ_VAL(resObj);
-		pop();
-		pop();
-
+		/* Keep req/res on the stack until handler args are pushed so GC
+		 * cannot collect them during copyString in middleware lookup. */
 		Value mwVal;
 		ObjArray* middlewares = NULL;
 		if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
@@ -2913,6 +2912,13 @@ static Value serverStartNative(int argCount, Value* args) {
 			}
 		}
 
+		Value nextFn = NIL_VAL;
+		if (handler != NULL && middlewares != NULL && middlewares->count > 0)
+			nextFn = OBJ_VAL(newNative(resNextNative));
+
+		pop(); /* res */
+		pop(); /* req */
+
 		if (handler != NULL) {
 			Value* savedTop = vm.stackTop;
 			if (middlewares != NULL && middlewares->count > 0) {
@@ -2925,7 +2931,7 @@ static Value serverStartNative(int argCount, Value* args) {
 				push(OBJ_VAL(firstMw));
 				push(reqVal);
 				push(resVal);
-				push(OBJ_VAL(newNative(resNextNative)));
+				push(nextFn);
 				if (call(AS_CLOSURE(firstMw), 3)) {
 					run();
 				}
@@ -3891,6 +3897,12 @@ void initVM() {
 	defineNative("dbConnect", dbConnectNative);
 	defineNative("dbQuery", dbQueryNative);
 	defineNative("dbClose", dbCloseNative);
+}
+
+void markServerRoots(void) {
+	if (serverResClass != NULL) markObject((Obj*)serverResClass);
+	if (serverClass != NULL) markObject((Obj*)serverClass);
+	if (dictClass != NULL) markObject((Obj*)dictClass);
 }
 
 void freeVM() {

@@ -14,6 +14,7 @@ typedef enum {
 void initVM(void);
 void freeVM(void);
 void setScriptArgs(int argc, char** argv);
+void markServerRoots(void);
 
 InterpretResult interpret(char* source);
 void push(Value value);

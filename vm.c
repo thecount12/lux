@@ -2768,8 +2768,13 @@ serverStartNative(int argCount, Value* args)
 
 		Value reqVal = OBJ_VAL(reqObj);
 		Value resVal = OBJ_VAL(resObj);
-		pop();
-		pop();
+
+		Value nextFn = NIL_VAL;
+		if (handler != nil && middlewares != nil && middlewares->count > 0)
+			nextFn = OBJ_VAL(newNative(resNextNative));
+
+		pop(); /* res */
+		pop(); /* req */
 
 		if (handler != nil) {
 			Value* savedTop = vm.stackTop;
@@ -2783,7 +2788,7 @@ serverStartNative(int argCount, Value* args)
 				push(OBJ_VAL(firstMw));
 				push(reqVal);
 				push(resVal);
-				push(OBJ_VAL(newNative(resNextNative)));
+				push(nextFn);
 				if (call(AS_CLOSURE(firstMw), 3)) {
 					run();
 				}
@@ -3764,6 +3769,14 @@ initVM(void)
 	defineNative("s3ListObjects", s3ListObjectsNative);
 	defineNative("s3GetObject", s3GetObjectNative);
 	defineNative("s3PutObject", s3PutObjectNative);
+}
+
+void
+markServerRoots(void)
+{
+	if (serverResClass != nil) markObject((Obj*)serverResClass);
+	if (serverClass != nil) markObject((Obj*)serverClass);
+	if (dictClass != nil) markObject((Obj*)dictClass);
 }
 
 void 
