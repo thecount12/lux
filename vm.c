@@ -4419,19 +4419,19 @@ run(void)
 		}
 
 		case OP_JUMP: {
-			unsigned char offset = READ_SHORT(); // uint16_t in posix linux
+			ushort offset = READ_SHORT();
 			frame->ip += offset;
 			break;			
 		}
 
 		case OP_JUMP_IF_FALSE: {
-			unsigned char offset = READ_SHORT();
+			ushort offset = READ_SHORT();
 			if (isFalsey(peek(0))) frame->ip += offset;
 			break;
 		}
 		
 		case OP_LOOP: {
-			unsigned char offset = READ_SHORT();
+			ushort offset = READ_SHORT();
 			frame->ip -= offset;
 			break;
 		}

@@ -188,15 +188,25 @@ fun expandIncludes(path) {
   return src;
 }
 
-fun renderFors(outSrc, ctx) {
-  var cursor = 0;
+fun renderItemList(inner, varName, items, ctx) {
+  var out = "";
   var j = 0;
-  var L = 0;
-  var iterable = nil;
-  var rendered = "";
+  var n = len(items);
   var elem = nil;
   var replaced = "";
   var piece = "";
+  while (j < n) {
+    elem = items[j];
+    replaced = replaceLoopVar(inner, varName, elem);
+    piece = interpolateString(replaced, ctx);
+    out = out + piece;
+    j = j + 1;
+  }
+  return out;
+}
+
+fun renderFors(outSrc, ctx) {
+  var cursor = 0;
   var forStart = 0;
   var forTagEnd = 0;
   var forExpr = "";
@@ -205,6 +215,8 @@ fun renderFors(outSrc, ctx) {
   var iterableKey = "";
   var endTag = 0;
   var inner = "";
+  var items = nil;
+  var rendered = "";
   while (true) {
     forStart = strFind(outSrc, "{% for ", cursor);
     if (forStart == -1) break;
@@ -220,18 +232,10 @@ fun renderFors(outSrc, ctx) {
       endTag = strFind(outSrc, "{% endfor %}", forTagEnd);
       if (endTag == -1) break;
       inner = strSlice(outSrc, forTagEnd + len("%}"), endTag);
-      iterable = lookup(ctx, iterableKey);
+      items = lookup(ctx, iterableKey);
       rendered = "";
-      if (iterable != nil) {
-        L = iterable.length;
-        j = 0;
-        while (j < L) {
-          elem = iterable[j];
-          replaced = replaceLoopVar(inner, varName, elem);
-          piece = interpolateString(replaced, ctx);
-          rendered = rendered + piece;
-          j = j + 1;
-        }
+      if (items != nil) {
+        rendered = renderItemList(inner, varName, items, ctx);
       }
       outSrc = strSlice(outSrc, 0, forStart) + rendered +
                strSlice(outSrc, endTag + len("{% endfor %}"), len(outSrc));
