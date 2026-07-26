@@ -5,56 +5,56 @@
  *   var html = renderTemplate("public/index.tpl", ctx);
  *   res.html(html);
  *
- * Dict is string→string only; use TplCtx for title + items arrays.
- * Array length is `.length` (len() is for strings).
- *
- * Always assign renderTemplate's result to a var before res.html(...).
- * Nested res.html(renderTemplate(...)) can fail on Plan 9 after heavy GC.
+ * Notes for Plan 9:
+ *   - Declare loop locals at function scope (no var inside while bodies).
+ *   - Lux has no `continue` keyword.
+ *   - Flatten nested calls; avoid res.html(renderTemplate(...)).
+ *   - Dict is string→string only; use TplCtx for arrays.
  */
 
 fun escapeHtml(s) {
   if (s == nil) return "";
   var out = s + "";
   var parts = strSplit(out, "&");
-  out = "";
   var i = 0;
   var n = parts.length;
+  out = "";
   while (i < n) {
     if (i > 0) out = out + "&amp;";
     out = out + parts[i];
     i = i + 1;
   }
   parts = strSplit(out, "<");
-  out = "";
   i = 0;
   n = parts.length;
+  out = "";
   while (i < n) {
     if (i > 0) out = out + "&lt;";
     out = out + parts[i];
     i = i + 1;
   }
   parts = strSplit(out, ">");
-  out = "";
   i = 0;
   n = parts.length;
+  out = "";
   while (i < n) {
     if (i > 0) out = out + "&gt;";
     out = out + parts[i];
     i = i + 1;
   }
   parts = strSplit(out, "\"");
-  out = "";
   i = 0;
   n = parts.length;
+  out = "";
   while (i < n) {
     if (i > 0) out = out + "&quot;";
     out = out + parts[i];
     i = i + 1;
   }
   parts = strSplit(out, "'");
-  out = "";
   i = 0;
   n = parts.length;
+  out = "";
   while (i < n) {
     if (i > 0) out = out + "&#39;";
     out = out + parts[i];
@@ -74,8 +74,9 @@ fun lookup(ctx, key) {
 fun lastIndexOf(text, needle) {
   var last = -1;
   var cursor = 0;
+  var idx = 0;
   while (true) {
-    var idx = strFind(text, needle, cursor);
+    idx = strFind(text, needle, cursor);
     if (idx == -1) break;
     last = idx;
     cursor = idx + 1;
@@ -86,25 +87,31 @@ fun lastIndexOf(text, needle) {
 fun replaceLoopVar(src, varName, elem) {
   var out = "";
   var cursor = 0;
-  while (cursor < len(src)) {
-    var openIdx = strFind(src, "{{", cursor);
+  var openIdx = 0;
+  var closeIdx = 0;
+  var key = "";
+  var n = len(src);
+  while (cursor < n) {
+    openIdx = strFind(src, "{{", cursor);
     if (openIdx == -1) {
-      out = out + strSlice(src, cursor, len(src));
-      break;
-    }
-    out = out + strSlice(src, cursor, openIdx);
-    var closeIdx = strFind(src, "}}", openIdx + 2);
-    if (closeIdx == -1) {
-      out = out + strSlice(src, openIdx, len(src));
-      break;
-    }
-    var key = strTrim(strSlice(src, openIdx + 2, closeIdx));
-    if (key == varName) {
-      out = out + escapeHtml(elem + "");
+      out = out + strSlice(src, cursor, n);
+      cursor = n;
     } else {
-      out = out + strSlice(src, openIdx, closeIdx + 2);
+      out = out + strSlice(src, cursor, openIdx);
+      closeIdx = strFind(src, "}}", openIdx + 2);
+      if (closeIdx == -1) {
+        out = out + strSlice(src, openIdx, n);
+        cursor = n;
+      } else {
+        key = strTrim(strSlice(src, openIdx + 2, closeIdx));
+        if (key == varName) {
+          out = out + escapeHtml(elem + "");
+        } else {
+          out = out + strSlice(src, openIdx, closeIdx + 2);
+        }
+        cursor = closeIdx + 2;
+      }
     }
-    cursor = closeIdx + 2;
   }
   return out;
 }
@@ -112,26 +119,33 @@ fun replaceLoopVar(src, varName, elem) {
 fun interpolateString(src, ctx) {
   var out = "";
   var cursor = 0;
-  while (cursor < len(src)) {
-    var openIdx = strFind(src, "{{", cursor);
+  var openIdx = 0;
+  var closeIdx = 0;
+  var key = "";
+  var val = nil;
+  var n = len(src);
+  while (cursor < n) {
+    openIdx = strFind(src, "{{", cursor);
     if (openIdx == -1) {
-      out = out + strSlice(src, cursor, len(src));
-      break;
-    }
-    out = out + strSlice(src, cursor, openIdx);
-    var closeIdx = strFind(src, "}}", openIdx + 2);
-    if (closeIdx == -1) {
-      out = out + strSlice(src, openIdx, len(src));
-      break;
-    }
-    var key = strTrim(strSlice(src, openIdx + 2, closeIdx));
-    var val = lookup(ctx, key);
-    if (val == nil) {
-      out = out + "";
+      out = out + strSlice(src, cursor, n);
+      cursor = n;
     } else {
-      out = out + escapeHtml(val + "");
+      out = out + strSlice(src, cursor, openIdx);
+      closeIdx = strFind(src, "}}", openIdx + 2);
+      if (closeIdx == -1) {
+        out = out + strSlice(src, openIdx, n);
+        cursor = n;
+      } else {
+        key = strTrim(strSlice(src, openIdx + 2, closeIdx));
+        val = lookup(ctx, key);
+        if (val == nil) {
+          out = out + "";
+        } else {
+          out = out + escapeHtml(val + "");
+        }
+        cursor = closeIdx + 2;
+      }
     }
-    cursor = closeIdx + 2;
   }
   return out;
 }
@@ -142,20 +156,30 @@ fun expandIncludes(path) {
     return "Template not found: " + path;
   }
   var cursor = 0;
+  var incStart = 0;
+  var quoteStart = 0;
+  var quoteEnd = 0;
+  var incPath = "";
+  var slashIdx = 0;
+  var base = "";
+  var fullInc = "";
+  var incContent = "";
+  var tagEnd = 0;
   while (true) {
-    var incStart = strFind(src, "{% include \"", cursor);
+    incStart = strFind(src, "{% include \"", cursor);
     if (incStart == -1) break;
-    var quoteStart = incStart + len("{% include \"");
-    var quoteEnd = strFind(src, "\"", quoteStart);
+    quoteStart = incStart + len("{% include \"");
+    quoteEnd = strFind(src, "\"", quoteStart);
     if (quoteEnd == -1) break;
-    var incPath = strSlice(src, quoteStart, quoteEnd);
-    var slashIdx = lastIndexOf(path, "/");
-    var base = "";
+    incPath = strSlice(src, quoteStart, quoteEnd);
+    slashIdx = lastIndexOf(path, "/");
+    base = "";
     if (slashIdx != -1) {
       base = strSlice(path, 0, slashIdx + 1);
     }
-    var incContent = expandIncludes(base + incPath);
-    var tagEnd = strFind(src, "%}", quoteEnd);
+    fullInc = base + incPath;
+    incContent = expandIncludes(fullInc);
+    tagEnd = strFind(src, "%}", quoteEnd);
     if (tagEnd == -1) break;
     tagEnd = tagEnd + len("%}");
     src = strSlice(src, 0, incStart) + incContent + strSlice(src, tagEnd, len(src));
@@ -173,40 +197,46 @@ fun renderFors(outSrc, ctx) {
   var elem = nil;
   var replaced = "";
   var piece = "";
+  var forStart = 0;
+  var forTagEnd = 0;
+  var forExpr = "";
+  var inIdx = 0;
+  var varName = "";
+  var iterableKey = "";
+  var endTag = 0;
+  var inner = "";
   while (true) {
-    var forStart = strFind(outSrc, "{% for ", cursor);
+    forStart = strFind(outSrc, "{% for ", cursor);
     if (forStart == -1) break;
-    var forTagEnd = strFind(outSrc, "%}", forStart);
+    forTagEnd = strFind(outSrc, "%}", forStart);
     if (forTagEnd == -1) break;
-    var forExpr = strSlice(outSrc, forStart + len("{% for "), forTagEnd);
-    var inIdx = strFind(forExpr, " in ");
+    forExpr = strSlice(outSrc, forStart + len("{% for "), forTagEnd);
+    inIdx = strFind(forExpr, " in ");
     if (inIdx == -1) {
       cursor = forTagEnd + 2;
-      continue;
-    }
-    var varName = strTrim(strSlice(forExpr, 0, inIdx));
-    var iterableKey = strTrim(strSlice(forExpr, inIdx + len(" in "), len(forExpr)));
-    var endTag = strFind(outSrc, "{% endfor %}", forTagEnd);
-    if (endTag == -1) break;
-
-    var inner = strSlice(outSrc, forTagEnd + len("%}"), endTag);
-    iterable = lookup(ctx, iterableKey);
-    rendered = "";
-    if (iterable != nil) {
-      L = iterable.length;
-      j = 0;
-      while (j < L) {
-        elem = iterable[j];
-        /* Flatten nested calls — Plan 9 mishandles stacked calls. */
-        replaced = replaceLoopVar(inner, varName, elem);
-        piece = interpolateString(replaced, ctx);
-        rendered = rendered + piece;
-        j = j + 1;
+    } else {
+      varName = strTrim(strSlice(forExpr, 0, inIdx));
+      iterableKey = strTrim(strSlice(forExpr, inIdx + len(" in "), len(forExpr)));
+      endTag = strFind(outSrc, "{% endfor %}", forTagEnd);
+      if (endTag == -1) break;
+      inner = strSlice(outSrc, forTagEnd + len("%}"), endTag);
+      iterable = lookup(ctx, iterableKey);
+      rendered = "";
+      if (iterable != nil) {
+        L = iterable.length;
+        j = 0;
+        while (j < L) {
+          elem = iterable[j];
+          replaced = replaceLoopVar(inner, varName, elem);
+          piece = interpolateString(replaced, ctx);
+          rendered = rendered + piece;
+          j = j + 1;
+        }
       }
+      outSrc = strSlice(outSrc, 0, forStart) + rendered +
+               strSlice(outSrc, endTag + len("{% endfor %}"), len(outSrc));
+      cursor = forStart + len(rendered);
     }
-    outSrc = strSlice(outSrc, 0, forStart) + rendered +
-             strSlice(outSrc, endTag + len("{% endfor %}"), len(outSrc));
-    cursor = forStart + len(rendered);
   }
   return outSrc;
 }
