@@ -1,6 +1,4 @@
-/* Native renderTemplate(path, ctx) tests.
- * Run from repo root: ./posix/lux tests/test_template.lux
- */
+/* Native renderTemplate(path, ctx) — self-contained (any cwd). */
 
 class TplCtx {
   init(title, items) {
@@ -9,8 +7,20 @@ class TplCtx {
   }
 }
 
+createDir("_tpl_test");
+writeFile("_tpl_test/footer.tpl", "<footer>foot</footer>\n");
+writeFile("_tpl_test/index.tpl",
+  "<title>{{ title }}</title>\n" +
+  "<ul>\n" +
+  "{% for item in items %}\n" +
+  "<li>{{ item }}</li>\n" +
+  "{% endfor %}\n" +
+  "</ul>\n" +
+  "{% include \"footer.tpl\" %}\n" +
+  "<p>missing={{ nope }}</p>\n");
+
 var ctx = TplCtx("T <ok>", ["One&", "Two"]);
-var html = renderTemplate("tests/templates/index.tpl", ctx);
+var html = renderTemplate("_tpl_test/index.tpl", ctx);
 
 assert(strFind(html, "<title>T &lt;ok&gt;</title>") >= 0, "title escaped");
 assert(strFind(html, "<li>One&amp;</li>") >= 0, "for item escaped");
@@ -19,12 +29,13 @@ assert(strFind(html, "<footer>foot</footer>") >= 0, "include footer");
 assert(strFind(html, "missing=") >= 0, "missing key empty");
 assert(strFind(html, "{{ nope }}") == -1, "missing key not left raw");
 
-/* Cache: second render still works */
-var html2 = renderTemplate("tests/templates/index.tpl", ctx);
+var html2 = renderTemplate("_tpl_test/index.tpl", ctx);
 assert(html2 == html, "cached expand matches");
 
-/* Missing file returns error string (not nil) */
-var missing = renderTemplate("tests/templates/does-not-exist.tpl", ctx);
+var missing = renderTemplate("_tpl_test/does-not-exist.tpl", ctx);
 assert(strFind(missing, "Template not found") >= 0, "missing template message");
+
+deleteFile("_tpl_test/index.tpl");
+deleteFile("_tpl_test/footer.tpl");
 
 print "test_template: ok";

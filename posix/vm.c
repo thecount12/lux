@@ -36,6 +36,7 @@
 #include "memory.h"
 #include "vm.h"
 #include "dict.h"
+#include "template_render.h"
 
 Value dictInitNative(int argCount, Value* args);
 Value dictPutNative(int argCount, Value* args);
@@ -564,9 +565,6 @@ static Value readFileNative(int argCount, Value* args) {
 	free(buffer);
 	return result;
 }
-
-#define LUX_TPL_POSIX 1
-#include "../template_render.inc.c"
 
 static void
 tplNativeError(const char* msg)

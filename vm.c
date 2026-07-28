@@ -8,6 +8,7 @@
 #include "compiler.h"
 #include "debug.h"
 #include "table.h"
+#include "template_render.h"
 /* Forward declarations for dict natives (avoid pulling types.h into vm.c) */
 Value dictInitNative(int argCount, Value* args);
 Value dictPutNative(int argCount, Value* args);
@@ -466,8 +467,6 @@ readFileNative(int argCount, Value* args)
 	free(buf);
 	return result;
 }
-
-#include "template_render.inc.c"
 
 /* renderTemplate(path, ctx) -> string; ctx must be an instance */
 static Value

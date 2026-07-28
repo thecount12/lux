@@ -13,6 +13,7 @@ OFILES=lux.$O\
 	table.$O\
 	dict.$O\
 	dict_native.$O\
+	template_render.$O\
 
 
 HFILES=chunk.h\
@@ -25,6 +26,7 @@ HFILES=chunk.h\
 	object.h\
 	table.h\
 	dict.h\
+	template_render.h\
 
 BIN=$home/bin/$objtype
 
