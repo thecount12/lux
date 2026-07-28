@@ -25,6 +25,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Dictionaries** — native `Dict` class with `put`/`get`/`has`/`remove`/`size`/`clear` plus `iter()` returning an array of `{key, value}` entries
 - **Float64Array** — typed double buffer, dot product (POSIX)
 - **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts)
+- **Templates** — native `renderTemplate` (`{{ }}`, `{% for %}`, `{% include %}`)
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
 - **Cloud** — AWS S3, STS, IAM operations
 - **Databases** — SQLite, PostgreSQL, MySQL (opt-in)
@@ -670,6 +671,28 @@ if (content != nil) {
     print "Failed to read file";
 }
 ```
+
+#### `renderTemplate(path, ctx)` → string
+Native HTML template renderer (Plan 9 and POSIX). `ctx` must be an **instance** whose fields supply values (e.g. a small class with `title` / `items`). Expanded `{% include %}` results are cached for the process lifetime — restart after editing templates.
+
+| Syntax | Behavior |
+|--------|----------|
+| `{{ key }}` | Lookup `ctx.key`, HTML-escaped; missing → empty |
+| `{% for x in items %}…{% endfor %}` | Non-nested loop over an array field |
+| `{% include "file.tpl" %}` | Include relative to the current template’s directory |
+
+```lux
+class TplCtx {
+  init(title, items) {
+    this.title = title;
+    this.items = items;
+  }
+}
+var html = renderTemplate("public/index.tpl", TplCtx("Hi", ["a", "b"]));
+res.html(html);
+```
+
+See `examples/template_server/server.lux` and `tests/test_template.lux`.
 
 #### `writeFile(path, content)` → bool
 Writes content to a file, creating it if it doesn't exist or truncating if it does.

@@ -61,6 +61,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"args", "args()", "Return command-line arguments passed after the script path."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
+	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %} using ctx instance fields."},
 	{"writeFile", "writeFile(path, content)", "Write content to a file."},
 	{"appendFile", "appendFile(path, content)", "Append content to a file."},
 	{"deleteFile", "deleteFile(path)", "Delete a file."},
@@ -147,7 +148,8 @@ static const char* callableCategory(const char* name) {
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
-	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0) return "File and Directory";
+	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0 ||
+	    strcmp(name, "renderTemplate") == 0) return "File and Directory";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
@@ -560,6 +562,48 @@ static Value readFileNative(int argCount, Value* args) {
 	/* Wrap the raw C string into a Value */
 	Value result = OBJ_VAL(copyString(buffer, (int)bytesRead));
 	free(buffer);
+	return result;
+}
+
+#define LUX_TPL_POSIX 1
+#include "../template_render.inc.c"
+
+static void
+tplNativeError(const char* msg)
+{
+	vm.nativePanic = true;
+	snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg), "%s", msg);
+}
+
+/* renderTemplate(path, ctx) -> string; ctx must be an instance */
+static Value renderTemplateNative(int argCount, Value* args) {
+	char* path;
+	ObjInstance* ctx;
+	char* html;
+	Value result;
+
+	if (argCount != 2) {
+		tplNativeError("renderTemplate() expects 2 arguments (path, ctx).");
+		return NIL_VAL;
+	}
+	if (!IS_STRING(args[0])) {
+		tplNativeError("renderTemplate() path must be a string.");
+		return NIL_VAL;
+	}
+	if (!IS_INSTANCE(args[1])) {
+		tplNativeError("renderTemplate() ctx must be an instance.");
+		return NIL_VAL;
+	}
+
+	path = AS_CSTRING(args[0]);
+	ctx = AS_INSTANCE(args[1]);
+	html = tplRenderFull(path, ctx);
+	if (html == NULL) {
+		tplNativeError("renderTemplate() failed.");
+		return NIL_VAL;
+	}
+	result = OBJ_VAL(copyString(html, (int)strlen(html)));
+	free(html);
 	return result;
 }
 
@@ -3820,6 +3864,7 @@ void initVM() {
 	defineNative("exit", exitNative);
 	defineNative("args", argsNative);
 	defineNative("readFile", readFileNative);
+	defineNative("renderTemplate", renderTemplateNative);
 	defineNative("writeFile", writeFileNative);
 	defineNative("appendFile", appendFileNative);
 	defineNative("deleteFile", deleteFileNative);

@@ -1,4 +1,4 @@
-/* Template server — isolated from examples/static (JS static files).
+/* Template server — uses builtin renderTemplate.
  *
  * Run from this directory:
  *   cd examples/template_server && ../../posix/lux server.lux
@@ -6,14 +6,22 @@
  *
  *   curl http://127.0.0.1:8083/
  *   curl http://127.0.0.1:8083/list
+ *
+ * Template syntax (native):
+ *   {{ key }}                 instance field, HTML-escaped
+ *   {% for x in items %}...   non-nested array loop
+ *   {% include "file.tpl" %}  relative include (cached until process exit)
  */
 
-import "template.lux";
+class TplCtx {
+  init(title, items) {
+    this.title = title;
+    this.items = items;
+  }
+}
 
 fun handleRoot(req, res) {
   var ctx = TplCtx("Lux Template Example", ["One", "Two", "Three"]);
-  /* Render first, then send — nested res.html(renderTemplate(...))
-   * can clobber the method receiver on Plan 9 after heavy GC. */
   var html = renderTemplate("templates/index.tpl", ctx);
   res.html(html);
 }
