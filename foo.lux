@@ -1,0 +1,3 @@
+var a = args();
+print a.length;
+print a[0];

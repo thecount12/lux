@@ -2872,7 +2872,7 @@ serverStartNative(int argCount, Value* args)
 							if (d != nil) {
 								fileLen = d->length;
 								free(d);
-								if (fileLen > 0 && fileLen < (long)(1024*1024)) {
+								if (fileLen > 0 && fileLen < (long)(16*1024*1024)) {
 									content = malloc((ulong)fileLen);
 									if (content != nil) {
 										nread = read(ffd, content, (int)fileLen);

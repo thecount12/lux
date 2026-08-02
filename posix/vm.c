@@ -3013,7 +3013,7 @@ static Value serverStartNative(int argCount, Value* args) {
 							fseek(f, 0, SEEK_END);
 							long fsize = ftell(f);
 							rewind(f);
-							if (fsize > 0 && fsize < 1024 * 1024) {
+							if (fsize > 0 && fsize < 16 * 1024 * 1024) {
 								char* content = malloc((size_t)fsize);
 								if (content != NULL) {
 									size_t nread = fread(content, 1, (size_t)fsize, f);
