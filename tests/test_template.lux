@@ -9,6 +9,7 @@ class TplCtx {
 
 createDir("_tpl_test");
 writeFile("_tpl_test/footer.tpl", "<footer>foot</footer>\n");
+writeFile("_tpl_test/body.md", "## MD Section\n\nHello *world* & `<tag>`.\n");
 writeFile("_tpl_test/index.tpl",
   "<title>{{ title }}</title>\n" +
   "<ul>\n" +
@@ -17,6 +18,7 @@ writeFile("_tpl_test/index.tpl",
   "{% endfor %}\n" +
   "</ul>\n" +
   "{% include \"footer.tpl\" %}\n" +
+  "{% include_md \"body.md\" %}\n" +
   "<p>missing={{ nope }}</p>\n");
 
 var ctx = TplCtx("T <ok>", ["One&", "Two"]);
@@ -26,6 +28,10 @@ assert(strFind(html, "<title>T &lt;ok&gt;</title>") >= 0, "title escaped");
 assert(strFind(html, "<li>One&amp;</li>") >= 0, "for item escaped");
 assert(strFind(html, "<li>Two</li>") >= 0, "for item two");
 assert(strFind(html, "<footer>foot</footer>") >= 0, "include footer");
+assert(strFind(html, "<h2>MD Section</h2>") >= 0, "include_md heading");
+assert(strFind(html, "<em>world</em>") >= 0, "include_md em");
+assert(strFind(html, "&amp;") >= 0, "include_md amp escaped");
+assert(strFind(html, "<code>&lt;tag&gt;</code>") >= 0, "include_md code escaped");
 assert(strFind(html, "missing=") >= 0, "missing key empty");
 assert(strFind(html, "{{ nope }}") == -1, "missing key not left raw");
 
@@ -35,7 +41,13 @@ assert(html2 == html, "cached expand matches");
 var missing = renderTemplate("_tpl_test/does-not-exist.tpl", ctx);
 assert(strFind(missing, "Template not found") >= 0, "missing template message");
 
+writeFile("_tpl_test/missing_md.tpl", "{% include_md \"nope.md\" %}\n");
+var missingMd = renderTemplate("_tpl_test/missing_md.tpl", ctx);
+assert(strFind(missingMd, "Markdown not found") >= 0, "missing markdown message");
+
 deleteFile("_tpl_test/index.tpl");
 deleteFile("_tpl_test/footer.tpl");
+deleteFile("_tpl_test/body.md");
+deleteFile("_tpl_test/missing_md.tpl");
 
 print "test_template: ok";

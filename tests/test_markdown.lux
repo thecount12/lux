@@ -1,0 +1,45 @@
+/* Native markdownToHtml / renderMarkdown */
+
+var h = markdownToHtml("# Hello\n\nA *em* and **strong** word.\n");
+assert(strFind(h, "<h1>") >= 0, "h1 open");
+assert(strFind(h, "Hello") >= 0, "h1 text");
+assert(strFind(h, "</h1>") >= 0, "h1 close");
+assert(strFind(h, "<em>em</em>") >= 0, "emphasis");
+assert(strFind(h, "<strong>strong</strong>") >= 0, "strong");
+
+var link = markdownToHtml("See [docs](https://example.com).\n");
+assert(strFind(link, "<a href=\"https://example.com\">docs</a>") >= 0, "link");
+
+var js = markdownToHtml("[x](javascript:alert(1))\n");
+assert(strFind(js, "javascript:") == -1, "js url blocked");
+assert(strFind(js, "<a ") == -1, "js not an anchor");
+
+var ul = markdownToHtml("- one\n- two\n");
+assert(strFind(ul, "<ul>") >= 0, "ul");
+assert(strFind(ul, "<li>one</li>") >= 0, "ul item");
+
+var ol = markdownToHtml("1. a\n2. b\n");
+assert(strFind(ol, "<ol>") >= 0, "ol");
+assert(strFind(ol, "<li>a</li>") >= 0, "ol item");
+
+var fence = markdownToHtml("```\nvar x = 1;\n```\n");
+assert(strFind(fence, "<pre><code>") >= 0, "fence open");
+assert(strFind(fence, "var x = 1;") >= 0, "fence body");
+assert(strFind(fence, "</code></pre>") >= 0, "fence close");
+
+var code = markdownToHtml("Use `foo<bar>` here.\n");
+assert(strFind(code, "<code>foo&lt;bar&gt;</code>") >= 0, "inline code escaped");
+
+var esc = markdownToHtml("A <script> & \"q\"\n");
+assert(strFind(esc, "&lt;script&gt;") >= 0, "escape lt");
+assert(strFind(esc, "&amp;") >= 0, "escape amp");
+assert(strFind(esc, "&quot;q&quot;") >= 0, "escape quote");
+
+createDir("_md_test");
+writeFile("_md_test/note.md", "## Title\n\nPara with `x`.\n");
+var fromFile = renderMarkdown("_md_test/note.md");
+assert(strFind(fromFile, "<h2>") >= 0, "renderMarkdown h2");
+assert(strFind(fromFile, "<code>x</code>") >= 0, "renderMarkdown code");
+deleteFile("_md_test/note.md");
+
+print "test_markdown: ok";

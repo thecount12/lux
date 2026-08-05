@@ -673,13 +673,14 @@ if (content != nil) {
 ```
 
 #### `renderTemplate(path, ctx)` → string
-Native HTML template renderer (Plan 9 and POSIX). `ctx` must be an **instance** whose fields supply values (e.g. a small class with `title` / `items`). Expanded `{% include %}` results are cached for the process lifetime — restart after editing templates.
+Native HTML template renderer (Plan 9 and POSIX). `ctx` must be an **instance** whose fields supply values (e.g. a small class with `title` / `items`). Expanded `{% include %}` / `{% include_md %}` results are cached for the process lifetime — restart after editing templates or included Markdown.
 
 | Syntax | Behavior |
 |--------|----------|
 | `{{ key }}` | Lookup `ctx.key`, HTML-escaped; missing → empty |
 | `{% for x in items %}…{% endfor %}` | Non-nested loop over an array field |
 | `{% include "file.tpl" %}` | Include relative to the current template’s directory |
+| `{% include_md "file.md" %}` | Render Markdown to HTML and insert (unescaped tags) |
 
 ```lux
 class TplCtx {
@@ -693,6 +694,32 @@ res.html(html);
 ```
 
 See `examples/template_server/server.lux` and `tests/test_template.lux`.
+
+#### `markdownToHtml(md)` → string
+Convert a Markdown string to an HTML fragment (Plan 9 and POSIX). Supports headings (`#`–`######`), paragraphs, `*emphasis*` / `**strong**`, `[text](url)`, unordered/ordered lists, fenced code blocks, and inline `` `code` ``. Text is HTML-escaped. `javascript:` URLs are not turned into links.
+
+```lux
+var html = markdownToHtml("# Hi\n\nHello *world*.");
+res.html(html);
+```
+
+#### `renderMarkdown(path)` → string
+Read a Markdown file and convert it with `markdownToHtml`.
+
+```lux
+var html = renderMarkdown("notes/todo.md");
+res.html(html);
+```
+
+Quick local preview of a directory of `.md` files:
+
+```text
+./lux examples/mdview.lux examples/mdview
+# Plan 9: 8.out examples/mdview.lux examples/mdview
+# browse http://127.0.0.1:8090/
+```
+
+See `examples/mdview.lux`, `examples/mdview/sample.md`, and `tests/test_markdown.lux`.
 
 #### `writeFile(path, content)` → bool
 Writes content to a file, creating it if it doesn't exist or truncating if it does.
