@@ -68,7 +68,7 @@ FMT_TARGET = luxfmt
 TEST_TARGET = luxtest
 
 # Define the source files
-SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c dict.c dict_native.c template_render.c
+SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c dict.c dict_native.c template_render.c markdown.c
 FMT_SRC = luxfmt.c
 TEST_SRC = luxtest.c
 
@@ -78,7 +78,7 @@ FMT_OBJ = $(FMT_SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 
 # Define the header files for dependency tracking
-DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h template_render.h
+DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h template_render.h markdown.h
 
 # The default target, which builds the executable
 all: $(TARGET)
@@ -111,7 +111,7 @@ LUXCHECK_TARGET = luxcheck
 LUXCHECK_SRC = luxcheck.c
 LUXCHECK_OBJ = $(LUXCHECK_SRC:.c=.o)
 
-$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o template_render.o vm.o
+$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o template_render.o markdown.o vm.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Build the luxlint utility
@@ -119,7 +119,7 @@ LUXLINT_TARGET = luxlint
 LUXLINT_SRC = luxlint.c
 LUXLINT_OBJ = $(LUXLINT_SRC:.c=.o)
 
-$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o template_render.o vm.o
+$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o template_render.o markdown.o vm.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Phony targets don't create a file of the same name

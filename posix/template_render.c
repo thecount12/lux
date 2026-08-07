@@ -7,12 +7,14 @@
 #include "object.h"
 #include "table.h"
 #include "template_render.h"
+#include "markdown.h"
 
 /*
  * Native template renderer.
- *   {{ key }}                 HTML-escaped field on ctx
- *   {% for x in items %}...   non-nested array loop
- *   {% include "file.tpl" %}  relative include; cached until process exit
+ *   {{ key }}                    HTML-escaped field on ctx
+ *   {% for x in items %}...      non-nested array loop
+ *   {% include "file.tpl" %}     relative include; cached until process exit
+ *   {% include_md "file.md" %}   relative Markdown → HTML insert
  */
 
 typedef struct TplBuf {
@@ -258,10 +260,15 @@ tplExpandIncludesUncached(char* path, int depth)
 
 	cursor = 0;
 	while (1) {
+		char* pInc;
+		char* pMd;
+		int isMd;
+
 		rem = srcLen - cursor;
 		if (rem <= 0) break;
-		p = strstr(src + cursor, "{% include \"");
-		if (p == NULL) {
+		pInc = strstr(src + cursor, "{% include \"");
+		pMd = strstr(src + cursor, "{% include_md \"");
+		if (pInc == NULL && pMd == NULL) {
 			if (!tplBufAppend(&out, src + cursor, rem)) {
 				tplBufFree(&out);
 				free(src);
@@ -269,13 +276,28 @@ tplExpandIncludesUncached(char* path, int depth)
 			}
 			break;
 		}
+		isMd = 0;
+		if (pInc == NULL) {
+			p = pMd;
+			isMd = 1;
+		} else if (pMd == NULL) {
+			p = pInc;
+		} else if (pMd < pInc) {
+			p = pMd;
+			isMd = 1;
+		} else {
+			p = pInc;
+		}
 		incStart = (int)(p - src);
 		if (!tplBufAppend(&out, src + cursor, incStart - cursor)) {
 			tplBufFree(&out);
 			free(src);
 			return NULL;
 		}
-		quoteStart = incStart + (int)strlen("{% include \"");
+		if (isMd)
+			quoteStart = incStart + (int)strlen("{% include_md \"");
+		else
+			quoteStart = incStart + (int)strlen("{% include \"");
 		p = strchr(src + quoteStart, '"');
 		if (p == NULL) {
 			if (!tplBufAppend(&out, src + incStart, srcLen - incStart)) {
@@ -321,11 +343,24 @@ tplExpandIncludesUncached(char* path, int depth)
 		}
 		tagEnd = (int)(p - src) + 2;
 
-		incContent = tplExpandIncludesDepth(fullInc, depth + 1);
-		if (incContent == NULL) {
-			tplBufFree(&out);
-			free(src);
-			return NULL;
+		if (isMd) {
+			incContent = mdRenderFile(fullInc);
+			if (incContent == NULL) {
+				snprintf(msg, sizeof(msg), "Markdown not found: %s", fullInc);
+				incContent = tplDupStr(msg, -1);
+				if (incContent == NULL) {
+					tplBufFree(&out);
+					free(src);
+					return NULL;
+				}
+			}
+		} else {
+			incContent = tplExpandIncludesDepth(fullInc, depth + 1);
+			if (incContent == NULL) {
+				tplBufFree(&out);
+				free(src);
+				return NULL;
+			}
 		}
 		if (!tplBufAppend(&out, incContent, -1)) {
 			free(incContent);

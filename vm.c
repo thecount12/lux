@@ -9,6 +9,7 @@
 #include "debug.h"
 #include "table.h"
 #include "template_render.h"
+#include "markdown.h"
 /* Forward declarations for dict natives (avoid pulling types.h into vm.c) */
 Value dictInitNative(int argCount, Value* args);
 Value dictPutNative(int argCount, Value* args);
@@ -40,7 +41,9 @@ static const NativeDoc kNativeDocs[] = {
 	{"args", "args()", "Return command-line arguments passed after the script path."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
-	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %} using ctx instance fields."},
+	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
+	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
+	{"renderMarkdown", "renderMarkdown(path)", "Read a Markdown file and convert it to an HTML fragment."},
 	{"writeFile", "writeFile(path, content)", "Write content to a file."},
 	{"appendFile", "appendFile(path, content)", "Append content to a file."},
 	{"deleteFile", "deleteFile(path)", "Delete a file."},
@@ -123,7 +126,9 @@ callableCategory(const char* name)
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
 	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0 ||
-	    strcmp(name, "renderTemplate") == 0)
+	    strcmp(name, "renderTemplate") == 0 ||
+	    strcmp(name, "markdownToHtml") == 0 ||
+	    strcmp(name, "renderMarkdown") == 0)
 		return "File and Directory";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
@@ -495,6 +500,56 @@ renderTemplateNative(int argCount, Value* args)
 	html = tplRenderFull(path, ctx);
 	if (html == nil) {
 		nativeError("renderTemplate() failed.");
+		return NIL_VAL;
+	}
+	result = OBJ_VAL(copyString(html, (int)strlen(html)));
+	free(html);
+	return result;
+}
+
+/* markdownToHtml(md) -> string */
+static Value
+markdownToHtmlNative(int argCount, Value* args)
+{
+	char* html;
+	Value result;
+
+	if (argCount != 1) {
+		nativeError("markdownToHtml() expects 1 argument, got %d.", argCount);
+		return NIL_VAL;
+	}
+	if (!IS_STRING(args[0])) {
+		nativeError("markdownToHtml() expects a string.");
+		return NIL_VAL;
+	}
+	html = mdToHtml(AS_CSTRING(args[0]), AS_STRING(args[0])->length);
+	if (html == nil) {
+		nativeError("markdownToHtml() failed.");
+		return NIL_VAL;
+	}
+	result = OBJ_VAL(copyString(html, (int)strlen(html)));
+	free(html);
+	return result;
+}
+
+/* renderMarkdown(path) -> string */
+static Value
+renderMarkdownNative(int argCount, Value* args)
+{
+	char* html;
+	Value result;
+
+	if (argCount != 1) {
+		nativeError("renderMarkdown() expects 1 argument, got %d.", argCount);
+		return NIL_VAL;
+	}
+	if (!IS_STRING(args[0])) {
+		nativeError("renderMarkdown() path must be a string.");
+		return NIL_VAL;
+	}
+	html = mdRenderFile(AS_CSTRING(args[0]));
+	if (html == nil) {
+		nativeError("renderMarkdown() failed.");
 		return NIL_VAL;
 	}
 	result = OBJ_VAL(copyString(html, (int)strlen(html)));
@@ -1625,6 +1680,22 @@ parseUrl(char* url, UrlParts* parts)
 	return 0;
 }
 
+/* Plan 9 write() may return a short count; loop until all bytes are sent. */
+static int
+writeAll(int fd, char* buf, int n)
+{
+	int sent;
+
+	sent = 0;
+	while (sent < n) {
+		int w = write(fd, buf + sent, n - sent);
+		if (w <= 0)
+			return -1;
+		sent += w;
+	}
+	return sent;
+}
+
 /* Read HTTP response and extract body */
 static char*
 readHttpResponse(int fd, int* outLen)
@@ -1812,7 +1883,7 @@ httpGetNative(int argCount, Value* args)
 		"\r\n",
 		parts.path, parts.host);
 	
-	if (write(fd, request, strlen(request)) < 0) {
+	if (writeAll(fd, request, strlen(request)) < 0) {
 		if (parts.ishttps)
 			free(conn.cert);
 		close(fd);
@@ -1943,7 +2014,7 @@ httpRequestNative(int argCount, Value* args)
 		"Connection: close\r\n\r\n");
 	
 	/* Write headers */
-	if (write(fd, request, reqLen) < 0) {
+	if (writeAll(fd, request, reqLen) < 0) {
 		if (parts.ishttps)
 			free(conn.cert);
 		close(fd);
@@ -1952,7 +2023,7 @@ httpRequestNative(int argCount, Value* args)
 	
 	/* Write body if present */
 	if (requestBody != nil && requestBodyLen > 0) {
-		if (write(fd, requestBody, requestBodyLen) < 0) {
+		if (writeAll(fd, requestBody, requestBodyLen) < 0) {
 			if (parts.ishttps)
 				free(conn.cert);
 			close(fd);
@@ -2031,14 +2102,14 @@ httpPostNative(int argCount, Value* args)
 		"\r\n",
 		parts.path, parts.host, postBodyLen);
 	
-	if (write(fd, request, reqLen) < 0) {
+	if (writeAll(fd, request, reqLen) < 0) {
 		if (parts.ishttps)
 			free(conn.cert);
 		close(fd);
 		return NIL_VAL;
 	}
 	
-	if (write(fd, postBody, postBodyLen) < 0) {
+	if (writeAll(fd, postBody, postBodyLen) < 0) {
 		if (parts.ishttps)
 			free(conn.cert);
 		close(fd);
@@ -2116,14 +2187,14 @@ httpPutNative(int argCount, Value* args)
 		"\r\n",
 		parts.path, parts.host, putBodyLen);
 	
-	if (write(fd, request, reqLen) < 0) {
+	if (writeAll(fd, request, reqLen) < 0) {
 		if (parts.ishttps)
 			free(conn.cert);
 		close(fd);
 		return NIL_VAL;
 	}
 	
-	if (write(fd, putBody, putBodyLen) < 0) {
+	if (writeAll(fd, putBody, putBodyLen) < 0) {
 		if (parts.ishttps)
 			free(conn.cert);
 		close(fd);
@@ -3361,8 +3432,16 @@ s3PutObjectNative(int argCount, Value* args)
 			uri, host, authHeader, amzDate, payloadHash, contentLen);
 	}
 	
-	write(fd, request, reqLen);
-	write(fd, content, contentLen);
+	if (writeAll(fd, request, reqLen) < 0) {
+		free(conn.cert);
+		close(fd);
+		return BOOL_VAL(false);
+	}
+	if (writeAll(fd, content, contentLen) < 0) {
+		free(conn.cert);
+		close(fd);
+		return BOOL_VAL(false);
+	}
 	
 	/* Read response */
 	int bodyLen;
@@ -3776,6 +3855,8 @@ initVM(void)
 	defineNative("args", argsNative);
 	defineNative("readFile", readFileNative);
 	defineNative("renderTemplate", renderTemplateNative);
+	defineNative("markdownToHtml", markdownToHtmlNative);
+	defineNative("renderMarkdown", renderMarkdownNative);
 	defineNative("writeFile", writeFileNative);
 	defineNative("appendFile", appendFileNative);
 	defineNative("deleteFile", deleteFileNative);

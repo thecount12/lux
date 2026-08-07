@@ -1,0 +1,108 @@
+/* Quick Markdown viewer for local preview (Plan 9 / POSIX).
+ *
+ *   ./lux examples/mdview.lux [dir]
+ *   8.out examples/mdview.lux [dir]
+ *
+ * Browse http://127.0.0.1:8090/ — flat directory of *.md only.
+ */
+
+var a = args();
+var root = ".";
+if (a.length > 0) {
+  root = a[0];
+}
+
+fun endsWithMd(name) {
+  var n = len(name);
+  if (n < 3) {
+    return false;
+  }
+  return strSlice(name, n - 3, n) == ".md";
+}
+
+fun safeName(name) {
+  if (strFind(name, "..") >= 0) {
+    return false;
+  }
+  if (strFind(name, "/") >= 0) {
+    return false;
+  }
+  if (strFind(name, "\\") >= 0) {
+    return false;
+  }
+  return endsWithMd(name);
+}
+
+fun joinPath(dir, name) {
+  var dlen = len(dir);
+  if (dlen > 0) {
+    if (strSlice(dir, dlen - 1, dlen) == "/") {
+      return dir + name;
+    }
+  }
+  return dir + "/" + name;
+}
+
+fun pageShell(title, body) {
+  return "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n" +
+    "<title>" + title + "</title>\n" +
+    "<style>body{font-family:serif;max-width:42em;margin:2em auto;padding:0 1em;line-height:1.5}" +
+    "pre{background:#f4f4f4;padding:0.75em;overflow:auto} code{font-family:monospace}" +
+    "a{color:#06c}</style>\n</head><body>\n" + body + "\n</body></html>\n";
+}
+
+fun handleIndex(req, res) {
+  var listing = listDir(root);
+  var body = "<h1>Markdown</h1>\n<p>Root: " + root + "</p>\n<ul>\n";
+  if (listing != nil) {
+    var names = strSplit(listing, "\n");
+    for (var i = 0; i < names.length; i = i + 1) {
+      var name = strTrim(names[i]);
+      if (safeName(name)) {
+        body = body + "<li><a href=\"/" + name + "\">" + name + "</a></li>\n";
+      }
+    }
+  }
+  body = body + "</ul>\n";
+  res.html(pageShell("mdview", body));
+}
+
+fun handleMd(req, res) {
+  var name = strSlice(req.path, 1, len(req.path));
+  if (!safeName(name)) {
+    res.status(404);
+    res.send("Not found");
+    return;
+  }
+  var path = joinPath(root, name);
+  if (!fileExists(path)) {
+    res.status(404);
+    res.send("Not found");
+    return;
+  }
+  var html = renderMarkdown(path);
+  if (html == nil) {
+    res.status(500);
+    res.send("Render failed");
+    return;
+  }
+  var body = "<p><a href=\"/\">&larr; index</a></p>\n" + html;
+  res.html(pageShell(name, body));
+}
+
+var server = Server(8090);
+server.get("/", handleIndex);
+
+var listing = listDir(root);
+if (listing != nil) {
+  var names = strSplit(listing, "\n");
+  for (var i = 0; i < names.length; i = i + 1) {
+    var name = strTrim(names[i]);
+    if (safeName(name)) {
+      server.get("/" + name, handleMd);
+    }
+  }
+}
+
+print "mdview root=" + root + " http://127.0.0.1:8090/";
+server.start();

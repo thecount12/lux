@@ -37,6 +37,7 @@
 #include "vm.h"
 #include "dict.h"
 #include "template_render.h"
+#include "markdown.h"
 
 Value dictInitNative(int argCount, Value* args);
 Value dictPutNative(int argCount, Value* args);
@@ -62,7 +63,9 @@ static const NativeDoc kNativeDocs[] = {
 	{"args", "args()", "Return command-line arguments passed after the script path."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
-	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %} using ctx instance fields."},
+	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
+	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
+	{"renderMarkdown", "renderMarkdown(path)", "Read a Markdown file and convert it to an HTML fragment."},
 	{"writeFile", "writeFile(path, content)", "Write content to a file."},
 	{"appendFile", "appendFile(path, content)", "Append content to a file."},
 	{"deleteFile", "deleteFile(path)", "Delete a file."},
@@ -150,7 +153,9 @@ static const char* callableCategory(const char* name) {
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
 	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0 ||
-	    strcmp(name, "renderTemplate") == 0) return "File and Directory";
+	    strcmp(name, "renderTemplate") == 0 ||
+	    strcmp(name, "markdownToHtml") == 0 ||
+	    strcmp(name, "renderMarkdown") == 0) return "File and Directory";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
@@ -598,6 +603,52 @@ static Value renderTemplateNative(int argCount, Value* args) {
 	html = tplRenderFull(path, ctx);
 	if (html == NULL) {
 		tplNativeError("renderTemplate() failed.");
+		return NIL_VAL;
+	}
+	result = OBJ_VAL(copyString(html, (int)strlen(html)));
+	free(html);
+	return result;
+}
+
+/* markdownToHtml(md) -> string */
+static Value markdownToHtmlNative(int argCount, Value* args) {
+	char* html;
+	Value result;
+
+	if (argCount != 1) {
+		tplNativeError("markdownToHtml() expects 1 argument.");
+		return NIL_VAL;
+	}
+	if (!IS_STRING(args[0])) {
+		tplNativeError("markdownToHtml() expects a string.");
+		return NIL_VAL;
+	}
+	html = mdToHtml(AS_CSTRING(args[0]), AS_STRING(args[0])->length);
+	if (html == NULL) {
+		tplNativeError("markdownToHtml() failed.");
+		return NIL_VAL;
+	}
+	result = OBJ_VAL(copyString(html, (int)strlen(html)));
+	free(html);
+	return result;
+}
+
+/* renderMarkdown(path) -> string */
+static Value renderMarkdownNative(int argCount, Value* args) {
+	char* html;
+	Value result;
+
+	if (argCount != 1) {
+		tplNativeError("renderMarkdown() expects 1 argument.");
+		return NIL_VAL;
+	}
+	if (!IS_STRING(args[0])) {
+		tplNativeError("renderMarkdown() path must be a string.");
+		return NIL_VAL;
+	}
+	html = mdRenderFile(AS_CSTRING(args[0]));
+	if (html == NULL) {
+		tplNativeError("renderMarkdown() failed.");
 		return NIL_VAL;
 	}
 	result = OBJ_VAL(copyString(html, (int)strlen(html)));
@@ -3863,6 +3914,8 @@ void initVM() {
 	defineNative("args", argsNative);
 	defineNative("readFile", readFileNative);
 	defineNative("renderTemplate", renderTemplateNative);
+	defineNative("markdownToHtml", markdownToHtmlNative);
+	defineNative("renderMarkdown", renderMarkdownNative);
 	defineNative("writeFile", writeFileNative);
 	defineNative("appendFile", appendFileNative);
 	defineNative("deleteFile", deleteFileNative);
