@@ -2736,66 +2736,62 @@ serverStaticNative(int argCount, Value* args)
 	return NIL_VAL;
 }
 
-/* Server.start() - blocking dispatch loop (Plan 9: announce/listen/accept) */
+/* Server.workers(n) — prefork worker count (1..32); returns server for chaining */
 static Value
-serverStartNative(int argCount, Value* args)
+serverWorkersNative(int argCount, Value* args)
 {
-	if (argCount != 1 || !IS_INSTANCE(args[0]))
-		return BOOL_VAL(false);
-	ObjInstance* server = AS_INSTANCE(args[0]);
-	Value portVal;
-	if (!tableGet(&server->fields, copyString("port", 4), &portVal) || !IS_NUMBER(portVal))
-		return BOOL_VAL(false);
-	int port = (int)AS_NUMBER(portVal);
+	int n;
 
-	char addr[64];
-	char adir[40];
-	char ldir[40];
-	snprint(addr, sizeof(addr), "tcp!*!%d", port);
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_NUMBER(args[1]))
+		return NIL_VAL;
+	n = (int)AS_NUMBER(args[1]);
+	if (n < 1)
+		n = 1;
+	if (n > 32)
+		n = 32;
+	tableSet(&AS_INSTANCE(args[0])->fields, copyString("_workers", 8), NUMBER_VAL((double)n));
+	return args[0];
+}
 
-	int afd = announce(addr, adir);
-	if (afd < 0) {
-		fprint(2, "Failed to announce on port %d\n", port);
-		return BOOL_VAL(false);
-	}
+static int
+serverGetWorkerCount(ObjInstance* server)
+{
+	Value wVal;
+	int n;
 
-	fprint(1, "HTTP server listening on port %d\n", port);
-	fprint(1, "Press Ctrl+C to stop\n");
+	if (!tableGet(&server->fields, copyString("_workers", 8), &wVal) || !IS_NUMBER(wVal))
+		return 4;
+	n = (int)AS_NUMBER(wVal);
+	if (n < 1)
+		return 1;
+	if (n > 32)
+		return 32;
+	return n;
+}
 
-	Value routesVal;
-	ObjArray* routes = nil;
-	if (tableGet(&server->fields, copyString("_routes", 7), &routesVal) && IS_ARRAY(routesVal))
-		routes = AS_ARRAY(routesVal);
+/* Handle one accepted client connection (does not close dfd). */
+static void
+serverHandleClient(ObjInstance* server, int dfd, ObjArray* routes, char* defaultStaticDir)
+{
+	char buffer[8192];
+	int totalRead;
+	int n;
+	HttpRequest req;
+	Value mwVal;
+	ObjArray* middlewares;
+	ObjClosure* handler;
+	ObjInstance* reqObj;
+	ObjInstance* resObj;
+	Value reqVal, resVal, nextFn;
+	Value* savedTop;
 
-	Value staticVal;
-	char* defaultStaticDir = nil;
-	if (tableGet(&server->fields, copyString("_static_dir", 11), &staticVal) && IS_STRING(staticVal))
-		defaultStaticDir = AS_CSTRING(staticVal);
+	n = read(dfd, buffer, sizeof(buffer) - 1);
+	if (n <= 0)
+		return;
+	totalRead = n;
+	buffer[totalRead] = '\0';
 
-	while (1) {
-		int lcfd = listen(adir, ldir);
-		if (lcfd < 0) {
-			close(afd);
-			return BOOL_VAL(false);
-		}
-
-		int dfd = accept(lcfd, ldir);
-		close(lcfd);
-		if (dfd < 0)
-			continue;
-
-		char buffer[8192];
-		int totalRead;
-		int n;
-
-		n = read(dfd, buffer, sizeof(buffer) - 1);
-		if (n <= 0) {
-			close(dfd);
-			continue;
-		}
-		totalRead = n;
-		buffer[totalRead] = '\0';
-
+	{
 		char* headerEnd = strstr(buffer, "\r\n\r\n");
 		if (headerEnd == nil)
 			headerEnd = strstr(buffer, "\n\n");
@@ -2819,170 +2815,267 @@ serverStartNative(int argCount, Value* args)
 				buffer[totalRead] = '\0';
 			}
 		}
+	}
 
-		HttpRequest req;
-		if (parseHttpRequest(buffer, totalRead, &req) < 0) {
-			sendHttpResponse(dfd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
-			close(dfd);
-			continue;
-		}
-		fprint(1, "%s %s Host:%s\n", req.method, req.path, req.host);
+	if (parseHttpRequest(buffer, totalRead, &req) < 0) {
+		sendHttpResponse(dfd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
+		return;
+	}
+	fprint(1, "%s %s Host:%s\n", req.method, req.path, req.host);
 
-		Value mwVal;
-		ObjArray* middlewares = nil;
-		if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
-			middlewares = AS_ARRAY(mwVal);
+	middlewares = nil;
+	if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
+		middlewares = AS_ARRAY(mwVal);
 
-		ObjClosure* handler = nil;
-		if (routes != nil) {
-			int pass;
-			/* Pass 0: host-specific getHost/postHost; pass 1: global get/post */
-			for (pass = 0; pass < 2 && handler == nil; pass++) {
-				int i;
-				for (i = 0; i < routes->count; i++) {
-					Value entVal = routes->elements[i];
-					Value methodVal, pathVal, handlerVal, hostVal;
-					int hasHost;
-					if (!IS_INSTANCE(entVal)) continue;
-					ObjInstance* ent = AS_INSTANCE(entVal);
-					if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
-					if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
-					if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
-					if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
-					hasHost = tableGet(&ent->fields, copyString("host", 4), &hostVal) && IS_STRING(hostVal);
-					if (pass == 0) {
-						if (!hasHost) continue;
-						if (cistrcmp(AS_CSTRING(hostVal), req.host) != 0) continue;
-					} else {
-						if (hasHost) continue;
-					}
-					if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
-					if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
-					handler = AS_CLOSURE(handlerVal);
-					break;
+	handler = nil;
+	if (routes != nil) {
+		int pass;
+		for (pass = 0; pass < 2 && handler == nil; pass++) {
+			int i;
+			for (i = 0; i < routes->count; i++) {
+				Value entVal = routes->elements[i];
+				Value methodVal, pathVal, handlerVal, hostVal;
+				int hasHost;
+				if (!IS_INSTANCE(entVal)) continue;
+				ObjInstance* ent = AS_INSTANCE(entVal);
+				if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
+				if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
+				if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
+				if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
+				hasHost = tableGet(&ent->fields, copyString("host", 4), &hostVal) && IS_STRING(hostVal);
+				if (pass == 0) {
+					if (!hasHost) continue;
+					if (cistrcmp(AS_CSTRING(hostVal), req.host) != 0) continue;
+				} else {
+					if (hasHost) continue;
 				}
+				if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
+				if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
+				handler = AS_CLOSURE(handlerVal);
+				break;
 			}
 		}
+	}
 
-		/* Build req and res objects */
-		ObjInstance* reqObj = newInstance(nil);
-		push(OBJ_VAL(reqObj));
-		tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(req.method, strlen(req.method))));
-		tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(req.path, strlen(req.path))));
-		tableSet(&reqObj->fields, copyString("host", 4), OBJ_VAL(copyString(req.host, strlen(req.host))));
-		tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(req.body, strlen(req.body))));
+	reqObj = newInstance(nil);
+	push(OBJ_VAL(reqObj));
+	tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(req.method, strlen(req.method))));
+	tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(req.path, strlen(req.path))));
+	tableSet(&reqObj->fields, copyString("host", 4), OBJ_VAL(copyString(req.host, strlen(req.host))));
+	tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(req.body, strlen(req.body))));
 
-		ObjInstance* resObj = newInstance(serverResClass);
-		push(OBJ_VAL(resObj));
-		tableSet(&resObj->fields, copyString("_fd", 3), NUMBER_VAL((double)dfd));
-		tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
+	resObj = newInstance(serverResClass);
+	push(OBJ_VAL(resObj));
+	tableSet(&resObj->fields, copyString("_fd", 3), NUMBER_VAL((double)dfd));
+	tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
 
-		Value reqVal = OBJ_VAL(reqObj);
-		Value resVal = OBJ_VAL(resObj);
+	reqVal = OBJ_VAL(reqObj);
+	resVal = OBJ_VAL(resObj);
 
-		Value nextFn = NIL_VAL;
-		if (handler != nil && middlewares != nil && middlewares->count > 0)
-			nextFn = OBJ_VAL(newNative(resNextNative));
+	nextFn = NIL_VAL;
+	if (handler != nil && middlewares != nil && middlewares->count > 0)
+		nextFn = OBJ_VAL(newNative(resNextNative));
 
-		pop(); /* res */
-		pop(); /* req */
+	pop(); /* res */
+	pop(); /* req */
 
-		if (handler != nil) {
-			Value* savedTop = vm.stackTop;
-			if (middlewares != nil && middlewares->count > 0) {
-				_mwChainMiddlewares = middlewares;
-				_mwChainIndex = 0;
-				_mwChainHandler = handler;
-				_mwChainReq = reqVal;
-				_mwChainRes = resVal;
-				Value firstMw = middlewares->elements[0];
-				push(OBJ_VAL(firstMw));
-				push(reqVal);
-				push(resVal);
-				push(nextFn);
-				if (call(AS_CLOSURE(firstMw), 3)) {
-					run();
-				}
-			} else {
-				push(OBJ_VAL(handler));
-				push(reqVal);
-				push(resVal);
-				if (call(handler, 2)) {
-					run();
-				}
-			}
-			vm.stackTop = savedTop;
+	if (handler != nil) {
+		savedTop = vm.stackTop;
+		if (middlewares != nil && middlewares->count > 0) {
+			Value firstMw;
+			_mwChainMiddlewares = middlewares;
+			_mwChainIndex = 0;
+			_mwChainHandler = handler;
+			_mwChainReq = reqVal;
+			_mwChainRes = resVal;
+			firstMw = middlewares->elements[0];
+			push(firstMw);
+			push(reqVal);
+			push(resVal);
+			push(nextFn);
+			if (call(AS_CLOSURE(firstMw), 3))
+				run();
 		} else {
-			/* No route: server.static / vhost root fallback */
-			int servedStatic = 0;
-			char* staticDir = serverLookupVhostRoot(server, req.host);
-			if (staticDir == nil)
-				staticDir = defaultStaticDir;
-			if (staticDir != nil && strcmp(req.method, "GET") == 0) {
-				char filepath[2048];
-				char* reqPath;
-				int dirLen, pathLen, ffd, nread, hlen;
-				long fileLen;
-				Dir* d;
-				char* content;
-				char* mime;
-				char header[512];
-				reqPath = req.path;
-				if (strstr(reqPath, "..") == nil) {
-					dirLen = strlen(staticDir);
-					pathLen = strlen(reqPath);
-					if (dirLen + pathLen + 2 < sizeof(filepath)) {
-						snprint(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
-						if (pathLen > 0 && (reqPath[pathLen - 1] == '/' ||
-						    (pathLen == 1 && reqPath[0] == '/')))
-							strncat(filepath, "index.html",
-								sizeof(filepath) - strlen(filepath) - 1);
-						ffd = open(filepath, OREAD);
-						if (ffd >= 0) {
-							d = dirfstat(ffd);
-							if (d != nil) {
-								fileLen = d->length;
-								free(d);
-								if (fileLen > 0 && fileLen < (long)(16*1024*1024)) {
-									content = malloc((ulong)fileLen);
-									if (content != nil) {
-										nread = read(ffd, content, (int)fileLen);
-										mime = getMimeType(filepath);
-										hlen = snprint(header, sizeof(header),
-											"HTTP/1.0 200 OK\r\n"
-											"Content-Type: %s\r\n"
-											"Content-Length: %ld\r\n"
-											"Server: lux/1.0\r\n"
-											"Connection: close\r\n\r\n",
-											mime, (long)fileLen);
-										if (hlen > 0) write(dfd, header, hlen);
-										if (nread > 0) write(dfd, content, nread);
-										free(content);
-										servedStatic = 1;
-									} else {
-										sendHttpResponse(dfd, 500, "Internal Server Error",
-											"{\"error\":\"out of memory\"}");
-										servedStatic = 1;
-									}
+			push(OBJ_VAL(handler));
+			push(reqVal);
+			push(resVal);
+			if (call(handler, 2))
+				run();
+		}
+		vm.stackTop = savedTop;
+	} else {
+		int servedStatic = 0;
+		char* staticDir = serverLookupVhostRoot(server, req.host);
+		if (staticDir == nil)
+			staticDir = defaultStaticDir;
+		if (staticDir != nil && strcmp(req.method, "GET") == 0) {
+			char filepath[2048];
+			char* reqPath;
+			int dirLen, pathLen, ffd, nread, hlen;
+			long fileLen;
+			Dir* d;
+			char* content;
+			char* mime;
+			char header[512];
+			reqPath = req.path;
+			if (strstr(reqPath, "..") == nil) {
+				dirLen = strlen(staticDir);
+				pathLen = strlen(reqPath);
+				if (dirLen + pathLen + 2 < sizeof(filepath)) {
+					snprint(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
+					if (pathLen > 0 && (reqPath[pathLen - 1] == '/' ||
+					    (pathLen == 1 && reqPath[0] == '/')))
+						strncat(filepath, "index.html",
+							sizeof(filepath) - strlen(filepath) - 1);
+					ffd = open(filepath, OREAD);
+					if (ffd >= 0) {
+						d = dirfstat(ffd);
+						if (d != nil) {
+							fileLen = d->length;
+							free(d);
+							if (fileLen > 0 && fileLen < (long)(16*1024*1024)) {
+								content = malloc((ulong)fileLen);
+								if (content != nil) {
+									nread = read(ffd, content, (int)fileLen);
+									mime = getMimeType(filepath);
+									hlen = snprint(header, sizeof(header),
+										"HTTP/1.0 200 OK\r\n"
+										"Content-Type: %s\r\n"
+										"Content-Length: %ld\r\n"
+										"Server: lux/1.0\r\n"
+										"Connection: close\r\n\r\n",
+										mime, (long)fileLen);
+									if (hlen > 0) write(dfd, header, hlen);
+									if (nread > 0) write(dfd, content, nread);
+									free(content);
+									servedStatic = 1;
 								} else {
 									sendHttpResponse(dfd, 500, "Internal Server Error",
-										"{\"error\":\"file too large or empty\"}");
+										"{\"error\":\"out of memory\"}");
 									servedStatic = 1;
 								}
+							} else {
+								sendHttpResponse(dfd, 500, "Internal Server Error",
+									"{\"error\":\"file too large or empty\"}");
+								servedStatic = 1;
 							}
-							close(ffd);
 						}
+						close(ffd);
 					}
 				}
 			}
-			if (!servedStatic) {
-				char errBody[256];
-				snprint(errBody, sizeof(errBody),
-					"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
-				sendHttpResponse(dfd, 404, "Not Found", errBody);
-			}
 		}
+		if (!servedStatic) {
+			char errBody[256];
+			snprint(errBody, sizeof(errBody),
+				"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
+			sendHttpResponse(dfd, 404, "Not Found", errBody);
+		}
+	}
+}
+
+static void
+serverAcceptLoop(ObjInstance* server, char* adir, int afd, ObjArray* routes,
+	char* defaultStaticDir)
+{
+	USED(afd);
+	for (;;) {
+		char ldir[40];
+		int lcfd = listen(adir, ldir);
+		int dfd;
+		if (lcfd < 0)
+			exits("listen");
+		dfd = accept(lcfd, ldir);
+		close(lcfd);
+		if (dfd < 0)
+			continue;
+		serverHandleClient(server, dfd, routes, defaultStaticDir);
 		close(dfd);
+	}
+}
+
+static int
+serverSpawnWorker(ObjInstance* server, char* adir, int afd, ObjArray* routes,
+	char* defaultStaticDir, int port)
+{
+	int pid;
+
+	pid = rfork(RFPROC|RFFDG);
+	if (pid < 0)
+		return -1;
+	if (pid == 0) {
+		fprint(1, "HTTP server worker pid=%d port=%d\n", getpid(), port);
+		serverAcceptLoop(server, adir, afd, routes, defaultStaticDir);
+		exits(nil);
+	}
+	return pid;
+}
+
+/* Server.start() - blocking dispatch loop (Plan 9: announce/listen/accept) */
+static Value
+serverStartNative(int argCount, Value* args)
+{
+	ObjInstance* server;
+	Value portVal;
+	int port;
+	int workers;
+	char addr[64];
+	char adir[40];
+	int afd;
+	Value routesVal;
+	ObjArray* routes;
+	Value staticVal;
+	char* defaultStaticDir;
+	int i;
+
+	if (argCount != 1 || !IS_INSTANCE(args[0]))
+		return BOOL_VAL(false);
+	server = AS_INSTANCE(args[0]);
+	if (!tableGet(&server->fields, copyString("port", 4), &portVal) || !IS_NUMBER(portVal))
+		return BOOL_VAL(false);
+	port = (int)AS_NUMBER(portVal);
+	workers = serverGetWorkerCount(server);
+
+	snprint(addr, sizeof(addr), "tcp!*!%d", port);
+	afd = announce(addr, adir);
+	if (afd < 0) {
+		fprint(2, "Failed to announce on port %d\n", port);
+		return BOOL_VAL(false);
+	}
+
+	fprint(1, "HTTP server listening on port %d workers=%d\n", port, workers);
+	fprint(1, "Press Ctrl+C to stop\n");
+
+	routes = nil;
+	if (tableGet(&server->fields, copyString("_routes", 7), &routesVal) && IS_ARRAY(routesVal))
+		routes = AS_ARRAY(routesVal);
+
+	defaultStaticDir = nil;
+	if (tableGet(&server->fields, copyString("_static_dir", 11), &staticVal) && IS_STRING(staticVal))
+		defaultStaticDir = AS_CSTRING(staticVal);
+
+	if (workers == 1) {
+		serverAcceptLoop(server, adir, afd, routes, defaultStaticDir);
+		close(afd);
+		return BOOL_VAL(false);
+	}
+
+	for (i = 0; i < workers; i++) {
+		if (serverSpawnWorker(server, adir, afd, routes, defaultStaticDir, port) < 0) {
+			fprint(2, "Failed to spawn HTTP worker\n");
+			close(afd);
+			return BOOL_VAL(false);
+		}
+	}
+
+	/* Parent: keep announce open; wait and respawn dead workers */
+	for (;;) {
+		Waitmsg* w = wait();
+		if (w == nil)
+			continue;
+		free(w);
+		if (serverSpawnWorker(server, adir, afd, routes, defaultStaticDir, port) < 0)
+			fprint(2, "Failed to respawn HTTP worker\n");
 	}
 }
 
@@ -3828,6 +3921,7 @@ initVM(void)
 	tableSet(&serverClass->methods, copyString("vhost", 5), OBJ_VAL(newNative(serverVhostNative)));
 	tableSet(&serverClass->methods, copyString("use", 3), OBJ_VAL(newNative(serverUseNative)));
 	tableSet(&serverClass->methods, copyString("static", 6), OBJ_VAL(newNative(serverStaticNative)));
+	tableSet(&serverClass->methods, copyString("workers", 7), OBJ_VAL(newNative(serverWorkersNative)));
 	tableSet(&serverClass->methods, copyString("start", 5), OBJ_VAL(newNative(serverStartNative)));
 	push(OBJ_VAL(copyString("Server", 6)));
 	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(serverClass));

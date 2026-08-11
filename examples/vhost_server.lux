@@ -29,6 +29,7 @@ fun health(req, res) {
 }
 
 var server = Server(8080);
+server.workers(4);
 
 server.vhost("technomancy.site", "examples/vhost/technomancy.site");
 server.vhost("williamgunnells.com", "examples/vhost/williamgunnells.com");

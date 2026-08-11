@@ -29,6 +29,7 @@ fun logger(req, res, next) {
 }
 
 var server = Server(8080);
+server.workers(4);   /* prefork workers; default 4, use 1 for single-process */
 server.get("/hello", handleHello);
 server.post("/data", handleData);
 server.post("/ack", handleAck);
