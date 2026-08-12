@@ -20,6 +20,11 @@ curl -H "Content-Type: application/json" -d '{"name":"John"}' http://127.0.0.1:8
 - [x] Re-enable README / `examples/server_middleware.lux` logger example
 - [ ] Optional: automated regression (fork server + `curl`/`hget` with timeout; see `tests/post.rc`)
 
+## Prefork HTTP workers
+
+- [x] `server.workers(n)` prefork (Plan 9 `rfork`, POSIX `fork`); default 4; parent respawns
+- [ ] Optional: automated regression (fork server + `curl`/`hget` with timeout; see `tests/post.rc`)
+
 ## `res.json` + `Dict` (documentation / optional feature)
 
 - [x] **Document** (done in README) that `res.json(dict)` serializes instance fields only, not native `Dict` entries.

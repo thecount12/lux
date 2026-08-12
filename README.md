@@ -162,6 +162,7 @@ if (resp != nil) {
 ```lux
 // Configurable Server: routes, static, multi-domain vhosts (see examples/vhost_server.lux)
 var server = Server(8080);
+server.workers(4);
 server.vhost("example.com", "public/example");
 server.get("/health", handleHealth);
 server.start();
@@ -1300,11 +1301,14 @@ fun handleAck(req, res) {
 }
 
 var server = Server(8080);
+server.workers(4);   /* prefork: N processes accept in parallel (default 4; 1 = no fork) */
 server.get("/hello", handleHello);
 server.post("/data", handleData);
 server.static("public");   /* serve GET files from ./public/ */
 server.start();
 ```
+
+**Concurrency (`server.workers(n)`):** Prefork model — after bind/announce, Lux spawns `n` worker processes (clamped to 1..32; default **4** if unset). Each worker has its own VM copy and runs an accept/handle loop; the parent waits and respawns dead workers. `workers(1)` keeps a single-process loop (handy for debugging). In-memory mutations are **not** shared across workers after fork; use files, DB, or external services for shared state. TLS still terminates outside Lux (`tlssrv` on 9front).
 
 **Virtual hosts (many domains, one port):** Lux parses the `Host` header into `req.host` (port stripped). Use `server.vhost(host, root)` for per-domain static trees and `server.getHost` / `server.postHost` for host-scoped routes. Global `get`/`post` still match any Host. Host matching is case-insensitive. GET static files are tried first (vhost root, else `server.static`), then host-specific routes, then global routes.
 

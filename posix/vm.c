@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <curl/curl.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <openssl/hmac.h>
@@ -2861,6 +2862,234 @@ static Value serverStaticNative(int argCount, Value* args) {
 	return NIL_VAL;
 }
 
+/* Server.workers(n) — prefork worker count (1..32); returns server for chaining */
+static Value serverWorkersNative(int argCount, Value* args) {
+	int n;
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_NUMBER(args[1]))
+		return NIL_VAL;
+	n = (int)AS_NUMBER(args[1]);
+	if (n < 1) n = 1;
+	if (n > 32) n = 32;
+	tableSet(&AS_INSTANCE(args[0])->fields, copyString("_workers", 8), NUMBER_VAL((double)n));
+	return args[0];
+}
+
+static int serverGetWorkerCount(ObjInstance* server) {
+	Value wVal;
+	int n;
+	if (!tableGet(&server->fields, copyString("_workers", 8), &wVal) || !IS_NUMBER(wVal))
+		return 4;
+	n = (int)AS_NUMBER(wVal);
+	if (n < 1) return 1;
+	if (n > 32) return 32;
+	return n;
+}
+
+/* Handle one accepted client connection (does not close client_fd). */
+static void serverHandleClient(ObjInstance* server, int client_fd, ObjArray* routes,
+		const char* defaultStaticDir) {
+	char buffer[8192];
+	int totalRead = 0;
+	int n = read(client_fd, buffer, sizeof(buffer) - 1);
+	if (n <= 0)
+		return;
+	totalRead = n;
+	buffer[totalRead] = '\0';
+
+	char* headerEnd = strstr(buffer, "\r\n\r\n");
+	if (headerEnd == NULL) headerEnd = strstr(buffer, "\n\n");
+	if (headerEnd != NULL) {
+		char* clHeader = strstr(buffer, "Content-Length:");
+		if (clHeader == NULL) clHeader = strstr(buffer, "content-length:");
+		if (clHeader != NULL) {
+			int contentLen = atoi(clHeader + 15);
+			int bodyStart = (headerEnd - buffer) + 4;
+			if (strstr(buffer, "\n\n") != NULL && strstr(buffer, "\r\n\r\n") == NULL)
+				bodyStart = (headerEnd - buffer) + 2;
+			int bodyReceived = totalRead - bodyStart;
+			int needMore = contentLen - bodyReceived;
+			while (needMore > 0 && totalRead < (int)sizeof(buffer) - 1) {
+				n = read(client_fd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
+				if (n <= 0) break;
+				totalRead += n;
+				needMore -= n;
+			}
+			buffer[totalRead] = '\0';
+		}
+	}
+
+	HttpRequest req;
+	if (parseHttpRequest(buffer, totalRead, &req) < 0) {
+		sendHttpResponse(client_fd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
+		return;
+	}
+	fprintf(stdout, "%s %s Host:%s\n", req.method, req.path, req.host);
+	fflush(stdout);
+
+	ObjInstance* reqObj = newInstance(NULL);
+	push(OBJ_VAL(reqObj));
+	tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(req.method, strlen(req.method))));
+	tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(req.path, strlen(req.path))));
+	tableSet(&reqObj->fields, copyString("host", 4), OBJ_VAL(copyString(req.host, strlen(req.host))));
+	tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(req.body, strlen(req.body))));
+
+	ObjInstance* resObj = newInstance(serverResClass);
+	push(OBJ_VAL(resObj));
+	tableSet(&resObj->fields, copyString("_fd", 3), NUMBER_VAL((double)client_fd));
+	tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
+
+	Value reqVal = OBJ_VAL(reqObj);
+	Value resVal = OBJ_VAL(resObj);
+
+	Value mwVal;
+	ObjArray* middlewares = NULL;
+	if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
+		middlewares = AS_ARRAY(mwVal);
+
+	ObjClosure* handler = NULL;
+	if (routes != NULL) {
+		int pass;
+		for (pass = 0; pass < 2 && handler == NULL; pass++) {
+			int i;
+			for (i = 0; i < routes->count; i++) {
+				Value entVal = routes->elements[i];
+				Value methodVal, pathVal, handlerVal, hostVal;
+				int hasHost;
+				if (!IS_INSTANCE(entVal)) continue;
+				ObjInstance* ent = AS_INSTANCE(entVal);
+				if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
+				if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
+				if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
+				if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
+				hasHost = tableGet(&ent->fields, copyString("host", 4), &hostVal) && IS_STRING(hostVal);
+				if (pass == 0) {
+					if (!hasHost) continue;
+					if (strcasecmp(AS_CSTRING(hostVal), req.host) != 0) continue;
+				} else {
+					if (hasHost) continue;
+				}
+				if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
+				if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
+				handler = AS_CLOSURE(handlerVal);
+				break;
+			}
+		}
+	}
+
+	Value nextFn = NIL_VAL;
+	if (handler != NULL && middlewares != NULL && middlewares->count > 0)
+		nextFn = OBJ_VAL(newNative(resNextNative));
+
+	pop(); /* res */
+	pop(); /* req */
+
+	if (handler != NULL) {
+		Value* savedTop = vm.stackTop;
+		if (middlewares != NULL && middlewares->count > 0) {
+			Value firstMw = middlewares->elements[0];
+			_mwChainMiddlewares = middlewares;
+			_mwChainIndex = 0;
+			_mwChainHandler = handler;
+			_mwChainReq = reqVal;
+			_mwChainRes = resVal;
+			push(firstMw);
+			push(reqVal);
+			push(resVal);
+			push(nextFn);
+			if (call(AS_CLOSURE(firstMw), 3)) {
+				run();
+			}
+		} else {
+			push(OBJ_VAL(handler));
+			push(reqVal);
+			push(resVal);
+			if (call(handler, 2)) {
+				run();
+			}
+		}
+		vm.stackTop = savedTop;
+	} else {
+		int servedStatic = 0;
+		const char* staticDir = serverLookupVhostRoot(server, req.host);
+		if (staticDir == NULL)
+			staticDir = defaultStaticDir;
+		if (staticDir != NULL && strcmp(req.method, "GET") == 0) {
+			char filepath[2048];
+			const char* reqPath = req.path;
+			if (strstr(reqPath, "..") == NULL) {
+				size_t dirLen = strlen(staticDir);
+				size_t pathLen = strlen(reqPath);
+				if (dirLen + pathLen + 2 < sizeof(filepath)) {
+					snprintf(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
+					if (pathLen > 0 && (reqPath[pathLen - 1] == '/' ||
+					    (pathLen == 1 && reqPath[0] == '/'))) {
+						strncat(filepath, "index.html",
+							sizeof(filepath) - strlen(filepath) - 1);
+					}
+					FILE* f = fopen(filepath, "rb");
+					if (f != NULL) {
+						fseek(f, 0, SEEK_END);
+						long fsize = ftell(f);
+						rewind(f);
+						if (fsize > 0 && fsize < 16 * 1024 * 1024) {
+							char* content = malloc((size_t)fsize);
+							if (content != NULL) {
+								size_t nread = fread(content, 1, (size_t)fsize, f);
+								const char* mime = getMimeType(filepath);
+								sendHttpResponseBinary(client_fd, 200, "OK", mime,
+									content, (int)nread);
+								free(content);
+								servedStatic = 1;
+							} else {
+								sendHttpResponse(client_fd, 500, "Internal Server Error",
+									"{\"error\":\"out of memory\"}");
+								servedStatic = 1;
+							}
+						} else {
+							sendHttpResponse(client_fd, 500, "Internal Server Error",
+								"{\"error\":\"file too large or empty\"}");
+							servedStatic = 1;
+						}
+						fclose(f);
+					}
+				}
+			}
+		}
+		if (!servedStatic) {
+			char errBody[256];
+			snprintf(errBody, sizeof(errBody),
+				"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
+			sendHttpResponse(client_fd, 404, "Not Found", errBody);
+		}
+	}
+}
+
+static void serverAcceptLoop(ObjInstance* server, int server_fd, ObjArray* routes,
+		const char* defaultStaticDir) {
+	for (;;) {
+		struct sockaddr_in client_addr;
+		socklen_t client_len = sizeof(client_addr);
+		int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
+		if (client_fd < 0) continue;
+		serverHandleClient(server, client_fd, routes, defaultStaticDir);
+		close(client_fd);
+	}
+}
+
+static pid_t serverSpawnWorker(ObjInstance* server, int server_fd, ObjArray* routes,
+		const char* defaultStaticDir, int port) {
+	pid_t pid = fork();
+	if (pid < 0)
+		return -1;
+	if (pid == 0) {
+		fprintf(stdout, "HTTP server worker pid=%d port=%d\n", (int)getpid(), port);
+		fflush(stdout);
+		serverAcceptLoop(server, server_fd, routes, defaultStaticDir);
+		_exit(0);
+	}
+	return pid;
+}
+
 /* Server.start() - blocking dispatch loop */
 static Value serverStartNative(int argCount, Value* args) {
 	if (argCount != 1 || !IS_INSTANCE(args[0]))
@@ -2870,6 +3099,7 @@ static Value serverStartNative(int argCount, Value* args) {
 	if (!tableGet(&server->fields, copyString("port", 4), &portVal) || !IS_NUMBER(portVal))
 		return BOOL_VAL(false);
 	int port = (int)AS_NUMBER(portVal);
+	int workers = serverGetWorkerCount(server);
 
 	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (server_fd < 0) {
@@ -2890,11 +3120,11 @@ static Value serverStartNative(int argCount, Value* args) {
 		close(server_fd);
 		return BOOL_VAL(false);
 	}
-	if (listen(server_fd, 10) < 0) {
+	if (listen(server_fd, 128) < 0) {
 		close(server_fd);
 		return BOOL_VAL(false);
 	}
-	fprintf(stdout, "HTTP server listening on port %d\n", port);
+	fprintf(stdout, "HTTP server listening on port %d workers=%d\n", port, workers);
 	fprintf(stdout, "Press Ctrl+C to stop\n");
 	fflush(stdout);
 
@@ -2908,197 +3138,29 @@ static Value serverStartNative(int argCount, Value* args) {
 	if (tableGet(&server->fields, copyString("_static_dir", 11), &staticVal) && IS_STRING(staticVal))
 		defaultStaticDir = AS_CSTRING(staticVal);
 
-	while (1) {
-		struct sockaddr_in client_addr;
-		socklen_t client_len = sizeof(client_addr);
-		int client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_len);
-		if (client_fd < 0) continue;
-
-		char buffer[8192];
-		int totalRead = 0;
-		int n = read(client_fd, buffer, sizeof(buffer) - 1);
-		if (n <= 0) {
-			close(client_fd);
-			continue;
-		}
-		totalRead = n;
-		buffer[totalRead] = '\0';
-
-		char* headerEnd = strstr(buffer, "\r\n\r\n");
-		if (headerEnd == NULL) headerEnd = strstr(buffer, "\n\n");
-		if (headerEnd != NULL) {
-			char* clHeader = strstr(buffer, "Content-Length:");
-			if (clHeader == NULL) clHeader = strstr(buffer, "content-length:");
-			if (clHeader != NULL) {
-				int contentLen = atoi(clHeader + 15);
-				int bodyStart = (headerEnd - buffer) + 4;
-				if (strstr(buffer, "\n\n") != NULL && strstr(buffer, "\r\n\r\n") == NULL)
-					bodyStart = (headerEnd - buffer) + 2;
-				int bodyReceived = totalRead - bodyStart;
-				int needMore = contentLen - bodyReceived;
-				while (needMore > 0 && totalRead < (int)sizeof(buffer) - 1) {
-					n = read(client_fd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
-					if (n <= 0) break;
-					totalRead += n;
-					needMore -= n;
-				}
-				buffer[totalRead] = '\0';
-			}
-		}
-
-		HttpRequest req;
-		if (parseHttpRequest(buffer, totalRead, &req) < 0) {
-			sendHttpResponse(client_fd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
-			close(client_fd);
-			continue;
-		}
-		fprintf(stdout, "%s %s Host:%s\n", req.method, req.path, req.host);
-		fflush(stdout);
-
-		/* Build req object */
-		ObjInstance* reqObj = newInstance(NULL);
-		push(OBJ_VAL(reqObj));
-		tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(req.method, strlen(req.method))));
-		tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(req.path, strlen(req.path))));
-		tableSet(&reqObj->fields, copyString("host", 4), OBJ_VAL(copyString(req.host, strlen(req.host))));
-		tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(req.body, strlen(req.body))));
-
-		/* Build res object */
-		ObjInstance* resObj = newInstance(serverResClass);
-		push(OBJ_VAL(resObj));
-		tableSet(&resObj->fields, copyString("_fd", 3), NUMBER_VAL((double)client_fd));
-		tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
-
-		Value reqVal = OBJ_VAL(reqObj);
-		Value resVal = OBJ_VAL(resObj);
-		/* Keep req/res on the stack until handler args are pushed so GC
-		 * cannot collect them during copyString in middleware lookup. */
-		Value mwVal;
-		ObjArray* middlewares = NULL;
-		if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
-			middlewares = AS_ARRAY(mwVal);
-
-		ObjClosure* handler = NULL;
-		if (routes != NULL) {
-			int pass;
-			for (pass = 0; pass < 2 && handler == NULL; pass++) {
-				int i;
-				for (i = 0; i < routes->count; i++) {
-					Value entVal = routes->elements[i];
-					Value methodVal, pathVal, handlerVal, hostVal;
-					int hasHost;
-					if (!IS_INSTANCE(entVal)) continue;
-					ObjInstance* ent = AS_INSTANCE(entVal);
-					if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
-					if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
-					if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
-					if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
-					hasHost = tableGet(&ent->fields, copyString("host", 4), &hostVal) && IS_STRING(hostVal);
-					if (pass == 0) {
-						if (!hasHost) continue;
-						if (strcasecmp(AS_CSTRING(hostVal), req.host) != 0) continue;
-					} else {
-						if (hasHost) continue;
-					}
-					if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
-					if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
-					handler = AS_CLOSURE(handlerVal);
-					break;
-				}
-			}
-		}
-
-		Value nextFn = NIL_VAL;
-		if (handler != NULL && middlewares != NULL && middlewares->count > 0)
-			nextFn = OBJ_VAL(newNative(resNextNative));
-
-		pop(); /* res */
-		pop(); /* req */
-
-		if (handler != NULL) {
-			Value* savedTop = vm.stackTop;
-			if (middlewares != NULL && middlewares->count > 0) {
-				_mwChainMiddlewares = middlewares;
-				_mwChainIndex = 0;
-				_mwChainHandler = handler;
-				_mwChainReq = reqVal;
-				_mwChainRes = resVal;
-				Value firstMw = middlewares->elements[0];
-				push(OBJ_VAL(firstMw));
-				push(reqVal);
-				push(resVal);
-				push(nextFn);
-				if (call(AS_CLOSURE(firstMw), 3)) {
-					run();
-				}
-			} else {
-				push(OBJ_VAL(handler));
-				push(reqVal);
-				push(resVal);
-				if (call(handler, 2)) {
-					run();
-				}
-			}
-			vm.stackTop = savedTop;
-		} else {
-			/* No route: server.static / vhost root fallback */
-			int servedStatic = 0;
-			const char* staticDir = serverLookupVhostRoot(server, req.host);
-			if (staticDir == NULL)
-				staticDir = defaultStaticDir;
-			if (staticDir != NULL && strcmp(req.method, "GET") == 0) {
-				char filepath[2048];
-				const char* reqPath = req.path;
-				if (strstr(reqPath, "..") == NULL) {
-					size_t dirLen = strlen(staticDir);
-					size_t pathLen = strlen(reqPath);
-					if (dirLen + pathLen + 2 < sizeof(filepath)) {
-						snprintf(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
-						if (pathLen > 0 && (reqPath[pathLen - 1] == '/' ||
-						    (pathLen == 1 && reqPath[0] == '/'))) {
-							strncat(filepath, "index.html",
-								sizeof(filepath) - strlen(filepath) - 1);
-						}
-						FILE* f = fopen(filepath, "rb");
-						if (f != NULL) {
-							fseek(f, 0, SEEK_END);
-							long fsize = ftell(f);
-							rewind(f);
-							if (fsize > 0 && fsize < 16 * 1024 * 1024) {
-								char* content = malloc((size_t)fsize);
-								if (content != NULL) {
-									size_t nread = fread(content, 1, (size_t)fsize, f);
-									const char* mime = getMimeType(filepath);
-									sendHttpResponseBinary(client_fd, 200, "OK", mime,
-										content, (int)nread);
-									free(content);
-									servedStatic = 1;
-								} else {
-									sendHttpResponse(client_fd, 500, "Internal Server Error",
-										"{\"error\":\"out of memory\"}");
-									servedStatic = 1;
-								}
-							} else {
-								sendHttpResponse(client_fd, 500, "Internal Server Error",
-									"{\"error\":\"file too large or empty\"}");
-								servedStatic = 1;
-							}
-							fclose(f);
-						}
-					}
-				}
-			}
-			if (!servedStatic) {
-				char errBody[256];
-				snprintf(errBody, sizeof(errBody),
-					"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
-				sendHttpResponse(client_fd, 404, "Not Found", errBody);
-			}
-		}
-		close(client_fd);
+	if (workers == 1) {
+		serverAcceptLoop(server, server_fd, routes, defaultStaticDir);
+		close(server_fd);
+		return BOOL_VAL(false);
 	}
-	close(server_fd);
-	return BOOL_VAL(true);
+
+	for (int i = 0; i < workers; i++) {
+		if (serverSpawnWorker(server, server_fd, routes, defaultStaticDir, port) < 0) {
+			fprintf(stderr, "Failed to spawn HTTP worker\n");
+			close(server_fd);
+			return BOOL_VAL(false);
+		}
+	}
+
+	/* Parent keeps listen fd so respawned children inherit it */
+	for (;;) {
+		int status;
+		pid_t dead = waitpid(-1, &status, 0);
+		if (dead < 0)
+			continue;
+		if (serverSpawnWorker(server, server_fd, routes, defaultStaticDir, port) < 0)
+			fprintf(stderr, "Failed to respawn HTTP worker\n");
+	}
 }
 
 /* httpServer(port) -> starts server */
@@ -3965,6 +4027,7 @@ void initVM() {
 	tableSet(&serverClass->methods, copyString("vhost", 5), OBJ_VAL(newNative(serverVhostNative)));
 	tableSet(&serverClass->methods, copyString("use", 3), OBJ_VAL(newNative(serverUseNative)));
 	tableSet(&serverClass->methods, copyString("static", 6), OBJ_VAL(newNative(serverStaticNative)));
+	tableSet(&serverClass->methods, copyString("workers", 7), OBJ_VAL(newNative(serverWorkersNative)));
 	tableSet(&serverClass->methods, copyString("start", 5), OBJ_VAL(newNative(serverStartNative)));
 	push(OBJ_VAL(copyString("Server", 6)));
 	push(OBJ_VAL(serverClass));
