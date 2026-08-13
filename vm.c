@@ -1696,6 +1696,92 @@ writeAll(int fd, char* buf, int n)
 	return sent;
 }
 
+static int
+asciiICmpPrefix(char* s, char* prefix, int n)
+{
+	int i;
+	for (i = 0; i < n; i++) {
+		char a = s[i];
+		char b = prefix[i];
+		if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+		if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+		if (a != b)
+			return 0;
+	}
+	return 1;
+}
+
+static int
+headersIndicateChunked(char* headers, int headerLen)
+{
+	int i;
+
+	for (i = 0; i <= headerLen - 18; i++) {
+		if (i > 0 && headers[i-1] != '\n')
+			continue;
+		if (!asciiICmpPrefix(headers + i, "transfer-encoding:", 18))
+			continue;
+		i += 18;
+		while (i < headerLen && (headers[i] == ' ' || headers[i] == '\t'))
+			i++;
+		if (i + 7 <= headerLen && asciiICmpPrefix(headers + i, "chunked", 7))
+			return 1;
+	}
+	return 0;
+}
+
+/* Decode HTTP/1.1 chunked body. Returns a new buffer; caller frees. */
+static char*
+decodeChunkedBody(char* body, int len, int* outLen)
+{
+	char* out;
+	int i, oi, size, d;
+
+	out = malloc(len + 1);
+	if (out == nil)
+		return nil;
+	i = 0;
+	oi = 0;
+	while (i < len) {
+		size = 0;
+		if (i >= len)
+			break;
+		d = -1;
+		if (body[i] >= '0' && body[i] <= '9') d = body[i] - '0';
+		else if (body[i] >= 'a' && body[i] <= 'f') d = body[i] - 'a' + 10;
+		else if (body[i] >= 'A' && body[i] <= 'F') d = body[i] - 'A' + 10;
+		if (d < 0)
+			break;
+		while (i < len) {
+			d = -1;
+			if (body[i] >= '0' && body[i] <= '9') d = body[i] - '0';
+			else if (body[i] >= 'a' && body[i] <= 'f') d = body[i] - 'a' + 10;
+			else if (body[i] >= 'A' && body[i] <= 'F') d = body[i] - 'A' + 10;
+			else break;
+			size = (size << 4) | d;
+			i++;
+		}
+		while (i < len && body[i] != '\r' && body[i] != '\n')
+			i++;
+		if (i < len && body[i] == '\r') i++;
+		if (i < len && body[i] == '\n') i++;
+		if (size == 0)
+			break;
+		if (i + size > len) {
+			free(out);
+			return nil;
+		}
+		memcpy(out + oi, body + i, size);
+		oi += size;
+		i += size;
+		if (i < len && body[i] == '\r') i++;
+		if (i < len && body[i] == '\n') i++;
+	}
+	out[oi] = '\0';
+	*outLen = oi;
+	return out;
+}
+
 /* Read HTTP response and extract body */
 static char*
 readHttpResponse(int fd, int* outLen)
@@ -1773,6 +1859,17 @@ readHttpResponse(int fd, int* outLen)
 	}
 	memcpy(body, bodyStart, bodyLen);
 	body[bodyLen] = '\0';
+
+	if (headersIndicateChunked(buffer, bodyOffset)) {
+		int decodedLen;
+		char* decoded = decodeChunkedBody(body, bodyLen, &decodedLen);
+		free(body);
+		free(buffer);
+		if (decoded == nil)
+			return nil;
+		*outLen = decodedLen;
+		return decoded;
+	}
 	
 	*outLen = bodyLen;
 	free(buffer);
@@ -3124,64 +3221,102 @@ getAwsSigningKey(char* secretKey, char* dateStamp, char* region, char* service, 
 	hmacSha256(kService, SHA2_256dlen, (uchar*)"aws4_request", 12, signingKey);
 }
 
-/* Create AWS Signature V4 */
+/* URI-encode for AWS SigV4. encodeSlash=1 for query values (prefix=/ becomes %2F). */
+static void
+awsUriEncode(char* in, char* out, int outSize, int encodeSlash)
+{
+	int i, j;
+
+	j = 0;
+	for (i = 0; in[i] && j < outSize - 4; i++) {
+		char c = in[i];
+		if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+		    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' ||
+		    (c == '/' && !encodeSlash)) {
+			out[j++] = c;
+		} else {
+			snprint(out + j, 4, "%%%02X", (unsigned char)c);
+			j += 3;
+		}
+	}
+	out[j] = '\0';
+}
+
+/* Create AWS Signature V4. STS session tokens are ~1-4KB; stack buffers
+ * of 512/1024 truncated the token while the HTTP header sent the full
+ * value, which produces SignatureDoesNotMatch. */
 static void
 createAwsSignature(char* method, char* host, char* uri, char* queryString,
 		char* payloadHash, char* accessKey, char* secretKey, char* region,
 		char* service, char* amzDate, char* dateStamp, char* sessionToken,
 		char* authHeader, int authHeaderLen)
 {
-	/* Canonical request */
-	char canonicalHeaders[1024];
-	snprint(canonicalHeaders, sizeof(canonicalHeaders),
-		"host:%s\nx-amz-date:%s\n", host, amzDate);
-	
-	char signedHeaders[256];
-	if (sessionToken && sessionToken[0]) {
-		/* Include session token in canonical headers */
-		char tokHeader[512];
-		snprint(tokHeader, sizeof(tokHeader), "x-amz-security-token:%s\n", sessionToken);
-		strncat(canonicalHeaders, tokHeader, sizeof(canonicalHeaders) - strlen(canonicalHeaders) - 1);
-		snprint(signedHeaders, sizeof(signedHeaders), "host;x-amz-date;x-amz-security-token");
+	int tokenLen, canonHdrCap, canonReqCap;
+	char *canonicalHeaders, *canonicalRequest;
+	char signedHeaders[64];
+	uchar canonicalHash[SHA2_256dlen];
+	char canonicalHashHex[SHA2_256dlen*2+1];
+	char credentialScope[256];
+	char stringToSign[512];
+	uchar signingKey[SHA2_256dlen];
+	uchar signature[SHA2_256dlen];
+	char signatureHex[SHA2_256dlen*2+1];
+
+	if (queryString == nil)
+		queryString = "";
+	tokenLen = (sessionToken && sessionToken[0]) ? strlen(sessionToken) : 0;
+
+	canonHdrCap = 32 + strlen(host) + strlen(amzDate) + tokenLen + 64;
+	canonicalHeaders = malloc(canonHdrCap);
+	if (canonicalHeaders == nil) {
+		authHeader[0] = '\0';
+		return;
+	}
+
+	if (tokenLen) {
+		snprint(canonicalHeaders, canonHdrCap,
+			"host:%s\nx-amz-date:%s\nx-amz-security-token:%s\n",
+			host, amzDate, sessionToken);
+		snprint(signedHeaders, sizeof(signedHeaders),
+			"host;x-amz-date;x-amz-security-token");
 	} else {
+		snprint(canonicalHeaders, canonHdrCap,
+			"host:%s\nx-amz-date:%s\n", host, amzDate);
 		snprint(signedHeaders, sizeof(signedHeaders), "host;x-amz-date");
 	}
-	
-	char canonicalRequest[4096];
-	snprint(canonicalRequest, sizeof(canonicalRequest),
+
+	canonReqCap = strlen(method) + strlen(uri) + strlen(queryString)
+		+ strlen(canonicalHeaders) + strlen(signedHeaders)
+		+ strlen(payloadHash) + 16;
+	canonicalRequest = malloc(canonReqCap);
+	if (canonicalRequest == nil) {
+		free(canonicalHeaders);
+		authHeader[0] = '\0';
+		return;
+	}
+	snprint(canonicalRequest, canonReqCap,
 		"%s\n%s\n%s\n%s\n%s\n%s",
 		method, uri, queryString, canonicalHeaders, signedHeaders, payloadHash);
-	
-	/* Hash canonical request */
-	uchar canonicalHash[SHA2_256dlen];
+
 	sha256Hash((uchar*)canonicalRequest, strlen(canonicalRequest), canonicalHash);
-	char canonicalHashHex[SHA2_256dlen*2+1];
 	hexEncode(canonicalHash, SHA2_256dlen, canonicalHashHex);
-	
-	/* String to sign */
-	char credentialScope[256];
+
 	snprint(credentialScope, sizeof(credentialScope),
 		"%s/%s/%s/aws4_request", dateStamp, region, service);
-	
-	char stringToSign[4096];
 	snprint(stringToSign, sizeof(stringToSign),
 		"AWS4-HMAC-SHA256\n%s\n%s\n%s",
 		amzDate, credentialScope, canonicalHashHex);
-	
-	/* Calculate signature */
-	uchar signingKey[SHA2_256dlen];
+
 	getAwsSigningKey(secretKey, dateStamp, region, service, signingKey);
-	
-	uchar signature[SHA2_256dlen];
 	hmacSha256(signingKey, SHA2_256dlen, (uchar*)stringToSign, strlen(stringToSign), signature);
-	
-	char signatureHex[SHA2_256dlen*2+1];
 	hexEncode(signature, SHA2_256dlen, signatureHex);
-	
-	/* Create authorization header */
+
 	snprint(authHeader, authHeaderLen,
 		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
 		accessKey, credentialScope, signedHeaders, signatureHex);
+
+	free(canonicalHeaders);
+	free(canonicalRequest);
 }
 
 /* s3ListObjects(bucket, accessKey, secretKey, region, [prefix], [sessionToken]) -> JSON string or nil */
@@ -3218,19 +3353,8 @@ s3ListObjectsNative(int argCount, Value* args)
 	char queryString[512];
 	if (prefix && prefix[0]) {
 		char encodedPrefix[256];
-		/* Simple URL encoding for prefix */
-		int j = 0;
-		for (int i = 0; prefix[i] && j < sizeof(encodedPrefix)-4; i++) {
-			char c = prefix[i];
-			if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
-			    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
-				encodedPrefix[j++] = c;
-			} else {
-				snprint(encodedPrefix+j, 4, "%%%02X", (unsigned char)c);
-				j += 3;
-			}
-		}
-		encodedPrefix[j] = '\0';
+		/* Query values must encode '/' as %2F (AWS SigV4 canonical QS). */
+		awsUriEncode(prefix, encodedPrefix, sizeof(encodedPrefix), 1);
 		snprint(queryString, sizeof(queryString), "list-type=2&prefix=%s", encodedPrefix);
 	} else {
 		snprint(queryString, sizeof(queryString), "list-type=2");
@@ -3263,11 +3387,18 @@ s3ListObjectsNative(int argCount, Value* args)
 	if (fd < 0)
 		return NIL_VAL;
 	
-	/* Send request */
-	char request[4096];
+	/* Send request — size from session token; 4KB stack was too small for STS. */
+	int tokenLen = (sessionToken && sessionToken[0]) ? strlen(sessionToken) : 0;
+	int reqCap = 1024 + strlen(queryString) + strlen(host) + sizeof(authHeader) + tokenLen;
+	char* request = malloc(reqCap);
 	int reqLen;
-	if (sessionToken && sessionToken[0]) {
-		reqLen = snprint(request, sizeof(request),
+	if (request == nil) {
+		free(conn.cert);
+		close(fd);
+		return NIL_VAL;
+	}
+	if (tokenLen) {
+		reqLen = snprint(request, reqCap,
 			"GET /?%s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"Authorization: %s\r\n"
@@ -3278,7 +3409,7 @@ s3ListObjectsNative(int argCount, Value* args)
 			"\r\n",
 			queryString, host, authHeader, amzDate, payloadHash, sessionToken);
 	} else {
-		reqLen = snprint(request, sizeof(request),
+		reqLen = snprint(request, reqCap,
 			"GET /?%s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"Authorization: %s\r\n"
@@ -3289,7 +3420,13 @@ s3ListObjectsNative(int argCount, Value* args)
 			queryString, host, authHeader, amzDate, payloadHash);
 	}
 	
-	write(fd, request, reqLen);
+	if (writeAll(fd, request, reqLen) < 0) {
+		free(request);
+		free(conn.cert);
+		close(fd);
+		return NIL_VAL;
+	}
+	free(request);
 	
 	/* Read response */
 	int bodyLen;
@@ -3380,10 +3517,17 @@ s3GetObjectNative(int argCount, Value* args)
 		return NIL_VAL;
 	
 	/* Send request */
-	char request[2048];
+	int tokenLen = (sessionToken && sessionToken[0]) ? strlen(sessionToken) : 0;
+	int reqCap = 1024 + strlen(uri) + strlen(host) + sizeof(authHeader) + tokenLen;
+	char* request = malloc(reqCap);
 	int reqLen;
-	if (sessionToken && sessionToken[0]) {
-		reqLen = snprint(request, sizeof(request),
+	if (request == nil) {
+		free(conn.cert);
+		close(fd);
+		return NIL_VAL;
+	}
+	if (tokenLen) {
+		reqLen = snprint(request, reqCap,
 			"GET %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"Authorization: %s\r\n"
@@ -3394,7 +3538,7 @@ s3GetObjectNative(int argCount, Value* args)
 			"\r\n",
 			uri, host, authHeader, amzDate, payloadHash, sessionToken);
 	} else {
-		reqLen = snprint(request, sizeof(request),
+		reqLen = snprint(request, reqCap,
 			"GET %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"Authorization: %s\r\n"
@@ -3405,7 +3549,13 @@ s3GetObjectNative(int argCount, Value* args)
 			uri, host, authHeader, amzDate, payloadHash);
 	}
 	
-	write(fd, request, reqLen);
+	if (writeAll(fd, request, reqLen) < 0) {
+		free(request);
+		free(conn.cert);
+		close(fd);
+		return NIL_VAL;
+	}
+	free(request);
 	
 	/* Read response */
 	int bodyLen;
@@ -3498,10 +3648,17 @@ s3PutObjectNative(int argCount, Value* args)
 		return BOOL_VAL(false);
 	
 	/* Send request */
-	char request[2048];
+	int tokenLen = (sessionToken && sessionToken[0]) ? strlen(sessionToken) : 0;
+	int reqCap = 1024 + strlen(uri) + strlen(host) + sizeof(authHeader) + tokenLen;
+	char* request = malloc(reqCap);
 	int reqLen;
-	if (sessionToken && sessionToken[0]) {
-		reqLen = snprint(request, sizeof(request),
+	if (request == nil) {
+		free(conn.cert);
+		close(fd);
+		return BOOL_VAL(false);
+	}
+	if (tokenLen) {
+		reqLen = snprint(request, reqCap,
 			"PUT %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"Authorization: %s\r\n"
@@ -3513,7 +3670,7 @@ s3PutObjectNative(int argCount, Value* args)
 			"\r\n",
 			uri, host, authHeader, amzDate, payloadHash, sessionToken, contentLen);
 	} else {
-		reqLen = snprint(request, sizeof(request),
+		reqLen = snprint(request, reqCap,
 			"PUT %s HTTP/1.1\r\n"
 			"Host: %s\r\n"
 			"Authorization: %s\r\n"
@@ -3526,10 +3683,12 @@ s3PutObjectNative(int argCount, Value* args)
 	}
 	
 	if (writeAll(fd, request, reqLen) < 0) {
+		free(request);
 		free(conn.cert);
 		close(fd);
 		return BOOL_VAL(false);
 	}
+	free(request);
 	if (writeAll(fd, content, contentLen) < 0) {
 		free(conn.cert);
 		close(fd);
