@@ -34,6 +34,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Assertions** — `assert(condition, message)` for test-driven development
 - **Syntax** — `luxcheck` fast lightweight syntax checker
 - **Linting** — `luxlint` static checks: unused vars, unreachable code, duplicate functions, shadowed globals
+- **Draw / snarf / plumber / 9P** — Plan 9-style window, clipboard, plumber, synthetic 9P export (see [DRAW.md](DRAW.md))
 
 ## Quick Start
 
@@ -115,9 +116,8 @@ See [BUILD.md](BUILD.md) for comprehensive platform-specific build guides:
 - **Portable tools** — Single binary, runs on macOS, Linux, OpenBSD, Plan 9
 
 **Lux is NOT ideal for:**
-**Lux is NOT ideal for:**
 - Large numerical compute — Lux is not tuned for large-scale number‑crunching; prefer numerical Python/Julia for heavy workloads. For moderate numeric work you can use Float64Array (POSIX), BLAS wrappers, or build the POSIX runtime with optimizations (see `posix/Makefile` and `benchmark.md`).
-- GUI development (no graphics APIs)
+- Widget-toolkit GUI development — no Tk/GTK. There is a small Plan 9-style draw/snarf/plumb/9P layer (see [DRAW.md](DRAW.md)), not a general GUI framework.
 - Mobile development (not designed for mobile targets)
 
 ## Practical Examples
@@ -1701,6 +1701,34 @@ To disable NaN boxing, edit `common.h` and comment out:
 11. **Global scope**: All functions and classes are global
 12. **Numeric addition**: `+` performs addition when both operands are numbers
 13. **Truthiness**: `false` and `nil` are falsy, everything else is truthy
+14. **Draw / 9P**: one window per process; call `w.close()`; do not mix `Draw.event()`, `NineP.listen()`, and `Server.start()` in the same process (see [DRAW.md](DRAW.md))
+
+## Draw, plumber, and 9P
+
+Plan 9-style I/O, not a widget toolkit. Same Lux API on Plan 9 and POSIX.
+
+```lux
+snarfPut("hello");
+print snarfGet();
+
+if (draw_available()) {
+    var w = Draw("lux", 640, 480);
+    w.fill(0, 0, 640, 480, "#111111");
+    w.string(16, 24, "hello", "#eeeeee");
+    w.flush();
+    var e = w.event();  // kind, x, y, button, r
+    w.close();
+}
+
+plumb("edit", "file.lux:42");
+
+fun readStatus() { return "ok\n"; }
+var fs = NineP();
+fs.file("/status", readStatus, nil);
+fs.listen("/tmp/lux.9p");
+```
+
+POSIX Draw/plumber need `make USE_P9P=1` (plan9port). Snarf and 9P work without it. Full notes: [DRAW.md](DRAW.md).
 
 ## Example Programs
 

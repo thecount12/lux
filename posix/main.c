@@ -3,9 +3,8 @@
 #include <string.h>
 
 #include "common.h"
-//#include "chunk.h"
-//#include "debug.h"
 #include "vm.h"
+#include "luxdraw.h"
 
 static void repl() {
 	char line[1024];	
@@ -62,6 +61,7 @@ static void runFile(const char* path, int scriptArgc, char** scriptArgv) {
 
 int main(int argc, const char* argv[]) {
 	initVM();
+	luxdraw_set_helper_path(argv[0]);
 	if (argc == 1) {
 		setScriptArgs(0, NULL);
 		repl();

@@ -11,6 +11,8 @@ USE_SQLITE ?= 0
 USE_POSTGRES ?= 0
 USE_MYSQL ?= 0
 USE_ORACLE ?= 0
+USE_P9P ?= 0
+PLAN9 ?= /usr/local/plan9
 
 # Oracle Instant Client paths (adjust as needed)
 ORACLE_HOME ?= /opt/oracle/instantclient_21_1
@@ -20,11 +22,7 @@ ORACLE_LIB := $(ORACLE_HOME)
 # Database flags
 DB_FLAGS =
 DB_LDFLAGS =
-
-# _DEFAULT_SOURCE exposes POSIX APIs (popen, fork, waitpid, etc.) under -std=c99.
-# Default flags for unknown POSIX systems.
-CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS)
-LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
+P9P_FLAGS =
 
 ifeq ($(USE_SQLITE),1)
     DB_FLAGS += -DDB_SQLITE
@@ -46,20 +44,29 @@ ifeq ($(USE_ORACLE),1)
     DB_LDFLAGS += -L$(ORACLE_LIB) -lclntsh
 endif
 
+ifeq ($(USE_P9P),1)
+    P9P_FLAGS += -DLUX_P9P
+endif
+
+# _DEFAULT_SOURCE exposes POSIX APIs (popen, fork, waitpid, etc.) under -std=c99.
+# Default flags for unknown POSIX systems.
+CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS) $(P9P_FLAGS)
+LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
+
 # OS-specific flags
 ifeq ($(UNAME_S),Linux)
     # Linux: OpenSSL typically in standard paths
-    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS) $(P9P_FLAGS)
     LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),Darwin)
     # macOS: Use Homebrew OpenSSL, compile for x86_64
-    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch x86_64 -I/usr/local/opt/openssl@3/include $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch x86_64 -I/usr/local/opt/openssl@3/include $(DB_FLAGS) $(P9P_FLAGS)
     LDFLAGS = -arch x86_64 -L/usr/local/opt/openssl@3/lib -lcurl -lcrypto $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),OpenBSD)
     # OpenBSD: use ports-installed curl and OpenSSL under /usr/local.
-    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -I/usr/local/include $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -I/usr/local/include $(DB_FLAGS) $(P9P_FLAGS)
     LDFLAGS = -L/usr/local/lib -lcurl -lcrypto $(DB_LDFLAGS)
 endif
 
@@ -69,9 +76,10 @@ FMT_TARGET = luxfmt
 TEST_TARGET = luxtest
 
 # Define the source files
-SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c dict.c dict_native.c template_render.c markdown.c
+SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c dict.c dict_native.c template_render.c markdown.c draw.c draw_native.c plumb_native.c ninep.c ninep_native.c
 FMT_SRC = luxfmt.c
 TEST_SRC = luxtest.c
+IO_OBJS = draw.o draw_native.o plumb_native.o ninep.o ninep_native.o
 
 # Automatically determine object files from source files
 OBJS = $(SRCS:.c=.o)
@@ -79,10 +87,13 @@ FMT_OBJ = $(FMT_SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 
 # Define the header files for dependency tracking
-DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h template_render.h markdown.h
+DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h template_render.h markdown.h luxdraw.h ninep.h
 
-# The default target, which builds the executable
+ifeq ($(USE_P9P),1)
+all: $(TARGET) luxp9
+else
 all: $(TARGET)
+endif
 
 # Build the formatter utility
 $(FMT_TARGET): $(FMT_OBJ)
@@ -96,9 +107,16 @@ $(TEST_TARGET): $(TEST_OBJ)
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+luxp9: luxp9.c
+	$(PLAN9)/bin/9c -o luxp9.o luxp9.c
+	$(PLAN9)/bin/9l -o luxp9 luxp9.o -levent -lplumb -ldraw
+
+ninep_test: ninep_test.o ninep.o
+	$(CC) $(CFLAGS) $^ -o $@
+
 # Pattern rule to compile .c files into .o files
 # Dependencies on header files are explicitly listed
-main.o: main.c chunk.h memory.h common.h debug.h
+main.o: main.c chunk.h memory.h common.h debug.h luxdraw.h
 chunk.o: chunk.c chunk.h common.h debug.h value.h
 memory.o: memory.c memory.h common.h debug.h
 debug.o: debug.c debug.h memory.h common.h
@@ -112,7 +130,7 @@ LUXCHECK_TARGET = luxcheck
 LUXCHECK_SRC = luxcheck.c
 LUXCHECK_OBJ = $(LUXCHECK_SRC:.c=.o)
 
-$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o template_render.o markdown.o vm.o
+$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o template_render.o markdown.o vm.o $(IO_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Build the luxlint utility
@@ -120,7 +138,7 @@ LUXLINT_TARGET = luxlint
 LUXLINT_SRC = luxlint.c
 LUXLINT_OBJ = $(LUXLINT_SRC:.c=.o)
 
-$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o template_render.o markdown.o vm.o
+$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o template_render.o markdown.o vm.o $(IO_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Phony targets don't create a file of the same name
@@ -128,5 +146,4 @@ $(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o
 
 # Rule to clean up generated files
 clean:
-	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
-
+	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET) luxp9 luxp9.o ninep_test ninep_test.o

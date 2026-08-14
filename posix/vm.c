@@ -39,6 +39,7 @@
 #include "dict.h"
 #include "template_render.h"
 #include "markdown.h"
+#include "luxdraw.h"
 
 Value dictInitNative(int argCount, Value* args);
 Value dictPutNative(int argCount, Value* args);
@@ -48,6 +49,24 @@ Value dictRemoveNative(int argCount, Value* args);
 Value dictSizeNative(int argCount, Value* args);
 Value dictClearNative(int argCount, Value* args);
 Value dictIterNative(int argCount, Value* args);
+
+Value drawAvailableNative(int argCount, Value* args);
+Value snarfGetNative(int argCount, Value* args);
+Value snarfPutNative(int argCount, Value* args);
+Value drawInitNative(int argCount, Value* args);
+Value drawFillNative(int argCount, Value* args);
+Value drawStringNative(int argCount, Value* args);
+Value drawFlushNative(int argCount, Value* args);
+Value drawEventNative(int argCount, Value* args);
+Value drawCloseNative(int argCount, Value* args);
+
+Value plumbNative(int argCount, Value* args);
+Value plumbRecvNative(int argCount, Value* args);
+
+Value ninepInitNative(int argCount, Value* args);
+Value ninepFileNative(int argCount, Value* args);
+Value ninepListenNative(int argCount, Value* args);
+Value ninepPostNative(int argCount, Value* args);
 
 VM vm;
 
@@ -89,6 +108,13 @@ static const NativeDoc kNativeDocs[] = {
 	{"dbConnect", "dbConnect(driver, connection)", "Open a database connection."},
 	{"dbQuery", "dbQuery(conn, sql)", "Execute SQL and return rows for queries."},
 	{"dbClose", "dbClose(conn)", "Close a database connection."},
+	{"draw_available", "draw_available()", "Return whether this build can open a Draw window."},
+	{"snarfGet", "snarfGet()", "Read the snarf (clipboard) buffer."},
+	{"snarfPut", "snarfPut(s)", "Write the snarf (clipboard) buffer."},
+	{"Draw", "Draw(title, width, height)", "Open a Plan 9-style draw window (one per process)."},
+	{"plumb", "plumb(dst, data, [wdir])", "Send a plumber message to port dst."},
+	{"plumbRecv", "plumbRecv()", "Block until a plumber message arrives."},
+	{"NineP", "NineP()", "Create a synthetic 9P file server."},
 	{"help", "help() or help(name)", "List available callables or show details for one name."},
 };
 
@@ -173,6 +199,10 @@ static const char* callableCategory(const char* name) {
 	    strcmp(name, "s3PutObject") == 0) return "AWS";
 	if (strcmp(name, "dbConnect") == 0 || strcmp(name, "dbQuery") == 0 ||
 	    strcmp(name, "dbClose") == 0) return "Database";
+	if (strcmp(name, "draw_available") == 0 || strcmp(name, "snarfGet") == 0 ||
+	    strcmp(name, "snarfPut") == 0 || strcmp(name, "Draw") == 0 ||
+	    strcmp(name, "plumb") == 0 || strcmp(name, "plumbRecv") == 0 ||
+	    strcmp(name, "NineP") == 0) return "Draw and 9P";
 	return "User or Other";
 }
 
@@ -357,6 +387,7 @@ static Value helpNative(int argCount, Value* args) {
 		"Crypto",
 		"AWS",
 		"Database",
+		"Draw and 9P",
 		"User or Other",
 	};
 	int categoryCount = (int)(sizeof(categories) / sizeof(categories[0]));
@@ -2562,6 +2593,8 @@ static Value awsSignRequestNative(int argCount, Value* args) {
 static ObjClass* serverResClass;
 static ObjClass* serverClass;
 static ObjClass* dictClass;
+static ObjClass* drawClass;
+static ObjClass* ninepClass;
 
 static bool call(ObjClosure* closure, int argCount);
 static InterpretResult run(void);
@@ -4048,6 +4081,37 @@ void initVM() {
 	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
 	pop();
 	pop();
+
+	drawClass = newClass(copyString("Draw", 4));
+	tableSet(&drawClass->methods, vm.initString, OBJ_VAL(newNative(drawInitNative)));
+	tableSet(&drawClass->methods, copyString("fill", 4), OBJ_VAL(newNative(drawFillNative)));
+	tableSet(&drawClass->methods, copyString("string", 6), OBJ_VAL(newNative(drawStringNative)));
+	tableSet(&drawClass->methods, copyString("flush", 5), OBJ_VAL(newNative(drawFlushNative)));
+	tableSet(&drawClass->methods, copyString("event", 5), OBJ_VAL(newNative(drawEventNative)));
+	tableSet(&drawClass->methods, copyString("close", 5), OBJ_VAL(newNative(drawCloseNative)));
+	push(OBJ_VAL(copyString("Draw", 4)));
+	push(OBJ_VAL(drawClass));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
+	pop();
+	pop();
+
+	ninepClass = newClass(copyString("NineP", 5));
+	tableSet(&ninepClass->methods, vm.initString, OBJ_VAL(newNative(ninepInitNative)));
+	tableSet(&ninepClass->methods, copyString("file", 4), OBJ_VAL(newNative(ninepFileNative)));
+	tableSet(&ninepClass->methods, copyString("listen", 6), OBJ_VAL(newNative(ninepListenNative)));
+	tableSet(&ninepClass->methods, copyString("post", 4), OBJ_VAL(newNative(ninepPostNative)));
+	push(OBJ_VAL(copyString("NineP", 5)));
+	push(OBJ_VAL(ninepClass));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
+	pop();
+	pop();
+
+	defineNative("draw_available", drawAvailableNative);
+	defineNative("snarfGet", snarfGetNative);
+	defineNative("snarfPut", snarfPutNative);
+	defineNative("plumb", plumbNative);
+	defineNative("plumbRecv", plumbRecvNative);
+
 	defineNative("hmacSha256", hmacSha256Native);
 	defineNative("awsSignRequest", awsSignRequestNative);
 	defineNative("getAwsTimestamp", getAwsTimestampNative);
@@ -4065,9 +4129,12 @@ void markServerRoots(void) {
 	if (serverResClass != NULL) markObject((Obj*)serverResClass);
 	if (serverClass != NULL) markObject((Obj*)serverClass);
 	if (dictClass != NULL) markObject((Obj*)dictClass);
+	if (drawClass != NULL) markObject((Obj*)drawClass);
+	if (ninepClass != NULL) markObject((Obj*)ninepClass);
 }
 
 void freeVM() {
+	luxdraw_shutdown();
 	freeTable(&vm.globals);
 	freeTable(&vm.strings);
 	freeTable(&vm.imports);
@@ -4105,6 +4172,31 @@ static bool call(ObjClosure* closure, int argCount) {
 	frame->ip = closure->function->chunk.code;
 	frame->slots = vm.stackTop - argCount -1;
 	return true;
+}
+
+int luxInvokeClosure(ObjClosure* closure, int argCount, Value* args, Value* result) {
+	int i;
+	Value* savedTop;
+	if (closure == NULL || result == NULL)
+		return 0;
+	savedTop = vm.stackTop;
+	push(OBJ_VAL(closure));
+	for (i = 0; i < argCount; i++)
+		push(args[i]);
+	if (!call(closure, argCount)) {
+		vm.stackTop = savedTop;
+		return 0;
+	}
+	if (run() != INTERPRET_OK) {
+		vm.stackTop = savedTop;
+		return 0;
+	}
+	if (vm.stackTop > savedTop)
+		*result = pop();
+	else
+		*result = NIL_VAL;
+	vm.stackTop = savedTop;
+	return 1;
 }
 
 static bool callValue(Value callee, int argCount) {

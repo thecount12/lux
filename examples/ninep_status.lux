@@ -1,0 +1,29 @@
+/* Synthetic 9P export. Blocking listen.
+ *
+ * POSIX:
+ *   ./lux examples/ninep_status.lux
+ *   # another terminal:
+ *   9p -a unix!/tmp/lux.9p ls /
+ *   9p -a unix!/tmp/lux.9p read status
+ *   echo start | 9p -a unix!/tmp/lux.9p write ctl
+ *
+ * Plan 9:
+ *   8.out examples/ninep_status.lux
+ *   mount -c /srv/lux /n/lux
+ *   cat /n/lux/status
+ */
+
+fun readStatus() {
+    return "ok\n";
+}
+
+fun writeCtl(s) {
+    print s;
+    return true;
+}
+
+var fs = NineP();
+fs.file("/status", readStatus, nil);
+fs.file("/ctl", nil, writeCtl);
+print "9P listening on /tmp/lux.9p (Plan 9: /srv/lux via post)";
+fs.listen("/tmp/lux.9p");

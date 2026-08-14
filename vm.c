@@ -10,6 +10,7 @@
 #include "table.h"
 #include "template_render.h"
 #include "markdown.h"
+#include "luxdraw.h"
 /* Forward declarations for dict natives (avoid pulling types.h into vm.c) */
 Value dictInitNative(int argCount, Value* args);
 Value dictPutNative(int argCount, Value* args);
@@ -19,6 +20,21 @@ Value dictRemoveNative(int argCount, Value* args);
 Value dictSizeNative(int argCount, Value* args);
 Value dictClearNative(int argCount, Value* args);
 Value dictIterNative(int argCount, Value* args);
+Value drawAvailableNative(int argCount, Value* args);
+Value snarfGetNative(int argCount, Value* args);
+Value snarfPutNative(int argCount, Value* args);
+Value drawInitNative(int argCount, Value* args);
+Value drawFillNative(int argCount, Value* args);
+Value drawStringNative(int argCount, Value* args);
+Value drawFlushNative(int argCount, Value* args);
+Value drawEventNative(int argCount, Value* args);
+Value drawCloseNative(int argCount, Value* args);
+Value plumbNative(int argCount, Value* args);
+Value plumbRecvNative(int argCount, Value* args);
+Value ninepInitNative(int argCount, Value* args);
+Value ninepFileNative(int argCount, Value* args);
+Value ninepListenNative(int argCount, Value* args);
+Value ninepPostNative(int argCount, Value* args);
 #include <libsec.h>
 
 /* SHA-256 produces 32 bytes */
@@ -77,6 +93,13 @@ static const NativeDoc kNativeDocs[] = {
 	{"s3ListObjects", "s3ListObjects(endpoint, bucket, prefix, region, accessKey, secretKey)", "List S3 objects."},
 	{"s3GetObject", "s3GetObject(endpoint, bucket, key, region, accessKey, secretKey)", "Read object contents from S3."},
 	{"s3PutObject", "s3PutObject(endpoint, bucket, key, body, region, accessKey, secretKey)", "Upload object data to S3."},
+	{"draw_available", "draw_available()", "Return whether this build can open a Draw window."},
+	{"snarfGet", "snarfGet()", "Read the snarf (clipboard) buffer."},
+	{"snarfPut", "snarfPut(s)", "Write the snarf (clipboard) buffer."},
+	{"Draw", "Draw(title, width, height)", "Open a Plan 9-style draw window (one per process)."},
+	{"plumb", "plumb(dst, data, [wdir])", "Send a plumber message to port dst."},
+	{"plumbRecv", "plumbRecv()", "Block until a plumber message arrives."},
+	{"NineP", "NineP()", "Create a synthetic 9P file server."},
 	{"help", "help() or help(name)", "List available callables or show details for one name."},
 };
 
@@ -152,6 +175,11 @@ callableCategory(const char* name)
 	if (strcmp(name, "dbConnect") == 0 || strcmp(name, "dbQuery") == 0 ||
 	    strcmp(name, "dbClose") == 0)
 		return "Database";
+	if (strcmp(name, "draw_available") == 0 || strcmp(name, "snarfGet") == 0 ||
+	    strcmp(name, "snarfPut") == 0 || strcmp(name, "Draw") == 0 ||
+	    strcmp(name, "plumb") == 0 || strcmp(name, "plumbRecv") == 0 ||
+	    strcmp(name, "NineP") == 0)
+		return "Draw and 9P";
 	return "User or Other";
 }
 
@@ -337,6 +365,7 @@ helpNative(int argCount, Value* args)
 		"Crypto",
 		"AWS",
 		"Database",
+		"Draw and 9P",
 		"User or Other",
 	};
 	int categoryCount = (int)(sizeof(categories) / sizeof(categories[0]));
@@ -2400,6 +2429,8 @@ getMimeType(char* path)
 static ObjClass* serverResClass;
 static ObjClass* serverClass;
 static ObjClass* dictClass;
+static ObjClass* drawClass;
+static ObjClass* ninepClass;
 
 static bool call(ObjClosure* closure, int argCount);
 static bool callValue(Value callee, int argCount);
@@ -3940,6 +3971,26 @@ initVM(void)
 	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(dictClass));
 	pop();
 
+	drawClass = newClass(copyString("Draw", 4));
+	tableSet(&drawClass->methods, vm.initString, OBJ_VAL(newNative(drawInitNative)));
+	tableSet(&drawClass->methods, copyString("fill", 4), OBJ_VAL(newNative(drawFillNative)));
+	tableSet(&drawClass->methods, copyString("string", 6), OBJ_VAL(newNative(drawStringNative)));
+	tableSet(&drawClass->methods, copyString("flush", 5), OBJ_VAL(newNative(drawFlushNative)));
+	tableSet(&drawClass->methods, copyString("event", 5), OBJ_VAL(newNative(drawEventNative)));
+	tableSet(&drawClass->methods, copyString("close", 5), OBJ_VAL(newNative(drawCloseNative)));
+	push(OBJ_VAL(copyString("Draw", 4)));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(drawClass));
+	pop();
+
+	ninepClass = newClass(copyString("NineP", 5));
+	tableSet(&ninepClass->methods, vm.initString, OBJ_VAL(newNative(ninepInitNative)));
+	tableSet(&ninepClass->methods, copyString("file", 4), OBJ_VAL(newNative(ninepFileNative)));
+	tableSet(&ninepClass->methods, copyString("listen", 6), OBJ_VAL(newNative(ninepListenNative)));
+	tableSet(&ninepClass->methods, copyString("post", 4), OBJ_VAL(newNative(ninepPostNative)));
+	push(OBJ_VAL(copyString("NineP", 5)));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(ninepClass));
+	pop();
+
 	defineNative("assert", assertNative);
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
@@ -3970,6 +4021,11 @@ initVM(void)
 	defineNative("arraySort", arraySortNative);
 	defineNative("arrayBinarySearch", arrayBinarySearchNative);
 	defineNative("float64_available", float64AvailableNative);
+	defineNative("draw_available", drawAvailableNative);
+	defineNative("snarfGet", snarfGetNative);
+	defineNative("snarfPut", snarfPutNative);
+	defineNative("plumb", plumbNative);
+	defineNative("plumbRecv", plumbRecvNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
 	defineNative("parseXml", parseXmlNative);
@@ -3993,11 +4049,14 @@ markServerRoots(void)
 	if (serverResClass != nil) markObject((Obj*)serverResClass);
 	if (serverClass != nil) markObject((Obj*)serverClass);
 	if (dictClass != nil) markObject((Obj*)dictClass);
+	if (drawClass != nil) markObject((Obj*)drawClass);
+	if (ninepClass != nil) markObject((Obj*)ninepClass);
 }
 
 void 
 freeVM(void)
 {
+	luxdraw_shutdown();
 	freeTable(&vm.globals);
 	freeTable(&vm.strings);
 	freeTable(&vm.imports);
@@ -4042,6 +4101,34 @@ call(ObjClosure* closure, int argCount)
 	frame->ip = closure->function->chunk.code;
 	frame->slots = vm.stackTop - argCount -1;
 	return true;
+}
+
+int
+luxInvokeClosure(ObjClosure* closure, int argCount, Value* args, Value* result)
+{
+	int i;
+	Value *savedTop;
+
+	if(closure == nil || result == nil)
+		return 0;
+	savedTop = vm.stackTop;
+	push(OBJ_VAL(closure));
+	for(i = 0; i < argCount; i++)
+		push(args[i]);
+	if(!call(closure, argCount)){
+		vm.stackTop = savedTop;
+		return 0;
+	}
+	if(run() != INTERPRET_OK){
+		vm.stackTop = savedTop;
+		return 0;
+	}
+	if(vm.stackTop > savedTop)
+		*result = pop();
+	else
+		*result = NIL_VAL;
+	vm.stackTop = savedTop;
+	return 1;
 }
 
 static bool callValue(Value callee, int argCount) {

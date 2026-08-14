@@ -1,0 +1,13 @@
+/* Class presence for Draw / NineP / snarf (no display required). */
+
+assert(typeof(Draw) == "class");
+assert(typeof(NineP) == "class");
+
+var fs = NineP();
+assert(fs != nil);
+assert(fs.file("/ok", nil, nil) == true);
+
+var ok = snarfPut("lux");
+assert(ok == true or ok == false);
+print draw_available();
+print "ok";

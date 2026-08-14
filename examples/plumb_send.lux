@@ -1,0 +1,16 @@
+/* Send a plumber message. Receiving end needs plumber running.
+ *
+ * POSIX: start plan9port plumber, then:
+ *   ./lux examples/plumb_send.lux
+ *
+ * Plan 9:
+ *   8.out examples/plumb_send.lux
+ *
+ * Optional third argument is wdir.
+ */
+
+if (!plumb("edit", "examples/plumb_send.lux:1")) {
+    print "plumb failed (is plumber running?)";
+    exit(1);
+}
+print "plumbed edit examples/plumb_send.lux:1";

@@ -1,0 +1,15 @@
+/* Snarf (clipboard) — works without a Draw window.
+ * POSIX: pbcopy/pbpaste on macOS, xclip on X11.
+ * Plan 9: /dev/snarf
+ *
+ *   ./lux examples/snarf.lux
+ *   8.out examples/snarf.lux
+ */
+
+snarfPut("hello from lux");
+var s = snarfGet();
+if (s == nil) {
+    print "snarfGet failed (no clipboard?)";
+} else {
+    print s;
+}

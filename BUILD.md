@@ -183,6 +183,17 @@ var result = dbQuery(db, "SELECT * FROM users;");
 dbClose(db);
 ```
 
+## Optional Features: plan9port Draw / plumber (POSIX)
+
+Snarf (clipboard) and 9P export compile in by default. A Draw window and plumber on macOS/Linux/OpenBSD need plan9port:
+
+```bash
+cd posix
+make USE_P9P=1 PLAN9=/usr/local/plan9
+```
+
+This builds helper `luxp9` with `9c`/`9l`. See [DRAW.md](DRAW.md).
+
 ## Verifying Installation
 
 After building, verify with:

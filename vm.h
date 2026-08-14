@@ -15,6 +15,7 @@ void initVM(void);
 void freeVM(void);
 void setScriptArgs(int argc, char** argv);
 void markServerRoots(void);
+int luxInvokeClosure(ObjClosure* closure, int argCount, Value* args, Value* result);
 
 InterpretResult interpret(char* source);
 void push(Value value);

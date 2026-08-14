@@ -15,6 +15,11 @@ OFILES=lux.$O\
 	dict_native.$O\
 	template_render.$O\
 	markdown.$O\
+	draw.$O\
+	draw_native.$O\
+	plumb_native.$O\
+	ninep.$O\
+	ninep_native.$O\
 
 
 HFILES=chunk.h\
@@ -29,9 +34,14 @@ HFILES=chunk.h\
 	dict.h\
 	template_render.h\
 	markdown.h\
+	luxdraw.h\
+	ninep.h\
+
+LIB=\
+	/$objtype/lib/libdraw.a\
+	/$objtype/lib/libevent.a\
+	/$objtype/lib/libplumb.a\
 
 BIN=$home/bin/$objtype
 
 </sys/src/cmd/mkone
-
-
