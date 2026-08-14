@@ -1,3 +1,4 @@
+{% raw %}
 # Lux
 
 A portable scripting language for system automation, HTTP services, and cloud work. Full [Lox](https://craftinginterpreters.com/) parity, native on **Plan 9**, and the same runtime on **macOS, Linux, and OpenBSD**.
@@ -122,3 +123,4 @@ Small footprint, HTTPS client, and native AWS helpers (S3, STS, IAM, request sig
 ## Docs
 
 The full language reference, HTTP server notes, and examples live in the [GitHub README](https://github.com/thecount12/lux#readme).
+{% endraw %}
