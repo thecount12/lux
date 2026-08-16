@@ -37,10 +37,8 @@ HFILES=chunk.h\
 	luxdraw.h\
 	ninep.h\
 
-LIB=\
-	/$objtype/lib/libdraw.a\
-	/$objtype/lib/libevent.a\
-	/$objtype/lib/libplumb.a\
+# 9front: einit/eread are in libdraw. Bell Labs Plan 9 still has libevent.
+LIB=/$objtype/lib/libdraw.a /$objtype/lib/libplumb.a `{if(test -f /$objtype/lib/libevent.a) echo /$objtype/lib/libevent.a}
 
 BIN=$home/bin/$objtype
 

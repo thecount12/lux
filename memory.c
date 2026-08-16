@@ -65,7 +65,7 @@ markObject(Obj* object)
 {
 	if (object == nil) return;
 	/* Defensive: catch misaligned or obviously-invalid pointers (e.g. from corrupted Values) */
-	if ((ulong)object & 7) {
+	if ((uintptr)object & 7) {
 		print("GC: invalid object pointer %p (misaligned)\n", object);
 		return;
 	}

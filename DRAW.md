@@ -6,7 +6,7 @@ Do not multiplex `Draw.event()`, `NineP.listen()`, and `Server.start()` in one p
 
 ## Build
 
-Plan 9 (always linked with libdraw / libevent / libplumb):
+Plan 9 (libdraw / libplumb; libevent only if `$objtype` still has it — 9front folded events into libdraw):
 
 ```
 mk
