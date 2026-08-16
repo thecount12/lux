@@ -14,7 +14,7 @@ getDictFromInstance(Value instVal)
 	Value v;
 	if (!tableGet(&inst->fields, copyString("_ptr", 4), &v)) return nil;
 	if (!IS_NUMBER(v)) return nil;
-	return (Dict*)(ulong)AS_NUMBER(v);
+	return (Dict*)(uintptr)AS_NUMBER(v);
 }
 
 static void
@@ -63,7 +63,7 @@ dictInitNative(int argCount, Value* args)
 	ObjInstance* inst = AS_INSTANCE(args[0]);
 	Dict *d = dict_new();
 	if (d == nil) return NIL_VAL;
-	tableSet(&inst->fields, copyString("_ptr", 4), NUMBER_VAL((double)(ulong)d));
+	tableSet(&inst->fields, copyString("_ptr", 4), NUMBER_VAL((double)(uintptr)d));
 	return args[0];
 }
 
@@ -128,8 +128,8 @@ dictSizeNative(int argCount, Value* args)
 static void
 free_value_cb(char *k, void *v, void *ctx)
 {
-	(void)ctx;
-	(void)k;
+	USED(ctx);
+	USED(k);
 	if (v) free(v);
 }
 

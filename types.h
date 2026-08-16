@@ -56,7 +56,7 @@ typedef uvlong Value;
 #define AS_BOOL(value) ((value) == TRUE_VAL)
 #define AS_NUMBER(value) valueToNum(value)
 #define AS_OBJ(value) \
-	((Obj*)(ulong)((value) & ~(SIGN_BIT | QNAN)))
+	((Obj*)(uintptr)((value) & ~(SIGN_BIT | QNAN)))
 
 #define BOOL_VAL(b) ((b) ? TRUE_VAL : FALSE_VAL)
 #define FALSE_VAL ((Value)(uvlong)(QNAN | TAG_FALSE))
@@ -64,7 +64,7 @@ typedef uvlong Value;
 #define NIL_VAL ((Value)(uvlong)(QNAN | TAG_NIL))
 #define NUMBER_VAL(num) numToValue(num)
 #define OBJ_VAL(obj) \
-	((Value)(SIGN_BIT | QNAN | (uvlong)(ulong)(obj)))
+	((Value)(SIGN_BIT | QNAN | (uvlong)(uintptr)(obj)))
 
 static inline double valueToNum(Value value) {
 	double num;

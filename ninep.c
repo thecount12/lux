@@ -28,12 +28,6 @@ enum {
 	Twstat = 126
 };
 
-enum {
-	QTDIR = 0x80,
-	QTFILE = 0x00
-};
-
-#define DMDIR ((ulong)0x80000000)
 #define MAXFID 128
 
 typedef struct {
@@ -65,13 +59,13 @@ g64(const uchar* p)
 }
 
 static void
-p8(uchar** pp, unsigned int v)
+p8(uchar** pp, uint v)
 {
 	*(*pp)++ = (uchar)v;
 }
 
 static void
-p16(uchar** pp, unsigned int v)
+p16(uchar** pp, uint v)
 {
 	p8(pp, v & 0xff);
 	p8(pp, (v >> 8) & 0xff);
@@ -97,7 +91,7 @@ static void
 pstr(uchar** pp, char* s)
 {
 	int n = s ? (int)strlen(s) : 0;
-	p16(pp, (unsigned int)n);
+	p16(pp, (uint)n);
 	if (n > 0) {
 		memcpy(*pp, s, (ulong)n);
 		*pp += n;
