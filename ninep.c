@@ -107,20 +107,6 @@ pqid(uchar** pp, uchar type, ulong vers, uvlong path)
 }
 
 static int
-readn(int fd, void* buf, int n)
-{
-	char* p = (char*)buf;
-	int got = 0;
-	while (got < n) {
-		int r = (int)read(fd, p + got, (ulong)(n - got));
-		if (r <= 0)
-			return -1;
-		got += r;
-	}
-	return got;
-}
-
-static int
 writen(int fd, void* buf, int n)
 {
 	char* p = (char*)buf;
