@@ -1,0 +1,177 @@
+/* Draw a text file. j/k or n/p to scroll, space/b page, g/G top/end, q quit.
+ *
+ *   ./lux ../examples/draw_file.lux ../DRAW.md
+ *   8.out examples/draw_file.lux DRAW.md
+ */
+
+if (!draw_available()) {
+    print "draw_available() is false — rebuild POSIX with USE_P9P=1";
+    exit(1);
+}
+
+var path = "DRAW.md";
+var a = args();
+if (a.length > 0) {
+    path = a[0];
+}
+if (!fileExists(path)) {
+    if (fileExists("../" + path)) {
+        path = "../" + path;
+    }
+}
+if (!fileExists(path)) {
+    print "file not found: " + path;
+    exit(1);
+}
+
+var raw = readFile(path);
+if (raw == nil) {
+    print "readFile failed: " + path;
+    exit(1);
+}
+
+var w = Draw("lux " + path, 720, 500);
+if (w == nil) {
+    print "Draw() failed (already open, or no display)";
+    exit(1);
+}
+
+var lineH = w.fontHeight;
+var charW = w.fontWidth;
+if (lineH < 12) {
+    lineH = 12;
+}
+if (charW < 6) {
+    charW = 6;
+}
+
+fun wrapCols() {
+    var n = floor((w.width - 16) / charW);
+    if (n < 20) {
+        n = 20;
+    }
+    return n;
+}
+
+fun wrapLine(s, width) {
+    var out = [];
+    var n = len(s);
+    if (n == 0) {
+        return [""];
+    }
+    var i = 0;
+    while (i < n) {
+        var end = i + width;
+        if (end > n) {
+            end = n;
+        }
+        out = out + [strSlice(s, i, end)];
+        i = end;
+    }
+    return out;
+}
+
+fun wrapAll(cols) {
+    var src = strSplit(raw, "\n");
+    var out = [];
+    var si = 0;
+    while (si < src.length) {
+        var wrapped = wrapLine(src[si], cols);
+        var wi = 0;
+        while (wi < wrapped.length) {
+            out = out + [wrapped[wi]];
+            wi = wi + 1;
+        }
+        si = si + 1;
+    }
+    return out;
+}
+
+var lines = wrapAll(wrapCols());
+
+fun pageSize() {
+    var n = floor((w.height - lineH * 2) / lineH);
+    if (n < 1) {
+        n = 1;
+    }
+    if (n > lines.length) {
+        n = lines.length;
+    }
+    return n;
+}
+
+fun drawPage(top) {
+    w.fill(0, 0, w.width, w.height, "#1a1a18");
+    w.fill(0, 0, w.width, lineH + 8, "#2a2a28");
+    var last = top + pageSize();
+    if (last > lines.length) {
+        last = lines.length;
+    }
+    var status = path + "  " + top + "-" + last + "/" + lines.length +
+        "  j/k scroll  space/b page  q quit";
+    w.string(8, 4, status, "#c8c4b8");
+    var i = 0;
+    while (i < pageSize()) {
+        var idx = top + i;
+        if (idx >= lines.length) {
+            break;
+        }
+        w.string(8, lineH + 12 + i * lineH, lines[idx], "#e8e4d8");
+        i = i + 1;
+    }
+    w.flush();
+}
+
+var top = 0;
+drawPage(top);
+
+while (true) {
+    var e = w.event();
+    if (e == nil) {
+        break;
+    }
+    if (e.kind == "quit") {
+        break;
+    }
+    if (e.kind == "resize") {
+        lines = wrapAll(wrapCols());
+        drawPage(top);
+    }
+    if (e.kind == "kbd") {
+        var r = e.r;
+        var maxTop = lines.length - pageSize();
+        if (maxTop < 0) {
+            maxTop = 0;
+        }
+        if (r == 113) {
+            break;
+        }
+        if (r == 106 or r == 110 or r == 14) {
+            top = top + 1;
+        }
+        if (r == 107 or r == 112 or r == 16) {
+            top = top - 1;
+        }
+        if (r == 32) {
+            top = top + pageSize();
+        }
+        if (r == 98) {
+            top = top - pageSize();
+        }
+        if (r == 103) {
+            top = 0;
+        }
+        if (r == 71) {
+            top = maxTop;
+        }
+        if (top < 0) {
+            top = 0;
+        }
+        if (top > maxTop) {
+            top = maxTop;
+        }
+        drawPage(top);
+    }
+}
+
+w.close();

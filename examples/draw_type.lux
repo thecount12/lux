@@ -1,0 +1,121 @@
+/* Type into a Draw window. Esc or Ctrl-D quits; backspace deletes.
+ *
+ *   ./lux ../examples/draw_type.lux
+ *   8.out examples/draw_type.lux
+ */
+
+if (!draw_available()) {
+    print "draw_available() is false — rebuild POSIX with USE_P9P=1";
+    exit(1);
+}
+
+var w = Draw("lux type", 640, 400);
+if (w == nil) {
+    print "Draw() failed (already open, or no display)";
+    exit(1);
+}
+
+var lineH = w.fontHeight;
+var charW = w.fontWidth;
+if (lineH < 12) {
+    lineH = 12;
+}
+if (charW < 6) {
+    charW = 6;
+}
+
+fun runeStr(r) {
+    if (r == 32) {
+        return " ";
+    }
+    if (r >= 48 and r <= 57) {
+        return strSlice("0123456789", r - 48, r - 47);
+    }
+    if (r >= 65 and r <= 90) {
+        return strSlice("ABCDEFGHIJKLMNOPQRSTUVWXYZ", r - 65, r - 64);
+    }
+    if (r >= 97 and r <= 122) {
+        return strSlice("abcdefghijklmnopqrstuvwxyz", r - 97, r - 96);
+    }
+    if (r == 46) {
+        return ".";
+    }
+    if (r == 44) {
+        return ",";
+    }
+    if (r == 45) {
+        return "-";
+    }
+    if (r == 95) {
+        return "_";
+    }
+    if (r == 47) {
+        return "/";
+    }
+    return "";
+}
+
+var buf = "";
+
+fun redraw() {
+    var cols = floor((w.width - 16) / charW);
+    if (cols < 20) {
+        cols = 20;
+    }
+    w.fill(0, 0, w.width, w.height, "#111111");
+    w.string(8, 4, "type  —  Esc or Ctrl-D to quit", "#888888");
+    var y = lineH + 12;
+    var row = "";
+    var i = 0;
+    while (i < len(buf)) {
+        var ch = strSlice(buf, i, i + 1);
+        if (ch == "\n" or len(row) >= cols) {
+            w.string(8, y, row, "#eeeeee");
+            y = y + lineH;
+            row = "";
+        }
+        if (ch != "\n") {
+            row = row + ch;
+        }
+        i = i + 1;
+    }
+    w.string(8, y, row + "_", "#eeeeee");
+    w.flush();
+}
+
+redraw();
+
+while (true) {
+    var e = w.event();
+    if (e == nil) {
+        break;
+    }
+    if (e.kind == "quit") {
+        break;
+    }
+    if (e.kind == "resize") {
+        redraw();
+    }
+    if (e.kind == "kbd") {
+        var r = e.r;
+        if (r == 27 or r == 4) {
+            break;
+        }
+        if (r == 8 or r == 127) {
+            if (len(buf) > 0) {
+                buf = strSlice(buf, 0, len(buf) - 1);
+            }
+        }
+        if (r == 10 or r == 13) {
+            buf = buf + "\n";
+        }
+        var s = runeStr(r);
+        if (s != "") {
+            buf = buf + s;
+        }
+        redraw();
+    }
+}
+
+print buf;
+w.close();

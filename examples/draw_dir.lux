@@ -1,0 +1,136 @@
+/* Directory listing in a Draw window. j/k move, Enter snarf-copies the path, q quit.
+ *
+ *   ./lux ../examples/draw_dir.lux .
+ *   8.out examples/draw_dir.lux /sys/src
+ */
+
+if (!draw_available()) {
+    print "draw_available() is false — rebuild POSIX with USE_P9P=1";
+    exit(1);
+}
+
+var root = ".";
+var a = args();
+if (a.length > 0) {
+    root = a[0];
+}
+
+var listing = listDir(root);
+if (listing == nil) {
+    print "listDir failed: " + root;
+    exit(1);
+}
+
+var names = strSplit(listing, "\n");
+var files = [];
+var ni = 0;
+while (ni < names.length) {
+    var name = strTrim(names[ni]);
+    if (name != "") {
+        files = files + [name];
+    }
+    ni = ni + 1;
+}
+
+var w = Draw("lux " + root, 640, 480);
+if (w == nil) {
+    print "Draw() failed (already open, or no display)";
+    exit(1);
+}
+
+var lineH = w.fontHeight;
+if (lineH < 12) {
+    lineH = 12;
+}
+
+fun joinPath(dir, name) {
+    var n = len(dir);
+    if (n > 0 and strSlice(dir, n - 1, n) == "/") {
+        return dir + name;
+    }
+    return dir + "/" + name;
+}
+
+fun rowCount() {
+    var n = floor((w.height - lineH * 2) / lineH);
+    if (n < 1) {
+        n = 1;
+    }
+    return n;
+}
+
+fun drawList(sel, top) {
+    var rows = rowCount();
+    w.fill(0, 0, w.width, w.height, "#1a1a18");
+    w.fill(0, 0, w.width, lineH + 8, "#2a2a28");
+    w.string(8, 4, root + "  j/k  enter=snarf  q", "#c8c4b8");
+    var i = 0;
+    while (i < rows) {
+        var idx = top + i;
+        if (idx >= files.length) {
+            break;
+        }
+        var y = lineH + 12 + i * lineH;
+        var color = "#e8e4d8";
+        if (idx == sel) {
+            w.fill(0, y, w.width, lineH, "#3a4a38");
+            color = "#f8f4e8";
+        }
+        w.string(8, y, files[idx], color);
+        i = i + 1;
+    }
+    w.flush();
+}
+
+var sel = 0;
+var top = 0;
+drawList(sel, top);
+
+while (true) {
+    var e = w.event();
+    if (e == nil) {
+        break;
+    }
+    if (e.kind == "quit") {
+        break;
+    }
+    if (e.kind == "resize") {
+        drawList(sel, top);
+    }
+    if (e.kind == "kbd") {
+        var r = e.r;
+        var rows = rowCount();
+        if (r == 113) {
+            break;
+        }
+        if (r == 106 or r == 110) {
+            sel = sel + 1;
+        }
+        if (r == 107 or r == 112) {
+            sel = sel - 1;
+        }
+        if (sel < 0) {
+            sel = 0;
+        }
+        if (sel >= files.length) {
+            sel = files.length - 1;
+        }
+        if (sel < 0) {
+            sel = 0;
+        }
+        if (sel < top) {
+            top = sel;
+        }
+        if (sel >= top + rows) {
+            top = sel - rows + 1;
+        }
+        if (r == 10 or r == 13) {
+            if (files.length > 0) {
+                snarfPut(joinPath(root, files[sel]));
+            }
+        }
+        drawList(sel, top);
+    }
+}
+
+w.close();

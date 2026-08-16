@@ -84,12 +84,25 @@ snarfPutNative(int argCount, Value *args)
 	return BOOL_VAL(true);
 }
 
+static void
+drawSetMetrics(ObjInstance *inst, int w, int h, int fh, int fw)
+{
+	tableSet(&inst->fields, copyString("width", 5), NUMBER_VAL((double)w));
+	tableSet(&inst->fields, copyString("height", 6), NUMBER_VAL((double)h));
+	if(fh > 0)
+		tableSet(&inst->fields, copyString("fontHeight", 10),
+		         NUMBER_VAL((double)fh));
+	if(fw > 0)
+		tableSet(&inst->fields, copyString("fontWidth", 9),
+		         NUMBER_VAL((double)fw));
+}
+
 Value
 drawInitNative(int argCount, Value *args)
 {
 	ObjInstance *inst;
 	char *title;
-	int w, h;
+	int w, h, aw, ah, fh, fw;
 
 	if(argCount != 4 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) ||
 	   !IS_NUMBER(args[2]) || !IS_NUMBER(args[3]))
@@ -105,6 +118,12 @@ drawInitNative(int argCount, Value *args)
 		return NIL_VAL;
 	inst = AS_INSTANCE(args[0]);
 	tableSet(&inst->fields, copyString("_ptr", 4), NUMBER_VAL(1));
+	aw = w;
+	ah = h;
+	fh = 16;
+	fw = 8;
+	luxdraw_info(&aw, &ah, &fh, &fw);
+	drawSetMetrics(inst, aw, ah, fh, fw);
 	return args[0];
 }
 
@@ -179,6 +198,12 @@ drawEventNative(int argCount, Value *args)
 	tableSet(&inst->fields, copyString("y", 1), NUMBER_VAL((double)ev.y));
 	tableSet(&inst->fields, copyString("button", 6), NUMBER_VAL((double)ev.button));
 	tableSet(&inst->fields, copyString("r", 1), NUMBER_VAL((double)ev.r));
+	if(ev.kind == 2 && IS_INSTANCE(args[0])){
+		tableSet(&AS_INSTANCE(args[0])->fields, copyString("width", 5),
+		         NUMBER_VAL((double)ev.x));
+		tableSet(&AS_INSTANCE(args[0])->fields, copyString("height", 6),
+		         NUMBER_VAL((double)ev.y));
+	}
 	pop();
 	return OBJ_VAL(inst);
 }

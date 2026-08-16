@@ -109,7 +109,7 @@ $(TARGET): $(OBJS)
 
 luxp9: luxp9.c
 	$(PLAN9)/bin/9c -o luxp9.o luxp9.c
-	$(PLAN9)/bin/9l -o luxp9 luxp9.o -levent -lplumb -ldraw
+	$(PLAN9)/bin/9l -o luxp9 luxp9.o
 
 ninep_test: ninep_test.o ninep.o
 	$(CC) $(CFLAGS) $^ -o $@

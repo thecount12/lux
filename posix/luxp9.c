@@ -9,6 +9,7 @@
 #include <draw.h>
 #include <event.h>
 #include <plumb.h>
+#include <thread.h>
 
 static int drawopen;
 static int resized;
@@ -16,34 +17,18 @@ static int resizew;
 static int resizeh;
 static int plumbsendfd = -1;
 static int plumbrecvfd = -1;
+static char winsz[64];
 
 void
 eresized(int new)
 {
 	if(new && getwindow(display, Refnone) < 0)
-		exits("eresized");
+		threadexits("eresized");
 	resized = 1;
 	if(screen != nil){
 		resizew = Dx(screen->r);
 		resizeh = Dy(screen->r);
 	}
-}
-
-static int
-readn(int fd, void *buf, int n)
-{
-	char *p;
-	int got, r;
-
-	p = buf;
-	got = 0;
-	while(got < n){
-		r = read(fd, p+got, n-got);
-		if(r <= 0)
-			return -1;
-		got += r;
-	}
-	return got;
 }
 
 static int
@@ -122,6 +107,27 @@ replyok(void)
 }
 
 static void
+replyoksize(void)
+{
+	char buf[80];
+	int n, ww, hh, fh, fw;
+
+	ww = (screen != nil) ? Dx(screen->r) : 0;
+	hh = (screen != nil) ? Dy(screen->r) : 0;
+	fh = (font != nil) ? font->height : 16;
+	fw = 8;
+	if(font != nil){
+		fw = stringwidth(font, "m");
+		if(fw <= 0)
+			fw = font->height / 2;
+		if(fw <= 0)
+			fw = 8;
+	}
+	n = snprint(buf, sizeof buf, "OK %d %d %d %d", ww, hh, fh, fw);
+	wrframe(1, buf, n);
+}
+
+static void
 replyerr(char *s)
 {
 	char buf[256];
@@ -150,6 +156,11 @@ cmdopen(char *p)
 	title = p;
 	if(title[0] == 0)
 		title = "lux";
+	/* plan9port default is 2/3 of the screen unless winsize is set first. */
+	if(w > 0 && h > 0){
+		snprint(winsz, sizeof winsz, "%dx%d", w, h);
+		winsize = winsz;
+	}
 	if(initdraw(nil, nil, title) < 0){
 		replyerr("initdraw");
 		return;
@@ -164,8 +175,10 @@ cmdopen(char *p)
 			getwindow(display, Refnone);
 		}
 	}
+	if(screen != nil)
+		draw(screen, screen->r, display->black, nil, ZP);
 	drawopen = 1;
-	replyok();
+	replyoksize();
 }
 
 static void
@@ -228,6 +241,8 @@ cmdstring(char *p, int n)
 		return;
 	}
 	pt = addpt(screen->r.min, Pt(x, y));
+	if(font != nil)
+		pt.y += font->ascent;
 	string(screen, pt, im, ZP, font, nl);
 	USED(n);
 	freeimage(im);
@@ -325,9 +340,18 @@ cmdplumb(char *p, int n)
 	int dstn, wdirn, datan;
 	char *nl, *dst, *wdir, *data, *q;
 	char *ds, *ws, *dat;
+	Plumbmsg m;
 
 	USED(n);
-	if(sscanf(p, "PLUMB %d %d %d", &dstn, &wdirn, &datan) != 3){
+	if(strncmp(p, "PLUMB ", 6) != 0){
+		replyerr("plumb");
+		return;
+	}
+	p += 6;
+	dstn = strtol(p, &p, 10);
+	wdirn = strtol(p, &p, 10);
+	datan = strtol(p, &p, 10);
+	if(dstn < 0 || wdirn < 0 || datan < 0){
 		replyerr("plumb");
 		return;
 	}
@@ -358,7 +382,14 @@ cmdplumb(char *p, int n)
 		replyerr("plumbopen");
 		return;
 	}
-	if(plumbsendtext(plumbsendfd, "lux", ds, ws, dat) < 0){
+	memset(&m, 0, sizeof m);
+	m.src = "lux";
+	m.dst = ds;
+	m.wdir = ws;
+	m.type = "text";
+	m.ndata = datan;
+	m.data = dat;
+	if(plumbsend(plumbsendfd, &m) < 0){
 		free(ds); free(ws); free(dat);
 		replyerr("plumbsend");
 		return;
@@ -425,7 +456,7 @@ cmdclose(void)
 }
 
 void
-main(int argc, char **argv)
+threadmain(int argc, char **argv)
 {
 	char *req;
 	int n;
@@ -434,10 +465,10 @@ main(int argc, char **argv)
 	USED(argv);
 	for(;;){
 		if(rdframe(0, &req, &n) < 0)
-			exits(nil);
+			threadexits(nil);
 		if(n >= 8 && memcmp(req, "SHUTDOWN", 8) == 0){
 			free(req);
-			exits(nil);
+			threadexits(nil);
 		}
 		if(n >= 5 && memcmp(req, "OPEN ", 5) == 0)
 			cmdopen(req+5);

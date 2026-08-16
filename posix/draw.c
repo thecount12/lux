@@ -21,6 +21,10 @@
 #ifdef LUX_P9P
 static int helper_fd = -1;
 static pid_t helper_pid = -1;
+static int last_w;
+static int last_h;
+static int last_fh;
+static int last_fw;
 #endif
 static int window_open = 0;
 static char helper_path[1024];
@@ -305,7 +309,7 @@ luxdraw_open(const char* title, int w, int h)
 #ifdef LUX_P9P
 	char buf[512];
 	char* resp;
-	int n, tn;
+	int n, tn, aw, ah, fh, fw;
 
 	if (window_open)
 		return -1;
@@ -317,6 +321,21 @@ luxdraw_open(const char* title, int w, int h)
 	if (helper_transact(buf, tn, &resp, &n) < 0)
 		return -1;
 	if (n >= 2 && memcmp(resp, "OK", 2) == 0) {
+		last_w = w;
+		last_h = h;
+		last_fh = 16;
+		last_fw = 8;
+		aw = ah = fh = fw = 0;
+		if (sscanf(resp + 2, "%d %d %d %d", &aw, &ah, &fh, &fw) >= 3) {
+			if (aw > 0)
+				last_w = aw;
+			if (ah > 0)
+				last_h = ah;
+			if (fh > 0)
+				last_fh = fh;
+			if (fw > 0)
+				last_fw = fw;
+		}
 		window_open = 1;
 		free(resp);
 		return 0;
@@ -327,6 +346,30 @@ luxdraw_open(const char* title, int w, int h)
 	(void)title;
 	(void)w;
 	(void)h;
+	return -1;
+#endif
+}
+
+int
+luxdraw_info(int* w, int* h, int* fh, int* fw)
+{
+#ifdef LUX_P9P
+	if (!window_open)
+		return -1;
+	if (w != NULL)
+		*w = last_w;
+	if (h != NULL)
+		*h = last_h;
+	if (fh != NULL)
+		*fh = last_fh;
+	if (fw != NULL)
+		*fw = last_fw;
+	return 0;
+#else
+	(void)w;
+	(void)h;
+	(void)fh;
+	(void)fw;
 	return -1;
 #endif
 }
@@ -443,6 +486,10 @@ luxdraw_event(LuxDrawEvent* e)
 	if (n >= 7 && memcmp(resp, "RESIZE ", 7) == 0) {
 		e->kind = 2;
 		sscanf(resp + 7, "%d %d", &e->x, &e->y);
+		if (e->x > 0)
+			last_w = e->x;
+		if (e->y > 0)
+			last_h = e->y;
 		free(resp);
 		return 0;
 	}

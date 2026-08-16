@@ -24,6 +24,7 @@ void luxdraw_shutdown(void);
 int luxdraw_available(void);
 int luxdraw_is_open(void);
 int luxdraw_open(char* title, int w, int h);
+int luxdraw_info(int* w, int* h, int* fh, int* fw);
 int luxdraw_fill(int x, int y, int w, int h, int r, int g, int b);
 int luxdraw_string(int x, int y, char* s, int r, int g, int b);
 int luxdraw_flush(void);

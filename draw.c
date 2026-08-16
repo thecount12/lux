@@ -120,7 +120,36 @@ luxdraw_open(char *title, int w, int h)
 			getwindow(display, Refnone);
 		}
 	}
+	if(screen != nil)
+		draw(screen, screen->r, display->black, nil, ZP);
 	windowopen = 1;
+	return 0;
+}
+
+int
+luxdraw_info(int *w, int *h, int *fh, int *fw)
+{
+	if(!windowopen || screen == nil)
+		return -1;
+	if(w != nil)
+		*w = Dx(screen->r);
+	if(h != nil)
+		*h = Dy(screen->r);
+	if(fh != nil)
+		*fh = (font != nil) ? font->height : 16;
+	if(fw != nil){
+		int n;
+
+		n = 8;
+		if(font != nil){
+			n = stringwidth(font, "m");
+			if(n <= 0)
+				n = font->height / 2;
+			if(n <= 0)
+				n = 8;
+		}
+		*fw = n;
+	}
 	return 0;
 }
 
@@ -155,6 +184,8 @@ luxdraw_string(int x, int y, char *s, int r, int g, int b)
 	if(im == nil)
 		return -1;
 	pt = addpt(screen->r.min, Pt(x, y));
+	if(font != nil)
+		pt.y += font->ascent;
 	string(screen, pt, im, ZP, font, s);
 	freeimage(im);
 	return 0;

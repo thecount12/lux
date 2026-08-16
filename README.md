@@ -1713,8 +1713,8 @@ print snarfGet();
 
 if (draw_available()) {
     var w = Draw("lux", 640, 480);
-    w.fill(0, 0, 640, 480, "#111111");
-    w.string(16, 24, "hello", "#eeeeee");
+    w.fill(0, 0, w.width, w.height, "#111111");
+    w.string(8, 4, "hello", "#eeeeee");
     w.flush();
     var e = w.event();  // kind, x, y, button, r
     w.close();
@@ -1728,7 +1728,7 @@ fs.file("/status", readStatus, nil);
 fs.listen("/tmp/lux.9p");
 ```
 
-POSIX Draw/plumber need `make USE_P9P=1` (plan9port). Snarf and 9P work without it. Full notes: [DRAW.md](DRAW.md).
+POSIX Draw/plumber need `make USE_P9P=1` (plan9port). Snarf and 9P work without it. Examples: `draw_hello.lux`, `draw_file.lux` (open/read/display a file), `draw_dir.lux`, `draw_type.lux`. Full notes: [DRAW.md](DRAW.md).
 
 ## Example Programs
 

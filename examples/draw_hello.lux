@@ -1,5 +1,5 @@
 /* Tiny Draw window. One window per process. Close with the window
- * manager or press q.
+ * manager or press q. Click (not motion) to draw dots.
  *
  * POSIX (plan9port):
  *   cd posix && make USE_P9P=1
@@ -21,23 +21,29 @@ if (w == nil) {
     exit(1);
 }
 
-w.fill(0, 0, 640, 480, "#111111");
-w.string(16, 24, "hello from lux — click, type, or q to quit", "#eeeeee");
-w.flush();
+fun paint() {
+    w.fill(0, 0, w.width, w.height, "#111111");
+    w.string(8, 4, "hello from lux — click, type, or q to quit", "#eeeeee");
+    w.flush();
+}
+
+paint();
 
 while (true) {
     var e = w.event();
     if (e == nil) {
         break;
     }
-    print e.kind;
     if (e.kind == "quit") {
         break;
     }
-    if (e.kind == "kbd" && e.r == 113) {
+    if (e.kind == "resize") {
+        paint();
+    }
+    if (e.kind == "kbd" and e.r == 113) {
         break; /* 'q' */
     }
-    if (e.kind == "mouse") {
+    if (e.kind == "mouse" and e.button != 0) {
         w.fill(e.x - 2, e.y - 2, 5, 5, "#66ccff");
         w.flush();
     }
