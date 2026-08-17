@@ -434,6 +434,26 @@ class CloudWatchClient {
         return this.call(body);
     }
 
+    listMetrics(namespace, metricName, dimensions) {
+        var body = "Action=ListMetrics&Version=2010-08-01";
+        if (namespace != nil and namespace != "") {
+            body = body + "&Namespace=" + awsFormEncode(namespace);
+        }
+        if (metricName != nil and metricName != "") {
+            body = body + "&MetricName=" + awsFormEncode(metricName);
+        }
+        if (dimensions != nil) {
+            var i = 0;
+            while (i < dimensions.length) {
+                var n = i + 1;
+                body = body + "&Dimensions.member." + n + ".Name=" + awsFormEncode(dimensions[i].Name);
+                body = body + "&Dimensions.member." + n + ".Value=" + awsFormEncode(dimensions[i].Value);
+                i = i + 1;
+            }
+        }
+        return this.call(body);
+    }
+
     lastDatapoint(xml, stat) {
         var series = this.parseSeries(xml, stat);
         if (series == nil) {

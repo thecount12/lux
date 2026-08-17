@@ -7,7 +7,8 @@
 //
 // Args: cluster  service-or-dash  [hours=6]  [outfile=ecs-cpu-memory.csv]
 // Service "-" means cluster-wide metrics (ClusterName only).
-// Values are Average utilization percent at Period=300s.
+// Values are Average at Period=300s.
+// Tries ECS/ContainerInsights TaskCpuUtilization first (Fargate), then AWS/ECS CPUUtilization.
 
 import "../lib/aws.lux";
 import "../examples/config.lux";
@@ -141,30 +142,90 @@ if (accessKey == nil) {
         print "window " + startIso + " .. " + endIso + "  period=" + period + "s";
 
         var cw = CloudWatchClient(aws);
-        var cpuXml = cw.getMetricStatistics("AWS/ECS", "CPUUtilization", dims, period, "Average", startIso, endIso);
-        var memXml = cw.getMetricStatistics("AWS/ECS", "MemoryUtilization", dims, period, "Average", startIso, endIso);
 
-        var cpu = cw.parseSeries(cpuXml, "Average");
-        var mem = cw.parseSeries(memXml, "Average");
-        if (cpu == nil) {
-            print "CPU error: " + cw.errorMessage(cpuXml);
+        fun pull(namespace, cpuName, memName) {
+            var result = Dict();
+            result.namespace = namespace;
+            result.cpuName = cpuName;
+            result.memName = memName;
+            result.cpuXml = cw.getMetricStatistics(namespace, cpuName, dims, period, "Average", startIso, endIso);
+            result.memXml = cw.getMetricStatistics(namespace, memName, dims, period, "Average", startIso, endIso);
+            result.cpu = cw.parseSeries(result.cpuXml, "Average");
+            result.mem = cw.parseSeries(result.memXml, "Average");
+            result.stamps = collectTimestamps(result.cpu, result.mem);
+            return result;
         }
-        if (mem == nil) {
-            print "Memory error: " + cw.errorMessage(memXml);
+
+        fun dumpXml(label, xml) {
+            if (xml == nil) {
+                print label + ": nil";
+                return;
+            }
+            var shown = xml;
+            if (len(shown) > 500) {
+                shown = strSlice(shown, 0, 500) + "...";
+            }
+            print label + ": " + shown;
         }
 
-        var stamps = collectTimestamps(cpu, mem);
-        print "datapoints: " + stamps.length;
-        print "";
-        print "--- sample ---";
-        printSample(stamps, cpu, mem, clusterName, serviceName, 8);
-        print "--- end sample ---";
-        print "";
+        // Fargate Container Insights often uses TaskCpuUtilization, not AWS/ECS CPUUtilization.
+        var tries = [
+            ["ECS/ContainerInsights", "TaskCpuUtilization", "TaskMemoryUtilization"],
+            ["AWS/ECS", "CPUUtilization", "MemoryUtilization"],
+            ["ECS/ContainerInsights", "CpuUtilized", "MemoryUtilized"]
+        ];
+        var picked = nil;
+        var t = 0;
+        while (t < tries.length) {
+            var row = tries[t];
+            print "Trying " + row[0] + " " + row[1] + "/" + row[2] + "...";
+            var got = pull(row[0], row[1], row[2]);
+            if (got.cpu == nil) {
+                print "  CPU error: " + cw.errorMessage(got.cpuXml);
+            }
+            if (got.mem == nil) {
+                print "  Memory error: " + cw.errorMessage(got.memXml);
+            }
+            print "  datapoints: " + got.stamps.length;
+            if (picked == nil and got.stamps.length > 0) {
+                picked = got;
+            }
+            t = t + 1;
+        }
 
-        if (stamps.length == 0) {
-            print "No datapoints. Check cluster/service names, region, and that the service ran in this window.";
-            print "Cluster-only metrics: pass '-' as the service argument.";
+        if (picked == nil) {
+            print "";
+            print "No datapoints on any metric name. Listing CloudWatch metrics for this cluster...";
+            var listed = cw.listMetrics("ECS/ContainerInsights", nil, [awsDim("ClusterName", clusterName)]);
+            if (listed == nil or strFind(listed, "<Error>") >= 0) {
+                print "ListMetrics ECS/ContainerInsights: " + cw.errorMessage(listed);
+                listed = cw.listMetrics("AWS/ECS", nil, [awsDim("ClusterName", clusterName)]);
+                print "ListMetrics AWS/ECS: " + cw.errorMessage(listed);
+            }
+            var names = parseXml(listed, "MetricName");
+            if (names == nil or names.length == 0) {
+                dumpXml("ListMetrics", listed);
+            } else {
+                print "Available MetricName values:";
+                var ni = 0;
+                while (ni < names.length) {
+                    print "  " + names[ni];
+                    ni = ni + 1;
+                }
+            }
+            print "If you see TaskCpuUtilization, re-run with that cluster/service name from ListMetrics dimensions.";
         } else {
+            var cpu = picked.cpu;
+            var mem = picked.mem;
+            var stamps = picked.stamps;
+            print "";
+            print "Using " + picked.namespace + " " + picked.cpuName + "/" + picked.memName;
+            print "datapoints: " + stamps.length;
+            print "";
+            print "--- sample ---";
+            printSample(stamps, cpu, mem, clusterName, serviceName, 8);
+            print "--- end sample ---";
+            print "";
             var csv = buildCsv(stamps, cpu, mem, clusterName, serviceName);
             if (writeFile(outfile, csv)) {
                 print "Wrote " + stamps.length + " rows to " + outfile;
