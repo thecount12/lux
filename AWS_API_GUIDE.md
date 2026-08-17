@@ -208,8 +208,9 @@ var auth = awsSignRequest(
 4. **`examples/aws_helper.lux`** - Demo of the helper classes
 5. **`examples/aws_cloudwatch_prom.lux`** - CloudWatch → Prometheus `/metrics`
 6. **`examples/cw_prom.py`** - Same exporter in Python/boto3
-7. **`examples/aws_sts_example.lux`** - Temporary credentials from AWS STS
-8. **`examples/aws_crypto_utils.lux`** - Low-level crypto functions
+7. **`examples/aws_ecs_metrics.lux`** - ECS CPU/memory CloudWatch → CSV
+8. **`examples/aws_sts_example.lux`** - Temporary credentials from AWS STS
+9. **`examples/aws_crypto_utils.lux`** - Low-level crypto functions
 
 ## STS (Temporary Credentials) Support
 

@@ -1,0 +1,176 @@
+// Pull ECS CPU and memory from CloudWatch (AWS/ECS) and write a CSV.
+// Prints a sample of rows, then writes the full file.
+//
+// Usage (from posix/ or examples/, with .env credentials):
+//   ./lux ../examples/aws_ecs_metrics.lux my-cluster my-service
+//   ./lux ../examples/aws_ecs_metrics.lux my-cluster - 24 ecs-cpu-mem.csv
+//
+// Args: cluster  service-or-dash  [hours=6]  [outfile=ecs-cpu-memory.csv]
+// Service "-" means cluster-wide metrics (ClusterName only).
+// Values are Average utilization percent at Period=300s.
+
+import "../lib/aws.lux";
+import "../examples/config.lux";
+
+fun csvCell(value) {
+    var text = "";
+    if (value != nil) {
+        text = "" + value;
+    }
+    if (strFind(text, ",") >= 0 or strFind(text, "\"") >= 0) {
+        var out = "\"";
+        var i = 0;
+        while (i < len(text)) {
+            if (text[i] == "\"") {
+                out = out + "\"\"";
+            } else {
+                out = out + text[i];
+            }
+            i = i + 1;
+        }
+        return out + "\"";
+    }
+    return text;
+}
+
+fun valueAt(series, timestamp) {
+    if (series == nil) {
+        return "";
+    }
+    var idx = arrayIndexOf(series.timestamps, timestamp);
+    if (idx < 0) {
+        return "";
+    }
+    return series.values[idx];
+}
+
+fun collectTimestamps(cpu, mem) {
+    var stamps = [];
+    var i = 0;
+    while (cpu != nil and i < cpu.timestamps.length) {
+        var ts = cpu.timestamps[i];
+        if (!arrayContains(stamps, ts)) {
+            stamps = stamps + [ts];
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (mem != nil and i < mem.timestamps.length) {
+        var ts = mem.timestamps[i];
+        if (!arrayContains(stamps, ts)) {
+            stamps = stamps + [ts];
+        }
+        i = i + 1;
+    }
+    arraySort(stamps);
+    return stamps;
+}
+
+fun buildCsv(stamps, cpu, mem, clusterName, serviceName) {
+    var header = "timestamp,region,cluster,service,cpu_average,memory_average";
+    var csv = header + "\n";
+    var i = 0;
+    while (i < stamps.length) {
+        var ts = stamps[i];
+        csv = csv + csvCell(ts) + "," + csvCell(region) + "," +
+            csvCell(clusterName) + "," + csvCell(serviceName) + "," +
+            csvCell(valueAt(cpu, ts)) + "," + csvCell(valueAt(mem, ts)) + "\n";
+        i = i + 1;
+    }
+    return csv;
+}
+
+fun printSample(stamps, cpu, mem, clusterName, serviceName, limit) {
+    print "timestamp,region,cluster,service,cpu_average,memory_average";
+    var n = stamps.length;
+    if (n > limit) {
+        n = limit;
+    }
+    var i = 0;
+    while (i < n) {
+        var ts = stamps[i];
+        print csvCell(ts) + "," + csvCell(region) + "," +
+            csvCell(clusterName) + "," + csvCell(serviceName) + "," +
+            csvCell(valueAt(cpu, ts)) + "," + csvCell(valueAt(mem, ts));
+        i = i + 1;
+    }
+    if (stamps.length > limit) {
+        print "... " + (stamps.length - limit) + " more rows";
+    }
+}
+
+if (accessKey == nil) {
+    print "No credentials loaded. Copy examples/env.example to .env and paste STS keys.";
+} else {
+    var argv = args();
+    if (argv.length < 1) {
+        print "Usage: aws_ecs_metrics.lux CLUSTER [SERVICE|-] [hours] [outfile.csv]";
+        print "Example: ./lux ../examples/aws_ecs_metrics.lux my-cluster my-service 6";
+    } else {
+        var clusterName = argv[0];
+        var serviceName = "";
+        var hours = 6;
+        var outfile = "ecs-cpu-memory.csv";
+        if (argv.length > 1 and argv[1] != "-") {
+            serviceName = argv[1];
+        }
+        if (argv.length > 2) {
+            var parsedHours = parseJSON(argv[2]);
+            if (parsedHours != nil) {
+                hours = parsedHours;
+            }
+        }
+        if (argv.length > 3) {
+            outfile = argv[3];
+        }
+
+        var now = epoch();
+        var startIso = awsIsoUtc(now - hours * 3600);
+        var endIso = awsIsoUtc(now);
+        var period = 300;
+        var dims = [awsDim("ClusterName", clusterName)];
+        if (serviceName != "") {
+            dims = dims + [awsDim("ServiceName", serviceName)];
+        }
+
+        var label = clusterName;
+        if (serviceName != "") {
+            label = label + "/" + serviceName;
+        }
+        print "ECS CloudWatch AWS/ECS  cluster=" + label + "  region=" + region;
+        print "window " + startIso + " .. " + endIso + "  period=" + period + "s";
+
+        var cw = CloudWatchClient(aws);
+        var cpuXml = cw.getMetricStatistics("AWS/ECS", "CPUUtilization", dims, period, "Average", startIso, endIso);
+        var memXml = cw.getMetricStatistics("AWS/ECS", "MemoryUtilization", dims, period, "Average", startIso, endIso);
+
+        var cpu = cw.parseSeries(cpuXml, "Average");
+        var mem = cw.parseSeries(memXml, "Average");
+        if (cpu == nil) {
+            print "CPU error: " + cw.errorMessage(cpuXml);
+        }
+        if (mem == nil) {
+            print "Memory error: " + cw.errorMessage(memXml);
+        }
+
+        var stamps = collectTimestamps(cpu, mem);
+        print "datapoints: " + stamps.length;
+        print "";
+        print "--- sample ---";
+        printSample(stamps, cpu, mem, clusterName, serviceName, 8);
+        print "--- end sample ---";
+        print "";
+
+        if (stamps.length == 0) {
+            print "No datapoints. Check cluster/service names, region, and that the service ran in this window.";
+            print "Cluster-only metrics: pass '-' as the service argument.";
+        } else {
+            var csv = buildCsv(stamps, cpu, mem, clusterName, serviceName);
+            if (writeFile(outfile, csv)) {
+                print "Wrote " + stamps.length + " rows to " + outfile;
+            } else {
+                print "Failed to write " + outfile;
+            }
+        }
+    }
+}

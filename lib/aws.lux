@@ -435,16 +435,54 @@ class CloudWatchClient {
     }
 
     lastDatapoint(xml, stat) {
+        var series = this.parseSeries(xml, stat);
+        if (series == nil) {
+            return nil;
+        }
+        if (series.values.length == 0) {
+            return 0;
+        }
+        return series.values[series.values.length - 1];
+    }
+
+    parseSeries(xml, stat) {
         if (xml == nil) {
             return nil;
         }
         if (strFind(xml, "<Error>") >= 0 or strFind(xml, "<ErrorResponse>") >= 0) {
             return nil;
         }
+        var series = Dict();
+        var timestamps = parseXml(xml, "Timestamp");
         var values = parseXml(xml, stat);
-        if (values == nil or values.length == 0) {
-            return 0;
+        if (timestamps == nil) {
+            timestamps = [];
         }
-        return values[values.length - 1];
+        if (values == nil) {
+            values = [];
+        }
+        series.timestamps = timestamps;
+        series.values = values;
+        return series;
+    }
+
+    errorMessage(xml) {
+        if (xml == nil) {
+            return "request failed (nil)";
+        }
+        var codes = parseXml(xml, "Code");
+        var msgs = parseXml(xml, "Message");
+        var code = "";
+        var msg = xml;
+        if (codes != nil and codes.length > 0) {
+            code = codes[0];
+        }
+        if (msgs != nil and msgs.length > 0) {
+            msg = msgs[0];
+        }
+        if (code != "") {
+            return code + ": " + msg;
+        }
+        return msg;
     }
 }
