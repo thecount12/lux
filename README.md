@@ -28,6 +28,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Graphs** — BFS/DFS and Graphviz DOT export, `lib/graph.lux`
 - **Math** — abs, ceil, floor, sqrt, pow, log, sin, cos
 - **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts)
+- **Network** — `netLookup` (DNS) and `netPing` (TCP-connect RTT), no `run()`
 - **Templates** — native `renderTemplate` (`{{ }}`, `{% for %}`, `{% include %}`)
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
 - **Cloud** — AWS S3, STS, IAM operations
@@ -205,6 +206,16 @@ print out;  // hello
 // With file I/O
 var lines = run("wc -l config.json");
 print lines;
+```
+
+### Network (DNS + TCP ping)
+```lux
+var ip = netLookup("example.com");
+if (ip != nil) print ip;            // first resolved address, or nil
+
+var ms = netPing("example.com", 443);
+if (ms >= 0) print ms;              // TCP-connect round-trip milliseconds
+else print "unreachable";           // -1 on timeout / refused / bad args
 ```
 
 ### JSON Data
@@ -635,7 +646,7 @@ class Greeter {
 help("Greeter"); // shows class type and known method names
 ```
 
-`help()` groups callables by category (Core, Math, File and Directory, String and Array, Data Formats, Float64, HTTP, Crypto, AWS, Database, and User or Other) so long lists are easier to scan.
+`help()` groups callables by category (Core, Math, File and Directory, String and Array, Data Formats, Float64, HTTP, Network, Crypto, AWS, Database, and User or Other) so long lists are easier to scan.
 
 `epoch()` returns Unix timestamp seconds in UTC, which is useful for durable event timestamps.
 
@@ -1539,6 +1550,36 @@ if (json != nil) {
 - **Plan 9 HTTP Server**: Uses native `announce()`, `listen()`, `accept()` system calls with manual HTTP/1.0 protocol parsing.
 - **POSIX HTTP Server**: Uses standard BSD sockets (`socket()`, `bind()`, `listen()`, `accept()`) with HTTP/1.0 protocol.
 - **HTTP Server (Both)**: Binds to all interfaces, handles Content-Length parsing, supports sequential connections, returns JSON responses.
+
+### Network
+
+DNS lookup and a TCP-connect probe. These do **not** shell out via `run()` (`dig` / `ping`). `netPing` is not ICMP echo; it times a TCP `connect` to a port (same idea as `tcping`).
+
+**Platform Support:**
+- **Plan 9**: `netLookup` queries `/net/cs`; `netPing` uses `dial("tcp!host!port")` timed with `nsec()`
+- **POSIX**: `netLookup` uses `getaddrinfo`; `netPing` uses a non-blocking `connect` with a 2-second timeout
+
+#### `netLookup(host)` → string or nil
+Resolve a hostname to its first IP address. Returns `nil` on failure. The first address may be IPv4 or IPv6, depending on resolver order (`localhost` is often `::1`).
+
+```lux
+var ip = netLookup("example.com");
+if (ip != nil) {
+    print "resolved: " + ip;
+}
+```
+
+#### `netPing(host, port)` → number
+TCP-connect probe. Returns round-trip milliseconds on success, or `-1` if the host is unreachable, the port is closed/filtered, the timeout expires, or the arguments are invalid. `port` is required (use `80` or `443`). On Plan 9 the time includes name resolution.
+
+```lux
+var ms = netPing("example.com", 443);
+if (ms >= 0) {
+    print "reachable, rtt " + ms + " ms";
+} else {
+    print "down or filtered";
+}
+```
 
 ### AWS S3 Operations
 

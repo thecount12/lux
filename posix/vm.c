@@ -11,8 +11,13 @@
 #include <curl/curl.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <sys/time.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 #include <math.h>
@@ -82,6 +87,8 @@ static const NativeDoc kNativeDocs[] = {
 	{"createDir", "createDir(path)", "Create a directory."},
 	{"listDir", "listDir(path)", "List directory entries as a newline-separated string."},
 	{"run", "run(cmd)", "Run a shell command and return stdout as string, or nil on failure."},
+	{"netLookup", "netLookup(host)", "Resolve a hostname to its first IP address string, or nil."},
+	{"netPing", "netPing(host, port)", "TCP-connect probe; return round-trip milliseconds, or -1 on failure."},
 	{"len", "len(value)", "Return length for strings and arrays."},
 	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
 	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
@@ -185,6 +192,7 @@ static const char* callableCategory(const char* name) {
 	    strcmp(name, "renderTemplate") == 0 ||
 	    strcmp(name, "markdownToHtml") == 0 ||
 	    strcmp(name, "renderMarkdown") == 0) return "File and Directory";
+	if (strcmp(name, "netLookup") == 0 || strcmp(name, "netPing") == 0) return "Network";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
@@ -386,6 +394,7 @@ static Value helpNative(int argCount, Value* args) {
 		"Data Formats",
 		"Float64",
 		"HTTP",
+		"Network",
 		"Crypto",
 		"AWS",
 		"Database",
@@ -1081,6 +1090,102 @@ static Value runNative(int argCount, Value* args) {
 	Value result = OBJ_VAL(copyString(buf, (int)n));
 	free(buf);
 	return result;
+}
+
+/* netLookup(host) -> first resolved IP as a string, or nil. Uses getaddrinfo. */
+static Value netLookupNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	char* host = AS_CSTRING(args[0]);
+	struct addrinfo hints;
+	struct addrinfo* res = NULL;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+
+	if (getaddrinfo(host, NULL, &hints, &res) != 0 || res == NULL)
+		return NIL_VAL;
+
+	char ip[INET6_ADDRSTRLEN];
+	ip[0] = '\0';
+	void* addr = NULL;
+	if (res->ai_family == AF_INET)
+		addr = &((struct sockaddr_in*)res->ai_addr)->sin_addr;
+	else if (res->ai_family == AF_INET6)
+		addr = &((struct sockaddr_in6*)res->ai_addr)->sin6_addr;
+
+	if (addr == NULL || inet_ntop(res->ai_family, addr, ip, sizeof(ip)) == NULL) {
+		freeaddrinfo(res);
+		return NIL_VAL;
+	}
+
+	freeaddrinfo(res);
+	return OBJ_VAL(copyString(ip, strlen(ip)));
+}
+
+/* netPing(host, port) -> round-trip milliseconds, or -1 on failure.
+ * TCP-connect probe (no raw sockets, no root) with a 2s timeout. */
+static Value netPingNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_NUMBER(args[1]))
+		return NUMBER_VAL(-1);
+
+	char* host = AS_CSTRING(args[0]);
+	int port = (int)AS_NUMBER(args[1]);
+	if (port <= 0 || port > 65535)
+		return NUMBER_VAL(-1);
+
+	char portStr[16];
+	snprintf(portStr, sizeof(portStr), "%d", port);
+
+	struct addrinfo hints;
+	struct addrinfo* res = NULL;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	if (getaddrinfo(host, portStr, &hints, &res) != 0 || res == NULL)
+		return NUMBER_VAL(-1);
+
+	int fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+	if (fd < 0) {
+		freeaddrinfo(res);
+		return NUMBER_VAL(-1);
+	}
+
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (flags >= 0)
+		fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+	struct timeval start, end;
+	gettimeofday(&start, NULL);
+
+	double rttMs = -1;
+	int rc = connect(fd, res->ai_addr, res->ai_addrlen);
+	if (rc == 0) {
+		gettimeofday(&end, NULL);
+		rttMs = (end.tv_sec - start.tv_sec) * 1000.0 +
+		        (end.tv_usec - start.tv_usec) / 1000.0;
+	} else if (errno == EINPROGRESS) {
+		fd_set wset;
+		FD_ZERO(&wset);
+		FD_SET(fd, &wset);
+		struct timeval tv;
+		tv.tv_sec = 2;
+		tv.tv_usec = 0;
+		if (select(fd + 1, NULL, &wset, NULL, &tv) > 0) {
+			int err = 0;
+			socklen_t len = sizeof(err);
+			if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0) {
+				gettimeofday(&end, NULL);
+				rttMs = (end.tv_sec - start.tv_sec) * 1000.0 +
+				        (end.tv_usec - start.tv_usec) / 1000.0;
+			}
+		}
+	}
+
+	close(fd);
+	freeaddrinfo(res);
+	return NUMBER_VAL(rttMs);
 }
 
 static bool isAsciiWhitespace(char c) {
@@ -4365,6 +4470,8 @@ void initVM() {
 	defineNative("createDir", createDirNative);
 	defineNative("listDir", listDirNative);
 	defineNative("run", runNative);
+	defineNative("netLookup", netLookupNative);
+	defineNative("netPing", netPingNative);
 	defineNative("len", lenNative);
 	defineNative("typeof", typeofNative);
 	defineNative("strFind", strFindNative);
