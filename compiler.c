@@ -914,6 +914,7 @@ or_(bool canAssign)
 	int endJump = emitJump(OP_JUMP);
 
 	patchJump(elseJump);
+	emitByte(OP_POP);
 	parsePrecedence(PREC_OR);
 	patchJump(endJump);
 }
