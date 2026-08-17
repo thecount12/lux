@@ -1,0 +1,44 @@
+// Graph stdlib tests
+import "../lib/graph.lux";
+
+var g = Graph();
+g.addEdge("a", "b");
+g.addEdge("b", "c");
+g.addEdge("a", "c");
+
+assert(g.nodes.length == 3, "three nodes");
+assert(g.edges.length == 3, "three undirected edges");
+
+var nbr = g.neighbors("a");
+assert(nbr.length == 2, "a has two neighbors");
+assert(arrayContains(nbr, "b"), "a neighbors b");
+assert(arrayContains(nbr, "c"), "a neighbors c");
+
+var b = g.bfs("a");
+assert(b.length == 3, "bfs visits all");
+assert(b[0] == "a", "bfs starts at a");
+
+var d = g.dfs("a");
+assert(d.length == 3, "dfs visits all");
+assert(d[0] == "a", "dfs starts at a");
+
+g.addEdge("a", "b");
+assert(g.edges.length == 3, "duplicate undirected edge ignored");
+
+var dg = Graph();
+dg.directed = true;
+dg.addEdge("a", "b");
+dg.addEdge("b", "c");
+assert(dg.neighbors("a").length == 1, "directed a->b only");
+assert(dg.neighbors("b").length == 1, "directed b->c");
+assert(dg.neighbors("c").length == 0, "directed c has no out-edges");
+
+var dot = g.toDot();
+assert(strFind(dot, "graph G {") == 0, "undirected graph header");
+assert(strFind(dot, " -- ") >= 0, "undirected edge operator");
+
+var ddot = dg.toDot();
+assert(strFind(ddot, "digraph G {") == 0, "directed graph header");
+assert(strFind(ddot, " -> ") >= 0, "directed edge operator");
+
+print "test_graph: all assertions passed";

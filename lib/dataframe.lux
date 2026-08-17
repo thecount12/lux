@@ -1,0 +1,535 @@
+// Column-oriented DataFrame and quoted CSV parser.
+// Import has no side effects. Paths are relative to the process CWD.
+
+fun _dfAppend(arr, val) {
+    arr[arr.length] = val;
+    return arr;
+}
+
+fun _digitVal(ch) {
+    var digits = "0123456789";
+    var i = 0;
+    while (i < 10) {
+        if (digits[i] == ch) return i;
+        i = i + 1;
+    }
+    return nil;
+}
+
+fun parseNumber(s) {
+    if (typeof(s) == "number") return s;
+    if (s == nil) return nil;
+    if (typeof(s) != "string") return nil;
+    if (s == "") return nil;
+    var i = 0;
+    var neg = false;
+    if (s[0] == "-") {
+        neg = true;
+        i = 1;
+    } else if (s[0] == "+") {
+        i = 1;
+    }
+    if (i >= len(s)) return nil;
+    var n = 0;
+    var seenDigit = false;
+    while (i < len(s)  and s[i] != ".") {
+        var digit = _digitVal(s[i]);
+        if (digit == nil) return nil;
+        n = n * 10 + digit;
+        seenDigit = true;
+        i = i + 1;
+    }
+    if (i < len(s)  and s[i] == ".") {
+        i = i + 1;
+        var place = 0.1;
+        var fracDigit = false;
+        while (i < len(s)) {
+            var d = _digitVal(s[i]);
+            if (d == nil) return nil;
+            n = n + d * place;
+            place = place / 10;
+            seenDigit = true;
+            fracDigit = true;
+            i = i + 1;
+        }
+        if (!fracDigit  and !seenDigit) return nil;
+    }
+    if (!seenDigit) return nil;
+    if (neg) n = 0 - n;
+    return n;
+}
+
+fun parseCSVQuoted(text, sep) {
+    if (sep == nil) sep = ",";
+    var rows = [];
+    var row = [];
+    var field = "";
+    var inQuotes = false;
+    var i = 0;
+    var L = len(text);
+    while (i < L) {
+        var ch = text[i];
+        if (ch == "\r") {
+            i = i + 1;
+            continue;
+        }
+
+        if (inQuotes) {
+            if (ch == "\"") {
+                if (i + 1 < L  and text[i + 1] == "\"") {
+                    field = field + "\"";
+                    i = i + 2;
+                    continue;
+                } else {
+                    inQuotes = false;
+                    i = i + 1;
+                    continue;
+                }
+            } else {
+                field = field + ch;
+                i = i + 1;
+                continue;
+            }
+        } else {
+            if (ch == "\"") {
+                inQuotes = true;
+                i = i + 1;
+                continue;
+            }
+            if (ch == sep) {
+                _dfAppend(row, strTrim(field));
+                field = "";
+                i = i + 1;
+                continue;
+            }
+            if (ch == "\n") {
+                _dfAppend(row, strTrim(field));
+                field = "";
+                _dfAppend(rows, row);
+                row = [];
+                i = i + 1;
+                continue;
+            }
+            field = field + ch;
+            i = i + 1;
+            continue;
+        }
+    }
+    if (inQuotes) {
+        inQuotes = false;
+    }
+    if (field != ""  or row.length > 0) {
+        _dfAppend(row, strTrim(field));
+        _dfAppend(rows, row);
+    }
+    return rows;
+}
+
+fun _csvEscape(v, sep) {
+    var s = "";
+    if (v == nil) s = "";
+    else s = "" + v;
+    var needQuote = false;
+    var out = "";
+    var i = 0;
+    var L = len(s);
+    while (i < L) {
+        var ch = s[i];
+        if (ch == sep  or ch == "\""  or ch == "\n") needQuote = true;
+        if (ch == "\"") out = out + "\"\"";
+        else out = out + ch;
+        i = i + 1;
+    }
+    if (needQuote) return "\"" + out + "\"";
+    return s;
+}
+
+fun _isAggName(s) {
+    return s == "count"  or s == "sum"  or s == "mean"  or s == "min"  or s == "max";
+}
+
+fun _permuteCols(cols, order) {
+    var newCols = [];
+    var c = 0;
+    while (c < cols.length) {
+        newCols[c] = [];
+        var k = 0;
+        while (k < order.length) {
+            newCols[c][k] = cols[c][order[k]];
+            k = k + 1;
+        }
+        c = c + 1;
+    }
+    return newCols;
+}
+
+class DataFrame {
+    init(names, cols) {
+        if (cols == nil  and typeof(names) == "array") {
+            var rows = names;
+            if (rows.length == 0) {
+                this.names = [];
+                this.cols = [];
+                this.n = 0;
+                return;
+            }
+            var header = rows[0];
+            this.names = header;
+            this.cols = [];
+            var c = 0;
+            while (c < header.length) {
+                this.cols[c] = [];
+                c = c + 1;
+            }
+            var r = 1;
+            while (r < rows.length) {
+                var row = rows[r];
+                var k = 0;
+                while (k < header.length) {
+                    var val = nil;
+                    if (typeof(row) == "array"  and k < row.length) val = row[k];
+                    this.cols[k][this.cols[k].length] = val;
+                    k = k + 1;
+                }
+                r = r + 1;
+            }
+            this.n = this.cols.length == 0 ? 0 : this.cols[0].length;
+        } else {
+            this.names = names;
+            this.cols = cols;
+            this.n = cols.length == 0 ? 0 : cols[0].length;
+        }
+    }
+
+    _colIndex(name) {
+        var i = 0;
+        while (i < this.names.length) {
+            if (this.names[i] == name) return i;
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    head(k) {
+        if (k == nil) k = 5;
+        var newCols = [];
+        var i = 0;
+        while (i < this.cols.length) {
+            newCols[i] = [];
+            var j = 0;
+            while (j < k  and j < this.cols[i].length) {
+                newCols[i][j] = this.cols[i][j];
+                j = j + 1;
+            }
+            i = i + 1;
+        }
+        return DataFrame(this.names, newCols);
+    }
+
+    select(keepNames) {
+        var newNames = [];
+        var newCols = [];
+        var i = 0;
+        while (i < keepNames.length) {
+            var name = keepNames[i];
+            var idx = this._colIndex(name);
+            if (idx != -1) {
+                newNames[newNames.length] = name;
+                newCols[newCols.length] = this.cols[idx];
+            }
+            i = i + 1;
+        }
+        return DataFrame(newNames, newCols);
+    }
+
+    rowAsObj(i) {
+        var json = "{";
+        var c = 0;
+        while (c < this.names.length) {
+            if (c > 0) json = json + ",";
+            json = json + toJSON("" + this.names[c]) + ":" + toJSON(this.cols[c][i]);
+            c = c + 1;
+        }
+        json = json + "}";
+        return parseJSON(json);
+    }
+
+    filter(pred) {
+        var keepIdx = [];
+        var i = 0;
+        while (i < this.n) {
+            var row = this.rowAsObj(i);
+            if (pred(row)) _dfAppend(keepIdx, i);
+            i = i + 1;
+        }
+        return DataFrame(this.names, _permuteCols(this.cols, keepIdx));
+    }
+
+    mapColumn(name, fn) {
+        var idx = this._colIndex(name);
+        if (idx == -1) return false;
+        var i = 0;
+        while (i < this.n) {
+            this.cols[idx][i] = fn(this.cols[idx][i]);
+            i = i + 1;
+        }
+        return true;
+    }
+
+    toNumber(name) {
+        var idx = this._colIndex(name);
+        if (idx == -1) return false;
+        var i = 0;
+        while (i < this.n) {
+            this.cols[idx][i] = parseNumber(this.cols[idx][i]);
+            i = i + 1;
+        }
+        return true;
+    }
+
+    sortBy(name) {
+        var idx = this._colIndex(name);
+        if (idx == -1) return this;
+        var col = [];
+        var i = 0;
+        while (i < this.n) {
+            col[i] = this.cols[idx][i];
+            i = i + 1;
+        }
+        var sorted = [];
+        i = 0;
+        while (i < this.n) {
+            sorted[i] = col[i];
+            i = i + 1;
+        }
+        if (arraySort(sorted) == nil) {
+            i = 0;
+            while (i < this.n) {
+                var v = col[i];
+                if (v == nil) sorted[i] = "";
+                else sorted[i] = "" + v;
+                i = i + 1;
+            }
+            col = [];
+            i = 0;
+            while (i < this.n) {
+                col[i] = sorted[i];
+                i = i + 1;
+            }
+            arraySort(sorted);
+        }
+        var used = [];
+        i = 0;
+        while (i < this.n) {
+            used[i] = false;
+            i = i + 1;
+        }
+        var order = [];
+        var s = 0;
+        while (s < this.n) {
+            var want = sorted[s];
+            var j = 0;
+            while (j < this.n) {
+                if (used[j] == false  and col[j] == want) {
+                    used[j] = true;
+                    _dfAppend(order, j);
+                    break;
+                }
+                j = j + 1;
+            }
+            s = s + 1;
+        }
+        return DataFrame(this.names, _permuteCols(this.cols, order));
+    }
+
+    groupBy(keyCol, valueCol, agg) {
+        if (agg == nil) {
+            if (_isAggName(valueCol)) {
+                agg = valueCol;
+                valueCol = nil;
+            } else if (valueCol == nil) {
+                agg = "count";
+            } else {
+                agg = "count";
+            }
+        }
+        var keyIdx = this._colIndex(keyCol);
+        if (keyIdx == -1) return DataFrame([], []);
+        var valIdx = -1;
+        if (valueCol != nil) valIdx = this._colIndex(valueCol);
+        if (agg != "count"  and valIdx == -1) return DataFrame([], []);
+
+        var keys = [];
+        var i = 0;
+        while (i < this.n) {
+            var k = this.cols[keyIdx][i];
+            if (!arrayContains(keys, k)) _dfAppend(keys, k);
+            i = i + 1;
+        }
+
+        var outKeys = [];
+        var outVals = [];
+        var g = 0;
+        while (g < keys.length) {
+            var key = keys[g];
+            var sum = 0;
+            var cnt = 0;
+            var numericCnt = 0;
+            var mn = nil;
+            var mx = nil;
+            i = 0;
+            while (i < this.n) {
+                if (this.cols[keyIdx][i] == key) {
+                    cnt = cnt + 1;
+                    if (valIdx != -1) {
+                        var n = parseNumber(this.cols[valIdx][i]);
+                        if (n != nil  and n == n) {
+                            sum = sum + n;
+                            numericCnt = numericCnt + 1;
+                            if (mn == nil  or n < mn) mn = n;
+                            if (mx == nil  or n > mx) mx = n;
+                        }
+                    }
+                }
+                i = i + 1;
+            }
+            var result = cnt;
+            if (agg == "sum") result = sum;
+            else if (agg == "mean") result = numericCnt == 0 ? nil : (sum / numericCnt);
+            else if (agg == "min") result = mn;
+            else if (agg == "max") result = mx;
+            else result = cnt;
+            _dfAppend(outKeys, key);
+            _dfAppend(outVals, result);
+            g = g + 1;
+        }
+
+        var outName = "count";
+        if (agg != "count"  and valueCol != nil) outName = valueCol;
+        else if (agg != "count") outName = agg;
+        return DataFrame([keyCol, outName], [outKeys, outVals]);
+    }
+
+    unique(name) {
+        var idx = this._colIndex(name);
+        if (idx == -1) return [];
+        var out = [];
+        var i = 0;
+        while (i < this.n) {
+            var v = this.cols[idx][i];
+            if (!arrayContains(out, v)) _dfAppend(out, v);
+            i = i + 1;
+        }
+        return out;
+    }
+
+    valueCounts(name) {
+        var vals = this.unique(name);
+        var counts = [];
+        var idx = this._colIndex(name);
+        var v = 0;
+        while (v < vals.length) {
+            var c = 0;
+            var i = 0;
+            while (i < this.n) {
+                if (this.cols[idx][i] == vals[v]) c = c + 1;
+                i = i + 1;
+            }
+            counts[v] = c;
+            v = v + 1;
+        }
+        return DataFrame(["value", "count"], [vals, counts]);
+    }
+
+    to_csv() {
+        var sep = ",";
+        var out = "";
+        var i = 0;
+        while (i < this.names.length) {
+            out = out + _csvEscape(this.names[i], sep);
+            if (i + 1 < this.names.length) out = out + sep;
+            i = i + 1;
+        }
+        out = out + "\n";
+        var r = 0;
+        while (r < this.n) {
+            var c = 0;
+            while (c < this.names.length) {
+                out = out + _csvEscape(this.cols[c][r], sep);
+                if (c + 1 < this.names.length) out = out + sep;
+                c = c + 1;
+            }
+            out = out + "\n";
+            r = r + 1;
+        }
+        return out;
+    }
+
+    describe() {
+        var colNames = [];
+        var counts = [];
+        var means = [];
+        var c = 0;
+        while (c < this.names.length) {
+            var sum = 0;
+            var cnt = 0;
+            var i = 0;
+            while (i < this.n) {
+                var n = parseNumber(this.cols[c][i]);
+                if (n != nil  and n == n) {
+                    sum = sum + n;
+                    cnt = cnt + 1;
+                }
+                i = i + 1;
+            }
+            _dfAppend(colNames, this.names[c]);
+            _dfAppend(counts, cnt);
+            _dfAppend(means, cnt == 0 ? nil : (sum / cnt));
+            c = c + 1;
+        }
+        return DataFrame(["column", "count", "mean"], [colNames, counts, means]);
+    }
+}
+
+fun fromRecords(rows, names) {
+    if (names == nil  or typeof(names) != "array"  or names.length == 0) {
+        return DataFrame([], []);
+    }
+    if (rows == nil) rows = [];
+    var cols = [];
+    var c = 0;
+    while (c < names.length) {
+        cols[c] = [];
+        c = c + 1;
+    }
+    var r = 0;
+    while (r < rows.length) {
+        var row = rows[r];
+        c = 0;
+        while (c < names.length) {
+            var val = nil;
+            if (typeof(row) == "array") {
+                if (c < row.length) val = row[c];
+            } else {
+                val = getField(row, names[c]);
+            }
+            cols[c][cols[c].length] = val;
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    return DataFrame(names, cols);
+}
+
+fun read_csv_text(text) {
+    var rows = parseCSV(text, nil);
+    if (rows == nil) rows = parseCSVQuoted(text, nil);
+    if (rows.length == 0) return DataFrame([], []);
+    return DataFrame(rows, nil);
+}
+
+fun read_csv_file(path) {
+    var txt = readFile(path);
+    if (txt == nil) return nil;
+    return read_csv_text(txt);
+}

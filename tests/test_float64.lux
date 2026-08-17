@@ -1,0 +1,37 @@
+// Float64Array reduction tests (POSIX). Exit 0 on Plan 9.
+if (!float64_available()) {
+    print "test_float64: skipped (not available)";
+    exit(0);
+}
+
+var a = float64_new(4);
+float64_fill(a, 2);
+assert(float64_get(a, 0) == 2, "fill");
+assert(float64_sum(a) == 8, "sum");
+assert(float64_mean(a) == 2, "mean");
+assert(float64_min(a) == 2, "min fill");
+assert(float64_max(a) == 2, "max fill");
+
+float64_set(a, 0, 1);
+float64_set(a, 1, 3);
+float64_set(a, 2, 5);
+float64_set(a, 3, 2);
+assert(float64_min(a) == 1, "min");
+assert(float64_max(a) == 5, "max");
+assert(float64_sum(a) == 11, "sum mixed");
+
+var c = float64_copy(a);
+assert(float64_get(c, 2) == 5, "copy");
+float64_set(c, 2, 9);
+assert(float64_get(a, 2) == 5, "copy is independent");
+
+var sl = float64_slice(a, 1, 3);
+assert(float64_sum(sl) == 8, "slice 3+5");
+
+var empty = float64_new(0);
+assert(float64_mean(empty) == nil, "mean empty");
+assert(float64_min(empty) == nil, "min empty");
+assert(float64_max(empty) == nil, "max empty");
+assert(float64_sum(empty) == 0, "sum empty");
+
+print "test_float64: all assertions passed";

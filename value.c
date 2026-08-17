@@ -104,7 +104,20 @@ bool
 valuesEqual(Value a, Value b) {
 #ifdef NAN_BOXING
 	if (IS_NUMBER(a) && IS_NUMBER(b)) {
-		return AS_NUMBER(a) == AS_NUMBER(b);
+		double da, db;
+		uvlong ua, ub;
+
+		da = AS_NUMBER(a);
+		db = AS_NUMBER(b);
+		memcpy(&ua, &da, sizeof ua);
+		memcpy(&ub, &db, sizeof ub);
+		/* Plan 9 FP compares of NaN raise "invalid operation". */
+		if (((ua & (uvlong)0x7ff0000000000000) == (uvlong)0x7ff0000000000000
+		     && (ua & (uvlong)0x000fffffffffffff) != 0)
+		    || ((ub & (uvlong)0x7ff0000000000000) == (uvlong)0x7ff0000000000000
+		        && (ub & (uvlong)0x000fffffffffffff) != 0))
+			return false;
+		return da == db;
 	}
 	return  a == b;
 #else

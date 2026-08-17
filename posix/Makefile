@@ -24,7 +24,7 @@ DB_LDFLAGS =
 # _DEFAULT_SOURCE exposes POSIX APIs (popen, fork, waitpid, etc.) under -std=c99.
 # Default flags for unknown POSIX systems.
 CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS)
-LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
+LDFLAGS = -lcurl -lcrypto -lm $(DB_LDFLAGS)
 
 ifeq ($(USE_SQLITE),1)
     DB_FLAGS += -DDB_SQLITE
@@ -50,17 +50,17 @@ endif
 ifeq ($(UNAME_S),Linux)
     # Linux: OpenSSL typically in standard paths
     CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS)
-    LDFLAGS = -lcurl -lcrypto $(DB_LDFLAGS)
+    LDFLAGS = -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),Darwin)
     # macOS: Use Homebrew OpenSSL, compile for x86_64
     CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch x86_64 -I/usr/local/opt/openssl@3/include $(DB_FLAGS)
-    LDFLAGS = -arch x86_64 -L/usr/local/opt/openssl@3/lib -lcurl -lcrypto $(DB_LDFLAGS)
+    LDFLAGS = -arch x86_64 -L/usr/local/opt/openssl@3/lib -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),OpenBSD)
     # OpenBSD: use ports-installed curl and OpenSSL under /usr/local.
     CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -I/usr/local/include $(DB_FLAGS)
-    LDFLAGS = -L/usr/local/lib -lcurl -lcrypto $(DB_LDFLAGS)
+    LDFLAGS = -L/usr/local/lib -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 
 # Define the executable name

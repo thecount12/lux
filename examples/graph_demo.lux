@@ -1,0 +1,15 @@
+// Graph demo: small undirected graph written as Graphviz DOT.
+import "../lib/graph.lux";
+
+var g = Graph();
+g.addEdge("alice", "bob");
+g.addEdge("bob", "carol");
+g.addEdge("alice", "carol");
+
+print "bfs from alice: " + toJSON(g.bfs("alice"));
+print "dfs from alice: " + toJSON(g.dfs("alice"));
+
+var dot = g.toDot();
+writeFile("graph_demo.dot", dot);
+print "wrote graph_demo.dot";
+print dot;

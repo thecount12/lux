@@ -1,0 +1,18 @@
+// Math native tests (POSIX and Plan 9)
+assert(abs(-3) == 3, "abs negative");
+assert(abs(3) == 3, "abs positive");
+assert(ceil(1.2) == 2, "ceil positive");
+assert(ceil(-1.2) == -1, "ceil negative");
+assert(sqrt(9) == 3, "sqrt 9");
+assert(pow(2, 10) == 1024, "pow 2^10");
+assert(floor(log(1)) == 0, "log 1 is 0");
+assert(abs(sin(0)) == 0, "sin 0");
+assert(abs(cos(0) - 1) < 0.0000001, "cos 0");
+
+var nan = sqrt(-1);
+assert(nan != nan, "sqrt(-1) is NaN");
+
+assert(abs("nope") == nil, "abs rejects non-number");
+assert(pow(2) == nil, "pow needs two args");
+
+print "test_math: all assertions passed";
