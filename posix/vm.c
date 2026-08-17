@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
+#include <math.h>
 
 /* Database includes - conditional compilation */
 #ifdef DB_SQLITE
@@ -63,6 +64,13 @@ static const NativeDoc kNativeDocs[] = {
 	{"exit", "exit([code])", "Exit the Lux process with an optional numeric status (default 0)."},
 	{"args", "args()", "Return command-line arguments passed after the script path."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
+	{"abs", "abs(number)", "Return the absolute value of a number."},
+	{"ceil", "ceil(number)", "Return smallest integer greater than or equal to number."},
+	{"sqrt", "sqrt(number)", "Return the square root of a number."},
+	{"pow", "pow(base, exp)", "Return base raised to exp."},
+	{"log", "log(number)", "Return the natural logarithm of a number."},
+	{"sin", "sin(number)", "Return the sine of a number (radians)."},
+	{"cos", "cos(number)", "Return the cosine of a number (radians)."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
 	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
@@ -77,6 +85,8 @@ static const NativeDoc kNativeDocs[] = {
 	{"len", "len(value)", "Return length for strings and arrays."},
 	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
 	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
+	{"parseCSV", "parseCSV(text, [sep])", "Parse quoted CSV text into an array of row arrays."},
+	{"getField", "getField(obj, name)", "Get an instance field by string name, or nil."},
 	{"httpGet", "httpGet(url)", "Make an HTTP GET request."},
 	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request."},
 	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
@@ -89,6 +99,18 @@ static const NativeDoc kNativeDocs[] = {
 	{"dbConnect", "dbConnect(driver, connection)", "Open a database connection."},
 	{"dbQuery", "dbQuery(conn, sql)", "Execute SQL and return rows for queries."},
 	{"dbClose", "dbClose(conn)", "Close a database connection."},
+	{"float64_available", "float64_available()", "Return whether Float64Array natives are present."},
+	{"float64_new", "float64_new(length)", "Create a Float64Array of the given length."},
+	{"float64_get", "float64_get(array, index)", "Get a Float64Array element."},
+	{"float64_set", "float64_set(array, index, value)", "Set a Float64Array element."},
+	{"float64_dot", "float64_dot(a, b)", "Dot product of two Float64Arrays."},
+	{"float64_fill", "float64_fill(array, value)", "Fill a Float64Array with a value."},
+	{"float64_copy", "float64_copy(array)", "Copy a Float64Array."},
+	{"float64_slice", "float64_slice(array, start, end)", "Copy a half-open slice of a Float64Array."},
+	{"float64_sum", "float64_sum(array)", "Sum of Float64Array elements."},
+	{"float64_mean", "float64_mean(array)", "Mean of Float64Array elements."},
+	{"float64_min", "float64_min(array)", "Minimum Float64Array element."},
+	{"float64_max", "float64_max(array)", "Maximum Float64Array element."},
 	{"help", "help() or help(name)", "List available callables or show details for one name."},
 };
 
@@ -150,6 +172,9 @@ static const char* callableTypeName(Value v) {
 
 static const char* callableCategory(const char* name) {
 	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0 || strcmp(name, "typeof") == 0 || strcmp(name, "exit") == 0 || strcmp(name, "args") == 0) return "Core";
+	if (strcmp(name, "floor") == 0 || strcmp(name, "abs") == 0 || strcmp(name, "ceil") == 0 ||
+	    strcmp(name, "sqrt") == 0 || strcmp(name, "pow") == 0 || strcmp(name, "log") == 0 ||
+	    strcmp(name, "sin") == 0 || strcmp(name, "cos") == 0) return "Math";
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
@@ -163,7 +188,9 @@ static const char* callableCategory(const char* name) {
 	    strcmp(name, "arrayIndexOf") == 0 || strcmp(name, "arrayContains") == 0 ||
 	    strcmp(name, "arraySort") == 0 || strcmp(name, "arrayBinarySearch") == 0) return "String and Array";
 	if (strcmp(name, "parseJSON") == 0 || strcmp(name, "toJSON") == 0 ||
-	    strcmp(name, "parseXml") == 0) return "Data Formats";
+	    strcmp(name, "parseXml") == 0 || strcmp(name, "parseCSV") == 0 ||
+	    strcmp(name, "getField") == 0) return "Data Formats";
+	if (strncmp(name, "float64_", 8) == 0) return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
 	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0) return "HTTP";
@@ -350,9 +377,11 @@ static Value helpNative(int argCount, Value* args) {
 	qsort(names, nameCount, sizeof(char*), compareNamePtr);
 	const char* categories[] = {
 		"Core",
+		"Math",
 		"File and Directory",
 		"String and Array",
 		"Data Formats",
+		"Float64",
 		"HTTP",
 		"Crypto",
 		"AWS",
@@ -444,6 +473,42 @@ static Value floorNative(int argCount, Value* args) {
 			result--;
 	}
 	return NUMBER_VAL((double)result);
+}
+
+static Value mathUnaryNative(int argCount, Value* args, double (*fn)(double)) {
+	if (argCount != 1 || !IS_NUMBER(args[0]))
+		return NIL_VAL;
+	return NUMBER_VAL(fn(AS_NUMBER(args[0])));
+}
+
+static Value absNative(int argCount, Value* args) {
+	return mathUnaryNative(argCount, args, fabs);
+}
+
+static Value ceilNative(int argCount, Value* args) {
+	return mathUnaryNative(argCount, args, ceil);
+}
+
+static Value sqrtNative(int argCount, Value* args) {
+	return mathUnaryNative(argCount, args, sqrt);
+}
+
+static Value logNative(int argCount, Value* args) {
+	return mathUnaryNative(argCount, args, log);
+}
+
+static Value sinNative(int argCount, Value* args) {
+	return mathUnaryNative(argCount, args, sin);
+}
+
+static Value cosNative(int argCount, Value* args) {
+	return mathUnaryNative(argCount, args, cos);
+}
+
+static Value powNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_NUMBER(args[0]) || !IS_NUMBER(args[1]))
+		return NIL_VAL;
+	return NUMBER_VAL(pow(AS_NUMBER(args[0]), AS_NUMBER(args[1])));
 }
 
 /* Float64Array natives */
@@ -539,6 +604,124 @@ float64DotNative(int argCount, Value* args)
 	double sum = 0.0;
 	for (int i = 0; i < a->length; i++) sum += a->elems[i] * b->elems[i];
 	return NUMBER_VAL(sum);
+}
+
+static Value
+float64FillNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) || !IS_NUMBER(args[1])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_fill(array, value) expects (Float64Array, number).");
+		return NIL_VAL;
+	}
+	ObjFloatArray* fa = AS_FLOATARRAY(args[0]);
+	double v = AS_NUMBER(args[1]);
+	for (int i = 0; i < fa->length; i++) fa->elems[i] = v;
+	return args[0];
+}
+
+static Value
+float64CopyNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_copy(array) expects a Float64Array.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* src = AS_FLOATARRAY(args[0]);
+	ObjFloatArray* dst = newFloatArray(src->length);
+	for (int i = 0; i < src->length; i++) dst->elems[i] = src->elems[i];
+	return OBJ_VAL(dst);
+}
+
+static Value
+float64SliceNative(int argCount, Value* args)
+{
+	if (argCount != 3 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) ||
+	    !IS_NUMBER(args[1]) || !IS_NUMBER(args[2])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_slice(array, start, end) expects (Float64Array, number, number).");
+		return NIL_VAL;
+	}
+	ObjFloatArray* src = AS_FLOATARRAY(args[0]);
+	int start = (int)AS_NUMBER(args[1]);
+	int end = (int)AS_NUMBER(args[2]);
+	if (start < 0) start = 0;
+	if (end < start) end = start;
+	if (end > src->length) end = src->length;
+	if (start > src->length) start = src->length;
+	int n = end - start;
+	ObjFloatArray* dst = newFloatArray(n);
+	for (int i = 0; i < n; i++) dst->elems[i] = src->elems[start + i];
+	return OBJ_VAL(dst);
+}
+
+static Value
+float64SumNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_sum(array) expects a Float64Array.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* fa = AS_FLOATARRAY(args[0]);
+	double sum = 0.0;
+	for (int i = 0; i < fa->length; i++) sum += fa->elems[i];
+	return NUMBER_VAL(sum);
+}
+
+static Value
+float64MeanNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_mean(array) expects a Float64Array.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* fa = AS_FLOATARRAY(args[0]);
+	if (fa->length == 0) return NIL_VAL;
+	double sum = 0.0;
+	for (int i = 0; i < fa->length; i++) sum += fa->elems[i];
+	return NUMBER_VAL(sum / (double)fa->length);
+}
+
+static Value
+float64MinNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_min(array) expects a Float64Array.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* fa = AS_FLOATARRAY(args[0]);
+	if (fa->length == 0) return NIL_VAL;
+	double m = fa->elems[0];
+	for (int i = 1; i < fa->length; i++)
+		if (fa->elems[i] < m) m = fa->elems[i];
+	return NUMBER_VAL(m);
+}
+
+static Value
+float64MaxNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_max(array) expects a Float64Array.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* fa = AS_FLOATARRAY(args[0]);
+	if (fa->length == 0) return NIL_VAL;
+	double m = fa->elems[0];
+	for (int i = 1; i < fa->length; i++)
+		if (fa->elems[i] > m) m = fa->elems[i];
+	return NUMBER_VAL(m);
 }
 
 /* Native function to read a file: readFile(path) -> string */
@@ -960,6 +1143,120 @@ static Value strTrimNative(int argCount, Value* args) {
 		end--;
 
 	return OBJ_VAL(copyString(text->chars + start, end - start));
+}
+
+static Value getFieldNative(int argCount, Value* args) {
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	Value value;
+	if (!tableGet(&AS_INSTANCE(args[0])->fields, AS_STRING(args[1]), &value))
+		return NIL_VAL;
+	return value;
+}
+
+static void csvAppendChar(char** buf, int* len, int* cap, char c) {
+	if (*len + 1 >= *cap) {
+		int ncap = (*cap < 8) ? 64 : (*cap) * 2;
+		char* nbuf = (char*)realloc(*buf, (size_t)ncap);
+		if (nbuf == NULL) return;
+		*buf = nbuf;
+		*cap = ncap;
+	}
+	(*buf)[(*len)++] = c;
+}
+
+static void csvPushTrimmed(ObjArray* row, const char* field, int fieldLen) {
+	int start = 0;
+	int end = fieldLen;
+	while (start < end && isAsciiWhitespace(field[start])) start++;
+	while (end > start && isAsciiWhitespace(field[end - 1])) end--;
+	writeArray(row, OBJ_VAL(copyString(field + start, end - start)));
+}
+
+static Value parseCSVNative(int argCount, Value* args) {
+	if (argCount < 1 || argCount > 2 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	ObjString* text = AS_STRING(args[0]);
+	char sep = ',';
+	if (argCount == 2 && !IS_NIL(args[1])) {
+		if (!IS_STRING(args[1]) || AS_STRING(args[1])->length < 1)
+			return NIL_VAL;
+		sep = AS_STRING(args[1])->chars[0];
+	}
+
+	ObjArray* rows = newArray();
+	push(OBJ_VAL(rows));
+	ObjArray* row = newArray();
+	push(OBJ_VAL(row));
+
+	char* field = (char*)malloc(64);
+	if (field == NULL) {
+		pop();
+		pop();
+		return NIL_VAL;
+	}
+	int fieldLen = 0;
+	int fieldCap = 64;
+	int inQuotes = 0;
+	const char* s = text->chars;
+	int L = text->length;
+	int i = 0;
+
+	while (i < L) {
+		char ch = s[i];
+		if (ch == '\r') {
+			i++;
+			continue;
+		}
+		if (inQuotes) {
+			if (ch == '"') {
+				if (i + 1 < L && s[i + 1] == '"') {
+					csvAppendChar(&field, &fieldLen, &fieldCap, '"');
+					i += 2;
+					continue;
+				}
+				inQuotes = 0;
+				i++;
+				continue;
+			}
+			csvAppendChar(&field, &fieldLen, &fieldCap, ch);
+			i++;
+			continue;
+		}
+		if (ch == '"') {
+			inQuotes = 1;
+			i++;
+			continue;
+		}
+		if (ch == sep) {
+			csvPushTrimmed(row, field, fieldLen);
+			fieldLen = 0;
+			i++;
+			continue;
+		}
+		if (ch == '\n') {
+			csvPushTrimmed(row, field, fieldLen);
+			fieldLen = 0;
+			writeArray(rows, OBJ_VAL(row));
+			pop();
+			row = newArray();
+			push(OBJ_VAL(row));
+			i++;
+			continue;
+		}
+		csvAppendChar(&field, &fieldLen, &fieldCap, ch);
+		i++;
+	}
+
+	if (fieldLen > 0 || row->count > 0) {
+		csvPushTrimmed(row, field, fieldLen);
+		writeArray(rows, OBJ_VAL(row));
+	}
+
+	free(field);
+	pop();
+	return pop();
 }
 
 /* strSplit(text, sep) -> array of strings */
@@ -3971,6 +4268,13 @@ void initVM() {
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
 	defineNative("floor", floorNative);
+	defineNative("abs", absNative);
+	defineNative("ceil", ceilNative);
+	defineNative("sqrt", sqrtNative);
+	defineNative("pow", powNative);
+	defineNative("log", logNative);
+	defineNative("sin", sinNative);
+	defineNative("cos", cosNative);
 	defineNative("help", helpNative);
 	defineNative("exit", exitNative);
 	defineNative("args", argsNative);
@@ -4001,8 +4305,17 @@ void initVM() {
 	defineNative("float64_get", float64GetNative);
 	defineNative("float64_set", float64SetNative);
 	defineNative("float64_dot", float64DotNative);
+	defineNative("float64_fill", float64FillNative);
+	defineNative("float64_copy", float64CopyNative);
+	defineNative("float64_slice", float64SliceNative);
+	defineNative("float64_sum", float64SumNative);
+	defineNative("float64_mean", float64MeanNative);
+	defineNative("float64_min", float64MinNative);
+	defineNative("float64_max", float64MaxNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
+	defineNative("parseCSV", parseCSVNative);
+	defineNative("getField", getFieldNative);
 	defineNative("parseXml", parseXmlNative);
 	defineNative("httpGet", httpGetNative);
 	defineNative("httpPost", httpPostNative);

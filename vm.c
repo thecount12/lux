@@ -20,6 +20,7 @@ Value dictSizeNative(int argCount, Value* args);
 Value dictClearNative(int argCount, Value* args);
 Value dictIterNative(int argCount, Value* args);
 #include <libsec.h>
+#include <math.h>
 
 /* SHA-256 produces 32 bytes */
 #ifndef SHA2_256dlen
@@ -40,6 +41,13 @@ static const NativeDoc kNativeDocs[] = {
 	{"exit", "exit([code])", "Terminate the Lux process with an optional numeric status (default 0)."},
 	{"args", "args()", "Return command-line arguments passed after the script path."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
+	{"abs", "abs(number)", "Return the absolute value of a number."},
+	{"ceil", "ceil(number)", "Return smallest integer greater than or equal to number."},
+	{"sqrt", "sqrt(number)", "Return the square root of a number."},
+	{"pow", "pow(base, exp)", "Return base raised to exp."},
+	{"log", "log(number)", "Return the natural logarithm of a number."},
+	{"sin", "sin(number)", "Return the sine of a number (radians)."},
+	{"cos", "cos(number)", "Return the cosine of a number (radians)."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
 	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
@@ -63,6 +71,8 @@ static const NativeDoc kNativeDocs[] = {
 	{"arrayBinarySearch", "arrayBinarySearch(arr, value)", "Binary-search sorted array."},
 	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
 	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
+	{"parseCSV", "parseCSV(text, [sep])", "Parse quoted CSV text into an array of row arrays."},
+	{"getField", "getField(obj, name)", "Get an instance field by string name, or nil."},
 	{"parseXml", "parseXml(xml)", "Parse XML text into Lux values."},
 	{"httpGet", "httpGet(url)", "Make an HTTP GET request."},
 	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request."},
@@ -122,6 +132,10 @@ callableCategory(const char* name)
 {
 	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0 || strcmp(name, "typeof") == 0 || strcmp(name, "exit") == 0 || strcmp(name, "args") == 0)
 		return "Core";
+	if (strcmp(name, "floor") == 0 || strcmp(name, "abs") == 0 || strcmp(name, "ceil") == 0 ||
+	    strcmp(name, "sqrt") == 0 || strcmp(name, "pow") == 0 || strcmp(name, "log") == 0 ||
+	    strcmp(name, "sin") == 0 || strcmp(name, "cos") == 0)
+		return "Math";
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
@@ -137,7 +151,8 @@ callableCategory(const char* name)
 	    strcmp(name, "arraySort") == 0 || strcmp(name, "arrayBinarySearch") == 0)
 		return "String and Array";
 	if (strcmp(name, "parseJSON") == 0 || strcmp(name, "toJSON") == 0 ||
-	    strcmp(name, "parseXml") == 0)
+	    strcmp(name, "parseXml") == 0 || strcmp(name, "parseCSV") == 0 ||
+	    strcmp(name, "getField") == 0)
 		return "Data Formats";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
@@ -330,6 +345,7 @@ helpNative(int argCount, Value* args)
 	qsort(names, nameCount, sizeof(char*), compareNamePtr);
 	const char* categories[] = {
 		"Core",
+		"Math",
 		"File and Directory",
 		"String and Array",
 		"Data Formats",
@@ -419,6 +435,58 @@ floorNative(int argCount, Value* args)
 			result--;
 	}
 	return NUMBER_VAL((double)result);
+}
+
+static Value
+mathUnaryNative(int argCount, Value* args, double (*fn)(double))
+{
+	if (argCount != 1 || !IS_NUMBER(args[0]))
+		return NIL_VAL;
+	return NUMBER_VAL(fn(AS_NUMBER(args[0])));
+}
+
+static Value
+absNative(int argCount, Value* args)
+{
+	return mathUnaryNative(argCount, args, fabs);
+}
+
+static Value
+ceilNative(int argCount, Value* args)
+{
+	return mathUnaryNative(argCount, args, ceil);
+}
+
+static Value
+sqrtNative(int argCount, Value* args)
+{
+	return mathUnaryNative(argCount, args, sqrt);
+}
+
+static Value
+logNative(int argCount, Value* args)
+{
+	return mathUnaryNative(argCount, args, log);
+}
+
+static Value
+sinNative(int argCount, Value* args)
+{
+	return mathUnaryNative(argCount, args, sin);
+}
+
+static Value
+cosNative(int argCount, Value* args)
+{
+	return mathUnaryNative(argCount, args, cos);
+}
+
+static Value
+powNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_NUMBER(args[0]) || !IS_NUMBER(args[1]))
+		return NIL_VAL;
+	return NUMBER_VAL(pow(AS_NUMBER(args[0]), AS_NUMBER(args[1])));
 }
 
 /* Native function to read a file: readFile(path) -> string */
@@ -993,6 +1061,144 @@ strTrimNative(int argCount, Value* args)
 		end--;
 
 	return OBJ_VAL(copyString(text->chars + start, end - start));
+}
+
+static Value
+getFieldNative(int argCount, Value* args)
+{
+	Value value;
+
+	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]))
+		return NIL_VAL;
+	if (!tableGet(&AS_INSTANCE(args[0])->fields, AS_STRING(args[1]), &value))
+		return NIL_VAL;
+	return value;
+}
+
+static void
+csvAppendChar(char **buf, int *len, int *cap, char c)
+{
+	char *nbuf;
+	int ncap;
+
+	if (*len + 1 >= *cap) {
+		ncap = (*cap < 8) ? 64 : (*cap) * 2;
+		nbuf = realloc(*buf, ncap);
+		if (nbuf == nil)
+			return;
+		*buf = nbuf;
+		*cap = ncap;
+	}
+	(*buf)[(*len)++] = c;
+}
+
+static void
+csvPushTrimmed(ObjArray *row, char *field, int fieldLen)
+{
+	int start, end;
+
+	start = 0;
+	end = fieldLen;
+	while (start < end && isAsciiWhitespace(field[start]))
+		start++;
+	while (end > start && isAsciiWhitespace(field[end - 1]))
+		end--;
+	writeArray(row, OBJ_VAL(copyString(field + start, end - start)));
+}
+
+static Value
+parseCSVNative(int argCount, Value* args)
+{
+	ObjString *text;
+	char sep;
+	ObjArray *rows, *row;
+	char *field, *s;
+	int fieldLen, fieldCap, inQuotes, L, i;
+	char ch;
+
+	if (argCount < 1 || argCount > 2 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	text = AS_STRING(args[0]);
+	sep = ',';
+	if (argCount == 2 && !IS_NIL(args[1])) {
+		if (!IS_STRING(args[1]) || AS_STRING(args[1])->length < 1)
+			return NIL_VAL;
+		sep = AS_STRING(args[1])->chars[0];
+	}
+
+	rows = newArray();
+	push(OBJ_VAL(rows));
+	row = newArray();
+	push(OBJ_VAL(row));
+
+	field = malloc(64);
+	if (field == nil) {
+		pop();
+		pop();
+		return NIL_VAL;
+	}
+	fieldLen = 0;
+	fieldCap = 64;
+	inQuotes = 0;
+	s = text->chars;
+	L = text->length;
+	i = 0;
+
+	while (i < L) {
+		ch = s[i];
+		if (ch == '\r') {
+			i++;
+			continue;
+		}
+		if (inQuotes) {
+			if (ch == '"') {
+				if (i + 1 < L && s[i + 1] == '"') {
+					csvAppendChar(&field, &fieldLen, &fieldCap, '"');
+					i += 2;
+					continue;
+				}
+				inQuotes = 0;
+				i++;
+				continue;
+			}
+			csvAppendChar(&field, &fieldLen, &fieldCap, ch);
+			i++;
+			continue;
+		}
+		if (ch == '"') {
+			inQuotes = 1;
+			i++;
+			continue;
+		}
+		if (ch == sep) {
+			csvPushTrimmed(row, field, fieldLen);
+			fieldLen = 0;
+			i++;
+			continue;
+		}
+		if (ch == '\n') {
+			csvPushTrimmed(row, field, fieldLen);
+			fieldLen = 0;
+			writeArray(rows, OBJ_VAL(row));
+			pop();
+			row = newArray();
+			push(OBJ_VAL(row));
+			i++;
+			continue;
+		}
+		csvAppendChar(&field, &fieldLen, &fieldCap, ch);
+		i++;
+	}
+
+	if (fieldLen > 0 || row->count > 0) {
+		csvPushTrimmed(row, field, fieldLen);
+		writeArray(rows, OBJ_VAL(row));
+	}
+
+	free(field);
+	pop();
+	return pop();
 }
 
 /* strSplit(text, sep) -> array of strings */
@@ -3944,6 +4150,13 @@ initVM(void)
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
 	defineNative("floor", floorNative);
+	defineNative("abs", absNative);
+	defineNative("ceil", ceilNative);
+	defineNative("sqrt", sqrtNative);
+	defineNative("pow", powNative);
+	defineNative("log", logNative);
+	defineNative("sin", sinNative);
+	defineNative("cos", cosNative);
 	defineNative("help", helpNative);
 	defineNative("exit", exitNative);
 	defineNative("args", argsNative);
@@ -3972,6 +4185,8 @@ initVM(void)
 	defineNative("float64_available", float64AvailableNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
+	defineNative("parseCSV", parseCSVNative);
+	defineNative("getField", getFieldNative);
 	defineNative("parseXml", parseXmlNative);
 	defineNative("httpGet", httpGetNative);
 	defineNative("httpPost", httpPostNative);

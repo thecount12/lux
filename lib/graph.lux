@@ -1,0 +1,125 @@
+// Edge-list graph with BFS/DFS and Graphviz DOT export.
+// Native Dict is string-to-string only, so adjacency is scanned from edges.
+
+fun _gAppend(arr, val) {
+    arr[arr.length] = val;
+    return arr;
+}
+
+fun _dotEscape(name) {
+    var s = "" + name;
+    var out = "\"";
+    var i = 0;
+    while (i < len(s)) {
+        var ch = s[i];
+        if (ch == "\""  or ch == "\\") out = out + "\\";
+        out = out + ch;
+        i = i + 1;
+    }
+    return out + "\"";
+}
+
+class Graph {
+    init() {
+        this.directed = false;
+        this.nodes = [];
+        this.edges = [];
+    }
+
+    addNode(name) {
+        if (!arrayContains(this.nodes, name))
+            this.nodes[this.nodes.length] = name;
+        return this;
+    }
+
+    addEdge(a, b) {
+        this.addNode(a);
+        this.addNode(b);
+        var i = 0;
+        while (i < this.edges.length) {
+            var e = this.edges[i];
+            if (e[0] == a  and e[1] == b) return this;
+            if (this.directed == false  and e[0] == b  and e[1] == a) return this;
+            i = i + 1;
+        }
+        this.edges[this.edges.length] = [a, b];
+        return this;
+    }
+
+    neighbors(n) {
+        var out = [];
+        var i = 0;
+        while (i < this.edges.length) {
+            var e = this.edges[i];
+            if (e[0] == n) _gAppend(out, e[1]);
+            else if (this.directed == false  and e[1] == n) _gAppend(out, e[0]);
+            i = i + 1;
+        }
+        return out;
+    }
+
+    bfs(start) {
+        var visited = [];
+        var queue = [];
+        queue[0] = start;
+        var qh = 0;
+        var out = [];
+        while (qh < queue.length) {
+            var node = queue[qh];
+            qh = qh + 1;
+            if (arrayContains(visited, node)) continue;
+            _gAppend(visited, node);
+            _gAppend(out, node);
+            var nbrs = this.neighbors(node);
+            var i = 0;
+            while (i < nbrs.length) {
+                if (!arrayContains(visited, nbrs[i]))
+                    _gAppend(queue, nbrs[i]);
+                i = i + 1;
+            }
+        }
+        return out;
+    }
+
+    dfs(start) {
+        var visited = [];
+        var out = [];
+        this._dfsVisit(start, visited, out);
+        return out;
+    }
+
+    _dfsVisit(node, visited, out) {
+        if (arrayContains(visited, node)) return;
+        _gAppend(visited, node);
+        _gAppend(out, node);
+        var nbrs = this.neighbors(node);
+        var i = 0;
+        while (i < nbrs.length) {
+            this._dfsVisit(nbrs[i], visited, out);
+            i = i + 1;
+        }
+    }
+
+    toDot() {
+        var kind = "graph";
+        var arrow = " -- ";
+        if (this.directed) {
+            kind = "digraph";
+            arrow = " -> ";
+        }
+        var out = kind + " G {\n";
+        var i = 0;
+        while (i < this.nodes.length) {
+            out = out + "  " + _dotEscape(this.nodes[i]) + ";\n";
+            i = i + 1;
+        }
+        i = 0;
+        while (i < this.edges.length) {
+            var e = this.edges[i];
+            out = out + "  " + _dotEscape(e[0]) + arrow + _dotEscape(e[1]) + ";\n";
+            i = i + 1;
+        }
+        out = out + "}\n";
+        return out;
+    }
+}

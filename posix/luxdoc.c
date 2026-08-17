@@ -74,7 +74,9 @@ static char* readFile(const char* path, size_t* out_len) {
 
 static const char* callableCategory(const char* name) {
 	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0 ||
-	    strcmp(name, "floor") == 0 || strcmp(name, "assert") == 0) return "Core";
+	    strcmp(name, "floor") == 0 || strcmp(name, "abs") == 0 || strcmp(name, "ceil") == 0 ||
+	    strcmp(name, "sqrt") == 0 || strcmp(name, "pow") == 0 || strcmp(name, "log") == 0 ||
+	    strcmp(name, "sin") == 0 || strcmp(name, "cos") == 0 || strcmp(name, "assert") == 0) return "Core";
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
@@ -85,7 +87,9 @@ static const char* callableCategory(const char* name) {
 	    strcmp(name, "arrayIndexOf") == 0 || strcmp(name, "arrayContains") == 0 ||
 	    strcmp(name, "arraySort") == 0 || strcmp(name, "arrayBinarySearch") == 0) return "String and Array";
 	if (strcmp(name, "parseJSON") == 0 || strcmp(name, "toJSON") == 0 ||
-	    strcmp(name, "parseXml") == 0) return "Data Formats";
+	    strcmp(name, "parseXml") == 0 || strcmp(name, "parseCSV") == 0 ||
+	    strcmp(name, "getField") == 0) return "Data Formats";
+	if (strncmp(name, "float64_", 8) == 0) return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
 	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0) return "HTTP";

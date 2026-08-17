@@ -23,7 +23,10 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **XML** — basic parsing
 - **Strings/Arrays** — slice, find, split, sort, binary search, array concatenation (`+`)
 - **Dictionaries** — native `Dict` class with `put`/`get`/`has`/`remove`/`size`/`clear` plus `iter()` returning an array of `{key, value}` entries
-- **Float64Array** — typed double buffer, dot product (POSIX)
+- **Float64Array** — typed double buffer, reductions and dot product (POSIX)
+- **DataFrame / CSV** — quoted CSV, groupBy, sortBy, `lib/dataframe.lux`
+- **Graphs** — BFS/DFS and Graphviz DOT export, `lib/graph.lux`
+- **Math** — abs, ceil, floor, sqrt, pow, log, sin, cos
 - **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts)
 - **Templates** — native `renderTemplate` (`{{ }}`, `{% for %}`, `{% include %}`)
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
@@ -589,6 +592,8 @@ print a[1];      // bar
 8.out tests/test_https.lux              # HTTPS client with TLS (Plan 9)
 posix/lux tests/test_http.lux    # HTTP/HTTPS examples (POSIX)
 8.out tests/test_http_server.lux        # HTTP server (both Plan 9 and POSIX)
+8.out examples/dataframe_prototype.lux  # DataFrame / CSV demo
+8.out examples/graph_demo.lux           # Graph + Graphviz DOT
 8.out tests/c29-inherit.lux             # Inheritance examples
 8.out tests/closure.lux                 # Closure examples
 ```
@@ -630,7 +635,7 @@ class Greeter {
 help("Greeter"); // shows class type and known method names
 ```
 
-`help()` groups callables by category (Core, File and Directory, String and Array, Data Formats, HTTP, Crypto, AWS, Database, and User or Other) so long lists are easier to scan.
+`help()` groups callables by category (Core, Math, File and Directory, String and Array, Data Formats, Float64, HTTP, Crypto, AWS, Database, and User or Other) so long lists are easier to scan.
 
 `epoch()` returns Unix timestamp seconds in UTC, which is useful for durable event timestamps.
 
@@ -790,6 +795,20 @@ var start = clock();
 // ... some code ...
 var elapsed = clock() - start;
 print "Elapsed: " + elapsed + " seconds";
+```
+
+### Math
+
+`floor` is the integer floor. The rest wrap `math.h` (IEEE NaN/Inf on domain errors; bad arity or type returns `nil`).
+
+```lux
+print abs(-3);      // 3
+print ceil(1.2);    // 2
+print sqrt(9);      // 3
+print pow(2, 10);   // 1024
+print log(1);       // 0
+print sin(0);       // 0
+print cos(0);       // 1
 ```
 
 ### JSON Operations
@@ -1133,6 +1152,18 @@ var b = float64_new(1000);
 var sum = float64_dot(a, b);
 ```
 
+#### `float64_fill(array, value)` → Float64Array
+Sets every element to `value` and returns the same array.
+
+#### `float64_copy(array)` → Float64Array
+Returns a new Float64Array with the same elements.
+
+#### `float64_slice(array, start, end)` → Float64Array
+Copies `[start, end)` (clamped to bounds), same half-open rule as `strSlice`.
+
+#### `float64_sum(array)` / `float64_mean(array)` / `float64_min(array)` / `float64_max(array)` → number or nil
+Reductions. `mean` / `min` / `max` return `nil` on an empty array; `sum` of empty is `0`.
+
 **Example — moving average:**
 
 ```lux
@@ -1159,6 +1190,45 @@ while (idx + 64 <= 10000) {
 ```
 
 **Tip**: Reuse a single `view` buffer in loops instead of allocating a new one each iteration to avoid GC pressure.
+
+### DataFrame, CSV, and graphs
+
+Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`).
+
+#### CSV and DataFrame (`lib/dataframe.lux`)
+
+Quoted CSV via native `parseCSV(text, [sep])` (Lux `parseCSVQuoted` is the fallback). `DataFrame` is column-oriented.
+
+```lux
+import "../lib/dataframe.lux";
+
+var df = read_csv_text("name,age\nAlice,30\nBob,25\nCarol,27");
+df.toNumber("age");
+print df.sortBy("age").to_csv();
+
+var gb = df.groupBy("name", "age", "mean");
+print gb.to_csv();
+
+var rec = fromRecords([["Ada", 1]], ["name", "id"]);
+// SQL: fromRecords(dbQuery(conn, "SELECT name, id FROM t"), ["name", "id"])
+```
+
+Useful methods: `head`, `select`, `filter` (predicate gets a row object), `mapColumn`, `toNumber`, `sortBy`, `groupBy(key, value, agg)` with `count`/`sum`/`mean`/`min`/`max` (`groupBy(key, nil, nil)` counts), `unique`, `valueCounts`, `describe`, `to_csv` (RFC 4180 quoting), `read_csv_file`. `getField(obj, name)` looks up an instance field by string (for `dbQuery` rows). `parseCSV(text, sep)` accepts an optional separator; `read_csv_text` always uses comma.
+
+#### Graphs (`lib/graph.lux`)
+
+Edge-list `Graph` (set `g.directed = true` for directed). `addNode`, `addEdge`, `neighbors`, `bfs`, `dfs`, `toDot()` for Graphviz.
+
+```lux
+import "../lib/graph.lux";
+
+var g = Graph();
+g.addEdge("alice", "bob");
+g.addEdge("bob", "carol");
+writeFile("friends.dot", g.toDot());
+```
+
+See `examples/dataframe_prototype.lux` and `examples/graph_demo.lux`.
 
 ### HTTP Operations
 

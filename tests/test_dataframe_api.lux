@@ -1,0 +1,65 @@
+// Tests for DataFrame API (groupBy, sort, filter, fromRecords)
+import "../lib/dataframe.lux";
+
+var csv1 = "name,age,score\nAlice,30,85\nBob,25,92\nCarol,27,78";
+var df1 = read_csv_text(csv1);
+
+var h = df1.head(2);
+assert(h.n == 2, "head two rows");
+assert(h.cols[0][0] == "Alice", "head first name");
+
+var sel = df1.select(["name", "score"]);
+assert(sel.names.length == 2, "select two columns");
+assert(sel.names[1] == "score", "select score column");
+
+df1.toNumber("age");
+df1.toNumber("score");
+assert(df1.cols[1][0] == 30, "toNumber age");
+assert(df1.cols[2][1] == 92, "toNumber score");
+
+fun ageOver26(row) {
+    return row.age > 26;
+}
+var older = df1.filter(ageOver26);
+assert(older.n == 2, "filter age > 26");
+assert(older.cols[0][0] == "Alice", "filter keeps Alice");
+assert(older.cols[0][1] == "Carol", "filter keeps Carol");
+
+var sorted = df1.sortBy("age");
+assert(sorted.cols[0][0] == "Bob", "sortBy age first is Bob");
+assert(sorted.cols[1][0] == 25, "sortBy age value");
+assert(sorted.cols[0][2] == "Alice", "sortBy age last is Alice");
+
+var gb = df1.groupBy("name", "score", "sum");
+assert(gb.n == 3, "groupBy one row per name");
+assert(gb.cols[1][0] == 85, "groupBy sum Alice score");
+
+var counted = df1.groupBy("name", nil, nil);
+assert(counted.names[1] == "count", "groupBy count column");
+assert(counted.cols[1][0] == 1, "groupBy count is 1");
+
+var uniq = df1.unique("name");
+assert(uniq.length == 3, "unique names");
+assert(uniq[0] == "Alice", "unique first Alice");
+
+var vc = df1.valueCounts("name");
+assert(vc.n == 3, "valueCounts rows");
+assert(vc.cols[1][0] == 1, "valueCounts count");
+
+var desc = df1.describe();
+assert(desc.n == 3, "describe one row per column");
+assert(desc.cols[0][1] == "age", "describe age column");
+assert(desc.cols[1][1] == 3, "describe age count");
+
+var rec = fromRecords([["Ann", 9], ["Pat", 4]], ["name", "wins"]);
+assert(rec.n == 2, "fromRecords rows");
+assert(rec.names[0] == "name", "fromRecords names");
+assert(rec.cols[1][1] == 4, "fromRecords wins");
+
+var recObj = parseJSON("{\"id\":1,\"name\":\"Ada\"}");
+var rec2 = fromRecords([recObj], ["id", "name"]);
+assert(rec2.n == 1, "fromRecords instance rows");
+assert(rec2.cols[0][0] == 1, "fromRecords instance id");
+assert(rec2.cols[1][0] == "Ada", "fromRecords instance name");
+
+print "test_dataframe_api: all assertions passed";
