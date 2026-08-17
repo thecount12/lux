@@ -164,6 +164,7 @@ blackenObject(Obj* object)
 			break;
 		case OBJ_NATIVE:
 		case OBJ_STRING:
+		case OBJ_FLOATARRAY:
 			break;
 	}
 }
@@ -180,6 +181,13 @@ freeObject(Obj* object)
 			ObjArray* array = (ObjArray*)object;
 			reallocate(array->elements, sizeof(Value) * array->capacity, 0);
 			reallocate(object, sizeof(ObjArray), 0);
+			break;
+		}
+		case OBJ_FLOATARRAY: {
+			ObjFloatArray* fa = (ObjFloatArray*)object;
+			if (fa->elems != nil)
+				reallocate(fa->elems, sizeof(double) * fa->length, 0);
+			reallocate(object, sizeof(ObjFloatArray), 0);
 			break;
 		}
 		case OBJ_BOUND_METHOD:

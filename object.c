@@ -106,6 +106,24 @@ newArray(void)
 	return array;
 }
 
+ObjFloatArray*
+newFloatArray(int length)
+{
+	ObjFloatArray* arr;
+	int i;
+
+	arr = ALLOCATE_OBJ(ObjFloatArray, OBJ_FLOATARRAY);
+	arr->length = length;
+	if (length > 0) {
+		arr->elems = ALLOCATE(double, length);
+		for (i = 0; i < length; i++)
+			arr->elems[i] = 0.0;
+	} else {
+		arr->elems = nil;
+	}
+	return arr;
+}
+
 void
 writeArray(ObjArray* array, Value value)
 {
@@ -248,6 +266,11 @@ void printObject(Value value)
 				}
 			}
 			print("]");
+			break;
+		}
+		case OBJ_FLOATARRAY: {
+			ObjFloatArray* fa = AS_FLOATARRAY(value);
+			print("Float64Array(len=%d)", fa->length);
 			break;
 		}
 		case OBJ_BOUND_METHOD:

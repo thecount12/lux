@@ -23,7 +23,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **XML** — basic parsing
 - **Strings/Arrays** — slice, find, split, sort, binary search, array concatenation (`+`)
 - **Dictionaries** — native `Dict` class with `put`/`get`/`has`/`remove`/`size`/`clear` plus `iter()` returning an array of `{key, value}` entries
-- **Float64Array** — typed double buffer, reductions and dot product (POSIX)
+- **Float64Array** — typed double buffer, reductions and dot product
 - **DataFrame / CSV** — quoted CSV, groupBy, sortBy, `lib/dataframe.lux`
 - **Graphs** — BFS/DFS and Graphviz DOT export, `lib/graph.lux`
 - **Math** — abs, ceil, floor, sqrt, pow, log, sin, cos
@@ -119,7 +119,7 @@ See [BUILD.md](BUILD.md) for comprehensive platform-specific build guides:
 
 **Lux is NOT ideal for:**
 **Lux is NOT ideal for:**
-- Large numerical compute — Lux is not tuned for large-scale number‑crunching; prefer numerical Python/Julia for heavy workloads. For moderate numeric work you can use Float64Array (POSIX), BLAS wrappers, or build the POSIX runtime with optimizations (see `posix/Makefile` and `benchmark.md`).
+- Large numerical compute — Lux is not tuned for large-scale number‑crunching; prefer numerical Python/Julia for heavy workloads. For moderate numeric work you can use Float64Array, BLAS wrappers, or build the POSIX runtime with optimizations (see `posix/Makefile` and `benchmark.md`).
 - GUI development (no graphics APIs)
 - Mobile development (not designed for mobile targets)
 
@@ -1099,15 +1099,15 @@ arraySort(words);
 print arrayBinarySearch(words, "banana"); // 1
 ```
 
-### Float64Array (POSIX)
+### Float64Array
 
-**Platform**: POSIX only (macOS, Linux, OpenBSD). Not available on Plan 9.
+**Platform**: Plan 9 and POSIX (macOS, Linux, OpenBSD).
 
 Float64Array provides a typed double-precision buffer for numerical work. Use it for dot products, moving averages, or when you need faster element access than regular Lux arrays.
 
 #### `float64_available()` → bool
 
-Returns `true` if Float64Array natives are available in this build. Use this to conditionally run Float64Array code (e.g. in benchmarks that should work on both POSIX and Plan 9).
+Returns `true` if Float64Array natives are available in this build. Use this to skip numeric tests on older binaries that lack the natives.
 
 ```lux
 if (float64_available()) {
@@ -1163,6 +1163,20 @@ Copies `[start, end)` (clamped to bounds), same half-open rule as `strSlice`.
 
 #### `float64_sum(array)` / `float64_mean(array)` / `float64_min(array)` / `float64_max(array)` → number or nil
 Reductions. `mean` / `min` / `max` return `nil` on an empty array; `sum` of empty is `0`.
+
+#### `float64_add(a, b)` / `float64_mul(a, b)` → Float64Array
+Elementwise sum or product. Same length required. Returns a **new** array; `a` and `b` are unchanged.
+
+#### `float64_axpy(a, x, y)` → Float64Array
+BLAS-style `y[i] += a * x[i]` in place. Same length required. Returns `y`.
+
+```lux
+var x = float64_new(3);
+var y = float64_new(3);
+float64_fill(x, 2);
+float64_fill(y, 1);
+float64_axpy(0.5, x, y);  // y is now [2, 2, 2]
+```
 
 **Example — moving average:**
 
