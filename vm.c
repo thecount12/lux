@@ -3537,6 +3537,29 @@ createAwsSignature(char* method, char* host, char* uri, char* queryString,
 	free(canonicalHeaders);
 }
 
+/* AWS SigV4 URI-encode.
+ * Query string values must encode '/' as %2F. URI paths keep '/'. */
+static int
+awsUriEncode(char *dst, int dstSz, char *src, int encodeSlash)
+{
+	int i, j;
+
+	j = 0;
+	for(i = 0; src[i] && j < dstSz-4; i++){
+		char c = src[i];
+		if((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+		   (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' ||
+		   (c == '/' && !encodeSlash))
+			dst[j++] = c;
+		else{
+			snprint(dst+j, 4, "%%%02X", (uchar)c);
+			j += 3;
+		}
+	}
+	dst[j] = 0;
+	return j;
+}
+
 /* s3ListObjects(bucket, accessKey, secretKey, region, [prefix], [sessionToken]) -> JSON string or nil */
 static Value
 s3ListObjectsNative(int argCount, Value* args)
@@ -3571,19 +3594,8 @@ s3ListObjectsNative(int argCount, Value* args)
 	char queryString[512];
 	if (prefix && prefix[0]) {
 		char encodedPrefix[256];
-		/* Simple URL encoding for prefix */
-		int j = 0;
-		for (int i = 0; prefix[i] && j < sizeof(encodedPrefix)-4; i++) {
-			char c = prefix[i];
-			if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || 
-			    (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
-				encodedPrefix[j++] = c;
-			} else {
-				snprint(encodedPrefix+j, 4, "%%%02X", (unsigned char)c);
-				j += 3;
-			}
-		}
-		encodedPrefix[j] = '\0';
+		/* Query values: '/' must be %2F or AWS's canonical request will not match. */
+		awsUriEncode(encodedPrefix, sizeof(encodedPrefix), prefix, 1);
 		snprint(queryString, sizeof(queryString), "list-type=2&prefix=%s", encodedPrefix);
 	} else {
 		snprint(queryString, sizeof(queryString), "list-type=2");
