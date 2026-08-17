@@ -49,7 +49,7 @@ fun listS3Objects(bucketName, prefix) {
     var uri = "/";
     var queryString = "list-type=2";
     if (prefix != nil and prefix != "") {
-        queryString = queryString + "&prefix=" + prefix;
+        queryString = queryString + "&prefix=" + awsFormEncode(prefix);
     }
 
     var headers = signedHeaders("GET", host, uri, queryString, "");

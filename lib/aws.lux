@@ -289,7 +289,7 @@ class S3Client {
         var host = this.getHost(bucket);
         var queryString = "list-type=2";
         if (prefix) {
-            queryString = queryString + "&prefix=" + prefix;
+            queryString = queryString + "&prefix=" + awsFormEncode(prefix);
         }
         var headers = this.request.sign("GET", host, "/", queryString, "");
         var url = "https://" + host + "/?" + queryString;
@@ -300,10 +300,10 @@ class S3Client {
         var host = this.getHost(bucket);
         var queryString = "list-type=2";
         if (prefix) {
-            queryString = queryString + "&prefix=" + prefix;
+            queryString = queryString + "&prefix=" + awsFormEncode(prefix);
         }
         if (continuationToken != nil and continuationToken != "") {
-            queryString = queryString + "&continuation-token=" + continuationToken;
+            queryString = queryString + "&continuation-token=" + awsFormEncode(continuationToken);
         }
         if (maxKeys != nil) {
             queryString = queryString + "&max-keys=" + maxKeys;

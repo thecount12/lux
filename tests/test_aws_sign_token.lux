@@ -1,0 +1,50 @@
+// Long STS session tokens must participate in SigV4 (no 512-byte truncation).
+print "=== AWS sign long session token ===";
+
+fun repeatChar(ch, n) {
+    var s = ch;
+    while (len(s) < n) {
+        s = s + s;
+    }
+    return strSlice(s, 0, n);
+}
+
+var ts = getAwsTimestamp();
+var tokA = repeatChar("A", 1996);
+var tokB = repeatChar("A", 1995) + "B";
+assert(len(tokA) == 1996, "token A length");
+assert(len(tokB) == 1996, "token B length");
+
+var sigA = awsSignRequest(
+    "GET",
+    "example-bucket.s3.us-west-2.amazonaws.com",
+    "/",
+    "list-type=2&prefix=Container_IPs%2F",
+    sha256(""),
+    "ASIAEXAMPLE",
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "us-west-2",
+    "s3",
+    ts.amzDate,
+    ts.dateStamp,
+    tokA
+);
+var sigB = awsSignRequest(
+    "GET",
+    "example-bucket.s3.us-west-2.amazonaws.com",
+    "/",
+    "list-type=2&prefix=Container_IPs%2F",
+    sha256(""),
+    "ASIAEXAMPLE",
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "us-west-2",
+    "s3",
+    ts.amzDate,
+    ts.dateStamp,
+    tokB
+);
+
+assert(sigA != nil and sigB != nil, "signatures produced");
+assert(sigA != sigB, "tokens differing after 512 bytes must change the signature");
+
+print "Long STS token signing ok";

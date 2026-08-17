@@ -2270,11 +2270,16 @@ static Value httpRequestNative(int argCount, Value* args) {
 					for (char* p = convertedName; *p; p++) {
 						if (*p == '_') *p = '-';
 					}
-					
-					char headerLine[1024];
-					snprintf(headerLine, sizeof(headerLine), "%s: %s",
-						convertedName, AS_CSTRING(headerValue));
+
+					const char* headerVal = AS_CSTRING(headerValue);
+					size_t lineCap = strlen(convertedName) + 2 + strlen(headerVal) + 1;
+					char* headerLine = malloc(lineCap);
+					if (headerLine == NULL)
+						continue;
+					snprintf(headerLine, lineCap, "%s: %s",
+						convertedName, headerVal);
 					headers = curl_slist_append(headers, headerLine);
+					free(headerLine);
 				}
 			}
 		}
@@ -2559,61 +2564,73 @@ static void getAwsSigningKey(char* secretKey, char* dateStamp, char* region, cha
 	hmacSha256(kService, SHA256_DIGEST_LENGTH, (unsigned char*)"aws4_request", 12, signingKey);
 }
 
-/* Create AWS Signature V4 */
+/* Create AWS Signature V4.
+ * STS session tokens are often ~2KB; keep canonical buffers on the heap. */
 static void createAwsSignature(char* method, char* host, char* uri, char* queryString,
 		char* payloadHash, char* accessKey, char* secretKey, char* region,
 		char* service, char* amzDate, char* dateStamp, char* sessionToken,
 		char* authHeader, int authHeaderLen) {
-	/* Canonical request */
-	char canonicalHeaders[1024];
-	snprintf(canonicalHeaders, sizeof(canonicalHeaders),
+	size_t tokLen = (sessionToken && sessionToken[0]) ? strlen(sessionToken) : 0;
+	size_t hdrCap = 64 + strlen(host) + strlen(amzDate) + tokLen + 32;
+	char* canonicalHeaders = malloc(hdrCap);
+	if (canonicalHeaders == NULL) {
+		authHeader[0] = '\0';
+		return;
+	}
+
+	int n = snprintf(canonicalHeaders, hdrCap,
 		"host:%s\nx-amz-date:%s\n", host, amzDate);
-	
 	char signedHeaders[256];
-	if (sessionToken && sessionToken[0]) {
-		char tokHeader[512];
-		snprintf(tokHeader, sizeof(tokHeader), "x-amz-security-token:%s\n", sessionToken);
-		strncat(canonicalHeaders, tokHeader, sizeof(canonicalHeaders) - strlen(canonicalHeaders) - 1);
-		snprintf(signedHeaders, sizeof(signedHeaders), "host;x-amz-date;x-amz-security-token");
+	if (sessionToken && sessionToken[0] && n >= 0 && (size_t)n < hdrCap) {
+		snprintf(canonicalHeaders + n, hdrCap - (size_t)n,
+			"x-amz-security-token:%s\n", sessionToken);
+		snprintf(signedHeaders, sizeof(signedHeaders),
+			"host;x-amz-date;x-amz-security-token");
 	} else {
 		snprintf(signedHeaders, sizeof(signedHeaders), "host;x-amz-date");
 	}
-	
-	char canonicalRequest[4096];
-	snprintf(canonicalRequest, sizeof(canonicalRequest),
+
+	size_t reqCap = strlen(method) + strlen(uri) + strlen(queryString) +
+		strlen(canonicalHeaders) + strlen(signedHeaders) + strlen(payloadHash) + 16;
+	char* canonicalRequest = malloc(reqCap);
+	if (canonicalRequest == NULL) {
+		free(canonicalHeaders);
+		authHeader[0] = '\0';
+		return;
+	}
+	snprintf(canonicalRequest, reqCap,
 		"%s\n%s\n%s\n%s\n%s\n%s",
 		method, uri, queryString, canonicalHeaders, signedHeaders, payloadHash);
-	
-	/* Hash canonical request */
+
 	unsigned char canonicalHash[SHA256_DIGEST_LENGTH];
 	sha256Hash((unsigned char*)canonicalRequest, strlen(canonicalRequest), canonicalHash);
 	char canonicalHashHex[SHA256_DIGEST_LENGTH*2+1];
 	hexEncode(canonicalHash, SHA256_DIGEST_LENGTH, canonicalHashHex);
-	
-	/* String to sign */
+
 	char credentialScope[256];
 	snprintf(credentialScope, sizeof(credentialScope),
 		"%s/%s/%s/aws4_request", dateStamp, region, service);
-	
-	char stringToSign[4096];
+
+	char stringToSign[512];
 	snprintf(stringToSign, sizeof(stringToSign),
 		"AWS4-HMAC-SHA256\n%s\n%s\n%s",
 		amzDate, credentialScope, canonicalHashHex);
-	
-	/* Calculate signature */
+
 	unsigned char signingKey[SHA256_DIGEST_LENGTH];
 	getAwsSigningKey(secretKey, dateStamp, region, service, signingKey);
-	
+
 	unsigned char signature[SHA256_DIGEST_LENGTH];
 	hmacSha256(signingKey, SHA256_DIGEST_LENGTH, (unsigned char*)stringToSign, strlen(stringToSign), signature);
-	
+
 	char signatureHex[SHA256_DIGEST_LENGTH*2+1];
 	hexEncode(signature, SHA256_DIGEST_LENGTH, signatureHex);
-	
-	/* Create authorization header */
+
 	snprintf(authHeader, authHeaderLen,
 		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
 		accessKey, credentialScope, signedHeaders, signatureHex);
+
+	free(canonicalRequest);
+	free(canonicalHeaders);
 }
 
 /* Helper for S3 HTTPS requests using libcurl */
@@ -2724,9 +2741,13 @@ static Value s3ListObjectsNative(int argCount, Value* args) {
 	headers = curl_slist_append(headers, shaHdr);
 	
 	if (sessionToken && sessionToken[0]) {
-		char tokenHdr[1024];
-		snprintf(tokenHdr, sizeof(tokenHdr), "x-amz-security-token: %s", sessionToken);
-		headers = curl_slist_append(headers, tokenHdr);
+		size_t tokenCap = strlen("x-amz-security-token: ") + strlen(sessionToken) + 1;
+		char* tokenHdr = malloc(tokenCap);
+		if (tokenHdr != NULL) {
+			snprintf(tokenHdr, tokenCap, "x-amz-security-token: %s", sessionToken);
+			headers = curl_slist_append(headers, tokenHdr);
+			free(tokenHdr);
+		}
 	}
 	
 	curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -2829,9 +2850,13 @@ static Value s3GetObjectNative(int argCount, Value* args) {
 	headers = curl_slist_append(headers, shaHdr);
 	
 	if (sessionToken && sessionToken[0]) {
-		char tokenHdr[1024];
-		snprintf(tokenHdr, sizeof(tokenHdr), "x-amz-security-token: %s", sessionToken);
-		headers = curl_slist_append(headers, tokenHdr);
+		size_t tokenCap = strlen("x-amz-security-token: ") + strlen(sessionToken) + 1;
+		char* tokenHdr = malloc(tokenCap);
+		if (tokenHdr != NULL) {
+			snprintf(tokenHdr, tokenCap, "x-amz-security-token: %s", sessionToken);
+			headers = curl_slist_append(headers, tokenHdr);
+			free(tokenHdr);
+		}
 	}
 	
 	curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -2936,9 +2961,13 @@ static Value s3PutObjectNative(int argCount, Value* args) {
 	headers = curl_slist_append(headers, shaHdr);
 	
 	if (sessionToken && sessionToken[0]) {
-		char tokenHdr[1024];
-		snprintf(tokenHdr, sizeof(tokenHdr), "x-amz-security-token: %s", sessionToken);
-		headers = curl_slist_append(headers, tokenHdr);
+		size_t tokenCap = strlen("x-amz-security-token: ") + strlen(sessionToken) + 1;
+		char* tokenHdr = malloc(tokenCap);
+		if (tokenHdr != NULL) {
+			snprintf(tokenHdr, tokenCap, "x-amz-security-token: %s", sessionToken);
+			headers = curl_slist_append(headers, tokenHdr);
+			free(tokenHdr);
+		}
 	}
 	
 	curl_easy_setopt(curl, CURLOPT_URL, url);
