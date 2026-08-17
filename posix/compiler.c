@@ -83,6 +83,9 @@ typedef struct Compiler {
 	int localCount;
 	Upvalue upvalues[UINT8_COUNT];
 	int scopeDepth;
+	int loopDepth;
+	int loopStart;
+	int loopScopeDepth;
 } Compiler;
 
 typedef struct ClassCompiler {
@@ -98,7 +101,6 @@ ClassCompiler* currentClass = NULL;
 #define MAX_BREAK_JUMPS 256
 static int breakJumps[MAX_BREAK_JUMPS];
 static int breakJumpCount = 0;
-static int loopDepth = 0;
 
 static Chunk* currentChunk() {
 	return &current->function->chunk;
@@ -251,6 +253,9 @@ static void initCompiler(Compiler* compiler, FunctionType type) {
 	compiler->type = type;
 	compiler->localCount = 0;
 	compiler->scopeDepth = 0;
+	compiler->loopDepth = 0;
+	compiler->loopStart = 0;
+	compiler->loopScopeDepth = 0;
 	compiler->function = newFunction();
 	current = compiler;
 	if (type != TYPE_SCRIPT) {
@@ -475,11 +480,26 @@ static void returnStatement() {
 	if (lintOpts && lintOpts->lint) lintReachable = false;
 }
 
+static void discardLoopLocals() {
+	for (int i = current->localCount - 1;
+	     i >= 0 && current->locals[i].depth > current->loopScopeDepth;
+	     i--) {
+		if (current->locals[i].isCaptured)
+			emitByte(OP_CLOSE_UPVALUE);
+		else
+			emitByte(OP_POP);
+	}
+}
+
 static void whileStatement() {
 	int savedBreakCount = breakJumpCount;
-	loopDepth++;
+	int savedLoopStart = current->loopStart;
+	int savedLoopScope = current->loopScopeDepth;
+	current->loopDepth++;
 	
 	int loopStart = currentChunk()->count;
+	current->loopStart = loopStart;
+	current->loopScopeDepth = current->scopeDepth;
 	consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
 	expression();
 	consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
@@ -503,24 +523,20 @@ static void whileStatement() {
 	while (breakJumpCount > savedBreakCount) {
 		patchJump(breakJumps[--breakJumpCount]);
 	}
-	
-	loopDepth--;
+
+	current->loopStart = savedLoopStart;
+	current->loopScopeDepth = savedLoopScope;
+	current->loopDepth--;
 }
 
 static void breakStatement() {
-	if (loopDepth == 0) {
+	if (current->loopDepth == 0) {
 		error("Cannot use 'break' outside of a loop.");
 		return;
 	}
 	
 	consume(TOKEN_SEMICOLON, "Expect ';' after 'break'.");
-	
-	/* Discard any locals created inside the loop */
-	for (int i = current->localCount - 1; 
-	     i >= 0 && current->locals[i].depth > current->scopeDepth; 
-	     i--) {
-		emitByte(OP_POP);
-	}
+	discardLoopLocals();
 	
 	if (breakJumpCount >= MAX_BREAK_JUMPS) {
 		error("Too many break statements in one loop.");
@@ -528,6 +544,19 @@ static void breakStatement() {
 	}
 	
 	breakJumps[breakJumpCount++] = emitJump(OP_JUMP);
+	if (lintOpts && lintOpts->lint) lintReachable = false;
+}
+
+static void continueStatement() {
+	if (current->loopDepth == 0) {
+		error("Cannot use 'continue' outside of a loop.");
+		return;
+	}
+
+	consume(TOKEN_SEMICOLON, "Expect ';' after 'continue'.");
+	discardLoopLocals();
+	emitLoop(current->loopStart);
+	if (lintOpts && lintOpts->lint) lintReachable = false;
 }
 
 static void synchronize() {
@@ -542,6 +571,8 @@ static void synchronize() {
 			case TOKEN_FOR:
 			case TOKEN_IF:
 			case TOKEN_WHILE:
+			case TOKEN_BREAK:
+			case TOKEN_CONTINUE:
 			case TOKEN_PRINT:
 			case TOKEN_RETURN:
 				return;
@@ -728,6 +759,7 @@ ParseRule rules[] = {
 	[TOKEN_AND] 			= {NULL, and_, PREC_AND},
 	[TOKEN_BREAK] 			= {NULL, NULL, PREC_NONE},
 	[TOKEN_CLASS] 			= {NULL, NULL, PREC_TERM},
+	[TOKEN_CONTINUE]		= {NULL, NULL, PREC_NONE},
 	[TOKEN_ELSE] 			= {NULL, NULL, PREC_NONE},
 	[TOKEN_FALSE] 			= {literal, NULL, PREC_NONE},
 	[TOKEN_FOR] 			= {NULL, NULL, PREC_NONE},
@@ -1075,7 +1107,9 @@ static void expressionStatement() {
 
 static void forStatement() {
 	int savedBreakCount = breakJumpCount;
-	loopDepth++;
+	int savedLoopStart = current->loopStart;
+	int savedLoopScope = current->loopScopeDepth;
+	current->loopDepth++;
 	
 	beginScope();
 	consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
@@ -1110,6 +1144,9 @@ static void forStatement() {
 		patchJump(bodyJump);
 	}
 
+	current->loopStart = loopStart;
+	current->loopScopeDepth = current->scopeDepth;
+
 	/* If linting enabled, warn when the for body is not a braced block. */
 	if (lintOpts && lintOpts->lint) {
 		if (parser.current.type != TOKEN_LEFT_BRACE) {
@@ -1130,7 +1167,9 @@ static void forStatement() {
 	}
 
 	endScope();
-	loopDepth--;
+	current->loopStart = savedLoopStart;
+	current->loopScopeDepth = savedLoopScope;
+	current->loopDepth--;
 }
 
 static void ifStatement() {
@@ -1196,6 +1235,8 @@ static void statement() {
 		returnStatement();
 	} else if (match(TOKEN_BREAK)) {
 		breakStatement();
+	} else if (match(TOKEN_CONTINUE)) {
+		continueStatement();
 	} else if (match(TOKEN_WHILE)) {
 		whileStatement();
 	} else if (match(TOKEN_LEFT_BRACE)) {

@@ -1,0 +1,51 @@
+// continue skips to the next while/for iteration (for-loops still run the increment)
+print "=== Continue Statement Test ===";
+
+var sum = 0;
+var i = 0;
+while (i < 5) {
+    i = i + 1;
+    if (i == 3) {
+        continue;
+    }
+    sum = sum + i;
+}
+assert(sum == 12, "while continue skips 3");
+
+var n = 0;
+var hits = 0;
+for (var j = 0; j < 5; j = j + 1) {
+    n = n + 1;
+    if (j % 2 == 0) {
+        continue;
+    }
+    hits = hits + 1;
+}
+assert(n == 5, "for continue still runs increment");
+assert(hits == 2, "for continue skips evens");
+
+var inner = 0;
+var outer = 0;
+for (var a = 0; a < 3; a = a + 1) {
+    outer = outer + 1;
+    for (var b = 0; b < 3; b = b + 1) {
+        if (b == 1) {
+            continue;
+        }
+        inner = inner + 1;
+    }
+}
+assert(outer == 3, "nested continue does not skip outer");
+assert(inner == 6, "nested continue skips inner b==1");
+
+var kept = 0;
+for (var k = 0; k < 4; k = k + 1) {
+    var x = k + 10;
+    if (k == 2) {
+        continue;
+    }
+    kept = kept + x;
+}
+assert(kept == 34, "continue pops loop-body locals");
+
+print "=== Continue Statement Test Complete ===";
