@@ -58,6 +58,8 @@ static const NativeDoc kNativeDocs[] = {
 	{"createDir", "createDir(path)", "Create a directory."},
 	{"listDir", "listDir(path)", "List directory entries as a newline-separated string."},
 	{"run", "run(cmd)", "Run a shell command and return stdout as string, or nil on failure."},
+	{"netLookup", "netLookup(host)", "Resolve a hostname to its first IP address string, or nil."},
+	{"netPing", "netPing(host, port)", "TCP-connect probe; return round-trip milliseconds, or -1 on failure."},
 	{"len", "len(value)", "Return length for strings and arrays."},
 	{"strFind", "strFind(haystack, needle)", "Return index of substring or -1."},
 	{"strSlice", "strSlice(s, start, end)", "Return substring from start to end."},
@@ -143,6 +145,8 @@ callableCategory(const char* name)
 	    strcmp(name, "markdownToHtml") == 0 ||
 	    strcmp(name, "renderMarkdown") == 0)
 		return "File and Directory";
+	if (strcmp(name, "netLookup") == 0 || strcmp(name, "netPing") == 0)
+		return "Network";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
@@ -349,6 +353,7 @@ helpNative(int argCount, Value* args)
 		"String and Array",
 		"Data Formats",
 		"HTTP",
+		"Network",
 		"Crypto",
 		"AWS",
 		"Database",
@@ -944,6 +949,76 @@ runNative(int argCount, Value* args)
 	result = OBJ_VAL(copyString(buf, total));
 	free(buf);
 	return result;
+}
+
+/* netLookup(host) -> first resolved IP as a string, or nil.
+ * Queries the connection server (/net/cs), which performs DNS. */
+static Value
+netLookupNative(int argCount, Value* args)
+{
+	int fd, n;
+	char query[300];
+	char buf[256];
+	char *addr, *bang;
+
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	fd = open("/net/cs", ORDWR);
+	if (fd < 0)
+		return NIL_VAL;
+
+	snprint(query, sizeof(query), "tcp!%s!1", AS_CSTRING(args[0]));
+	if (write(fd, query, strlen(query)) < 0) {
+		close(fd);
+		return NIL_VAL;
+	}
+
+	seek(fd, 0, 0);
+	n = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (n <= 0)
+		return NIL_VAL;
+	buf[n] = '\0';
+
+	/* Reply line: "/net/tcp/clone 1.2.3.4!1" — take the address after the space. */
+	addr = strchr(buf, ' ');
+	if (addr == nil)
+		return NIL_VAL;
+	addr++;
+	bang = strchr(addr, '!');
+	if (bang != nil)
+		*bang = '\0';
+
+	return OBJ_VAL(copyString(addr, strlen(addr)));
+}
+
+/* netPing(host, port) -> round-trip milliseconds, or -1 on failure.
+ * TCP-connect probe via dial(); timing includes name resolution. */
+static Value
+netPingNative(int argCount, Value* args)
+{
+	int fd, port;
+	char dialAddr[300];
+	vlong start, end;
+
+	if (argCount != 2 || !IS_STRING(args[0]) || !IS_NUMBER(args[1]))
+		return NUMBER_VAL(-1);
+
+	port = (int)AS_NUMBER(args[1]);
+	if (port <= 0 || port > 65535)
+		return NUMBER_VAL(-1);
+
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%d", AS_CSTRING(args[0]), port);
+
+	start = nsec();
+	fd = dial(dialAddr, nil, nil, nil);
+	if (fd < 0)
+		return NUMBER_VAL(-1);
+	end = nsec();
+	close(fd);
+
+	return NUMBER_VAL((double)(end - start) / 1000000.0);
 }
 
 static bool
@@ -4213,6 +4288,8 @@ initVM(void)
 	defineNative("createDir", createDirNative);
 	defineNative("listDir", listDirNative);
 	defineNative("run", runNative);
+	defineNative("netLookup", netLookupNative);
+	defineNative("netPing", netPingNative);
 	defineNative("len", lenNative);
 	defineNative("typeof", typeofNative);
 	defineNative("strFind", strFindNative);
