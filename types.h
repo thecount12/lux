@@ -24,6 +24,7 @@ typedef struct VM VM;
 typedef struct Obj Obj;
 typedef struct ObjString ObjString;
 typedef struct ObjArray ObjArray;
+typedef struct ObjFloatArray ObjFloatArray;
 typedef struct ObjUpvalue ObjUpvalue;
 typedef struct ObjClosure ObjClosure;
 typedef struct ObjBoundMethod ObjBoundMethod;
@@ -217,6 +218,7 @@ struct VM {
 /* Object types */
 typedef enum {
 	OBJ_ARRAY,
+	OBJ_FLOATARRAY,
 	OBJ_BOUND_METHOD,
 	OBJ_CLASS,
 	OBJ_CLOSURE,
@@ -262,6 +264,12 @@ struct ObjArray {
 	int count;
 	int capacity;
 	Value* elements;
+};
+
+struct ObjFloatArray {
+	Obj obj;
+	int length;
+	double* elems;
 };
 
 struct ObjUpvalue {

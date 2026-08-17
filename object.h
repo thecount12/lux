@@ -7,6 +7,7 @@
 
 #define OBJ_TYPE(value)     (AS_OBJ(value)->type)
 #define IS_ARRAY(value)    isObjType(value, OBJ_ARRAY)
+#define IS_FLOATARRAY(value) isObjType(value, OBJ_FLOATARRAY)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_INSTANCE(value) isObjType(value, OBJ_INSTANCE)
 #define IS_NATIVE(value)	isObjType(value, OBJ_NATIVE)
@@ -18,6 +19,7 @@
 #define AS_NATIVE(value) \
 	(((struct ObjNative*)AS_OBJ(value))->function)
 #define AS_ARRAY(value)     ((ObjArray*)AS_OBJ(value))
+#define AS_FLOATARRAY(value) ((ObjFloatArray*)AS_OBJ(value))
 #define AS_CSTRING(value)	(((ObjString*)AS_OBJ(value))->chars)
 
 // Fix macro typo: change ObjTypeFunction to ObjFunction
@@ -35,6 +37,7 @@ ObjInstance* newInstance(ObjClass* klass);
 ObjClosure* newClosure(ObjFunction* function);
 ObjNative* newNative(NativeFn function);
 ObjArray* newArray(void);
+ObjFloatArray* newFloatArray(int length);
 void writeArray(ObjArray* array, Value value);
 ObjString* takeString(char* chars, int length);
 ObjString* copyString(const char* chars, int length);

@@ -10,6 +10,7 @@ OFILES=lux.$O\
 	scanner.$O\
 	compiler.$O\
 	object.$O\
+	float64.$O\
 	table.$O\
 	dict.$O\
 	dict_native.$O\
@@ -25,6 +26,7 @@ HFILES=chunk.h\
 	scanner.h\
 	compiler.h\
 	object.h\
+	float64.h\
 	table.h\
 	dict.h\
 	template_render.h\

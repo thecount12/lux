@@ -8,6 +8,7 @@
 #include "compiler.h"
 #include "debug.h"
 #include "table.h"
+#include "float64.h"
 #include "template_render.h"
 #include "markdown.h"
 /* Forward declarations for dict natives (avoid pulling types.h into vm.c) */
@@ -68,6 +69,21 @@ static const NativeDoc kNativeDocs[] = {
 	{"arrayContains", "arrayContains(arr, value)", "Return whether array contains value."},
 	{"arraySort", "arraySort(arr)", "Sort an array in place."},
 	{"arrayBinarySearch", "arrayBinarySearch(arr, value)", "Binary-search sorted array."},
+	{"float64_available", "float64_available()", "Return whether Float64Array natives are present."},
+	{"float64_new", "float64_new(length)", "Create a Float64Array of the given length."},
+	{"float64_get", "float64_get(array, index)", "Get a Float64Array element."},
+	{"float64_set", "float64_set(array, index, value)", "Set a Float64Array element."},
+	{"float64_dot", "float64_dot(a, b)", "Dot product of two Float64Arrays."},
+	{"float64_fill", "float64_fill(array, value)", "Fill a Float64Array with a value."},
+	{"float64_copy", "float64_copy(array)", "Copy a Float64Array."},
+	{"float64_slice", "float64_slice(array, start, end)", "Copy a half-open slice of a Float64Array."},
+	{"float64_sum", "float64_sum(array)", "Sum of Float64Array elements."},
+	{"float64_mean", "float64_mean(array)", "Mean of Float64Array elements."},
+	{"float64_min", "float64_min(array)", "Minimum Float64Array element."},
+	{"float64_max", "float64_max(array)", "Maximum Float64Array element."},
+	{"float64_add", "float64_add(a, b)", "Elementwise sum; returns a new Float64Array."},
+	{"float64_mul", "float64_mul(a, b)", "Elementwise product; returns a new Float64Array."},
+	{"float64_axpy", "float64_axpy(a, x, y)", "y[i] += a * x[i] in place; returns y."},
 	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
 	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
 	{"parseCSV", "parseCSV(text, [sep])", "Parse quoted CSV text into an array of row arrays."},
@@ -153,6 +169,8 @@ callableCategory(const char* name)
 	    strcmp(name, "parseXml") == 0 || strcmp(name, "parseCSV") == 0 ||
 	    strcmp(name, "getField") == 0)
 		return "Data Formats";
+	if (strncmp(name, "float64_", 8) == 0)
+		return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
 	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0)
@@ -195,6 +213,8 @@ typeofNative(int argCount, Value* args)
 		return typeLiteral("string");
 	if (IS_ARRAY(value))
 		return typeLiteral("array");
+	if (IS_FLOATARRAY(value))
+		return typeLiteral("float64array");
 	if (IS_CLASS(value))
 		return typeLiteral("class");
 	if (IS_CLOSURE(value))
@@ -348,6 +368,7 @@ helpNative(int argCount, Value* args)
 		"File and Directory",
 		"String and Array",
 		"Data Formats",
+		"Float64",
 		"HTTP",
 		"Crypto",
 		"AWS",
@@ -976,6 +997,8 @@ lenNative(int argCount, Value* args)
 		return NUMBER_VAL(AS_STRING(args[0])->length);
 	if (IS_ARRAY(args[0]))
 		return NUMBER_VAL((double)AS_ARRAY(args[0])->count);
+	if (IS_FLOATARRAY(args[0]))
+		return NUMBER_VAL((double)AS_FLOATARRAY(args[0])->length);
 	return NIL_VAL;
 }
 
@@ -1414,15 +1437,6 @@ arrayBinarySearchNative(int argCount, Value* args)
 	}
 
 	return NUMBER_VAL(-1);
-}
-
-/* Plan 9: float64_available() returns false - Float64Array not supported */
-static Value
-float64AvailableNative(int argCount, Value* args)
-{
-	USED(argCount);
-	USED(args);
-	return BOOL_VAL(0);
 }
 
 /* JSON parsing helpers */
@@ -4224,7 +4238,7 @@ initVM(void)
 	defineNative("arrayContains", arrayContainsNative);
 	defineNative("arraySort", arraySortNative);
 	defineNative("arrayBinarySearch", arrayBinarySearchNative);
-	defineNative("float64_available", float64AvailableNative);
+	registerFloat64Natives(defineNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
 	defineNative("parseCSV", parseCSVNative);
@@ -4690,6 +4704,18 @@ run(void)
 					break;
 				} else {
 					runtimeError("Arrays only have 'length' property.");
+					return INTERPRET_RUNTIME_ERROR;
+				}
+			}
+
+			if (IS_FLOATARRAY(peek(0))) {
+				ObjFloatArray* fa = AS_FLOATARRAY(peek(0));
+				if (strcmp(name->chars, "length") == 0) {
+					pop();
+					push(NUMBER_VAL((double)fa->length));
+					break;
+				} else {
+					runtimeError("Float64Arrays only have 'length' property.");
 					return INTERPRET_RUNTIME_ERROR;
 				}
 			}

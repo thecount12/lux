@@ -35,6 +35,6 @@ if (float64_available()) {
     // Print sums for correctness
     print "SUMS=" + nativeSum + "," + s;
 } else {
-    print "Float64Array not available (POSIX only). Skipping.";
+    print "Float64Array not available. Skipping.";
 }
 

@@ -111,6 +111,9 @@ static const NativeDoc kNativeDocs[] = {
 	{"float64_mean", "float64_mean(array)", "Mean of Float64Array elements."},
 	{"float64_min", "float64_min(array)", "Minimum Float64Array element."},
 	{"float64_max", "float64_max(array)", "Maximum Float64Array element."},
+	{"float64_add", "float64_add(a, b)", "Elementwise sum; returns a new Float64Array."},
+	{"float64_mul", "float64_mul(a, b)", "Elementwise product; returns a new Float64Array."},
+	{"float64_axpy", "float64_axpy(a, x, y)", "y[i] += a * x[i] in place; returns y."},
 	{"help", "help() or help(name)", "List available callables or show details for one name."},
 };
 
@@ -722,6 +725,79 @@ float64MaxNative(int argCount, Value* args)
 	for (int i = 1; i < fa->length; i++)
 		if (fa->elems[i] > m) m = fa->elems[i];
 	return NUMBER_VAL(m);
+}
+
+static Value
+float64AddNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) ||
+	    !IS_OBJ(args[1]) || !IS_FLOATARRAY(args[1])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_add(a, b) expects two Float64Array arguments.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* a = AS_FLOATARRAY(args[0]);
+	ObjFloatArray* b = AS_FLOATARRAY(args[1]);
+	if (a->length != b->length) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_add: arrays must have same length.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* dst = newFloatArray(a->length);
+	for (int i = 0; i < a->length; i++)
+		dst->elems[i] = a->elems[i] + b->elems[i];
+	return OBJ_VAL(dst);
+}
+
+static Value
+float64MulNative(int argCount, Value* args)
+{
+	if (argCount != 2 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) ||
+	    !IS_OBJ(args[1]) || !IS_FLOATARRAY(args[1])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_mul(a, b) expects two Float64Array arguments.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* a = AS_FLOATARRAY(args[0]);
+	ObjFloatArray* b = AS_FLOATARRAY(args[1]);
+	if (a->length != b->length) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_mul: arrays must have same length.");
+		return NIL_VAL;
+	}
+	ObjFloatArray* dst = newFloatArray(a->length);
+	for (int i = 0; i < a->length; i++)
+		dst->elems[i] = a->elems[i] * b->elems[i];
+	return OBJ_VAL(dst);
+}
+
+static Value
+float64AxpyNative(int argCount, Value* args)
+{
+	if (argCount != 3 || !IS_NUMBER(args[0]) ||
+	    !IS_OBJ(args[1]) || !IS_FLOATARRAY(args[1]) ||
+	    !IS_OBJ(args[2]) || !IS_FLOATARRAY(args[2])) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_axpy(a, x, y) expects (number, Float64Array, Float64Array).");
+		return NIL_VAL;
+	}
+	double alpha = AS_NUMBER(args[0]);
+	ObjFloatArray* x = AS_FLOATARRAY(args[1]);
+	ObjFloatArray* y = AS_FLOATARRAY(args[2]);
+	if (x->length != y->length) {
+		vm.nativePanic = true;
+		snprintf(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_axpy: arrays must have same length.");
+		return NIL_VAL;
+	}
+	for (int i = 0; i < y->length; i++)
+		y->elems[i] += alpha * x->elems[i];
+	return args[2];
 }
 
 /* Native function to read a file: readFile(path) -> string */
@@ -4312,6 +4388,9 @@ void initVM() {
 	defineNative("float64_mean", float64MeanNative);
 	defineNative("float64_min", float64MinNative);
 	defineNative("float64_max", float64MaxNative);
+	defineNative("float64_add", float64AddNative);
+	defineNative("float64_mul", float64MulNative);
+	defineNative("float64_axpy", float64AxpyNative);
 	defineNative("parseJSON", parseJSONNative);
 	defineNative("toJSON", toJSONNative);
 	defineNative("parseCSV", parseCSVNative);

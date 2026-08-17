@@ -1,7 +1,7 @@
 // Moving average example (simple copying-based implementation)
 // Float64Array is POSIX-only; on Plan 9, prints a message and skips
 if (!float64_available()) {
-    print "Float64Array not available (POSIX only). Skipping.";
+    print "Float64Array not available. Skipping.";
 } else {
 var N = 10000;   // total samples
 var W = 64;      // window size

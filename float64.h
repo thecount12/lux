@@ -6,6 +6,6 @@
 /* Register Float64Array natives with the VM.
  * Pass the VM's defineNative function.
  */
-void registerFloat64Natives(void (*defineNative)(const char*, Value (*)(int, Value*)));
+void registerFloat64Natives(void (*defineNative)(const char*, NativeFn));
 
 #endif

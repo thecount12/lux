@@ -10,12 +10,13 @@
 #include "vm.h"
 #include "memory.h"
 #include "table.h"
+#include "float64.h"
 
 static Value
 float64AvailableNative(int argCount, Value* args)
 {
-	(void)argCount;
-	(void)args;
+	USED(argCount);
+	USED(args);
 	Value dummy;
 	ObjString* key = copyString("float64_new", 11);
 	int ok = tableGet(&vm.globals, key, &dummy);
@@ -251,8 +252,96 @@ float64MaxNative(int argCount, Value* args)
 	return NUMBER_VAL(m);
 }
 
+static Value
+float64AddNative(int argCount, Value* args)
+{
+	ObjFloatArray* a;
+	ObjFloatArray* b;
+	ObjFloatArray* dst;
+	int i;
+
+	if (argCount != 2 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) ||
+	    !IS_OBJ(args[1]) || !IS_FLOATARRAY(args[1])) {
+		vm.nativePanic = 1;
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_add(a, b) expects two Float64Array arguments.");
+		return NIL_VAL;
+	}
+	a = AS_FLOATARRAY(args[0]);
+	b = AS_FLOATARRAY(args[1]);
+	if (a->length != b->length) {
+		vm.nativePanic = 1;
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_add: arrays must have same length.");
+		return NIL_VAL;
+	}
+	dst = newFloatArray(a->length);
+	for (i = 0; i < a->length; i++)
+		dst->elems[i] = a->elems[i] + b->elems[i];
+	return OBJ_VAL(dst);
+}
+
+static Value
+float64MulNative(int argCount, Value* args)
+{
+	ObjFloatArray* a;
+	ObjFloatArray* b;
+	ObjFloatArray* dst;
+	int i;
+
+	if (argCount != 2 || !IS_OBJ(args[0]) || !IS_FLOATARRAY(args[0]) ||
+	    !IS_OBJ(args[1]) || !IS_FLOATARRAY(args[1])) {
+		vm.nativePanic = 1;
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_mul(a, b) expects two Float64Array arguments.");
+		return NIL_VAL;
+	}
+	a = AS_FLOATARRAY(args[0]);
+	b = AS_FLOATARRAY(args[1]);
+	if (a->length != b->length) {
+		vm.nativePanic = 1;
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_mul: arrays must have same length.");
+		return NIL_VAL;
+	}
+	dst = newFloatArray(a->length);
+	for (i = 0; i < a->length; i++)
+		dst->elems[i] = a->elems[i] * b->elems[i];
+	return OBJ_VAL(dst);
+}
+
+static Value
+float64AxpyNative(int argCount, Value* args)
+{
+	ObjFloatArray* x;
+	ObjFloatArray* y;
+	double alpha;
+	int i;
+
+	if (argCount != 3 || !IS_NUMBER(args[0]) ||
+	    !IS_OBJ(args[1]) || !IS_FLOATARRAY(args[1]) ||
+	    !IS_OBJ(args[2]) || !IS_FLOATARRAY(args[2])) {
+		vm.nativePanic = 1;
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_axpy(a, x, y) expects (number, Float64Array, Float64Array).");
+		return NIL_VAL;
+	}
+	alpha = AS_NUMBER(args[0]);
+	x = AS_FLOATARRAY(args[1]);
+	y = AS_FLOATARRAY(args[2]);
+	if (x->length != y->length) {
+		vm.nativePanic = 1;
+		snprint(vm.nativePanicMsg, sizeof(vm.nativePanicMsg),
+		        "float64_axpy: arrays must have same length.");
+		return NIL_VAL;
+	}
+	for (i = 0; i < y->length; i++)
+		y->elems[i] += alpha * x->elems[i];
+	return args[2];
+}
+
 void
-registerFloat64Natives(void (*defineNative)(const char*, Value (*)(int, Value*)))
+registerFloat64Natives(void (*defineNative)(const char*, NativeFn))
 {
 	defineNative("float64_available", float64AvailableNative);
 	defineNative("float64_new", float64NewNative);
@@ -266,4 +355,7 @@ registerFloat64Natives(void (*defineNative)(const char*, Value (*)(int, Value*))
 	defineNative("float64_mean", float64MeanNative);
 	defineNative("float64_min", float64MinNative);
 	defineNative("float64_max", float64MaxNative);
+	defineNative("float64_add", float64AddNative);
+	defineNative("float64_mul", float64MulNative);
+	defineNative("float64_axpy", float64AxpyNative);
 }
