@@ -20,7 +20,6 @@ Value dictSizeNative(int argCount, Value* args);
 Value dictClearNative(int argCount, Value* args);
 Value dictIterNative(int argCount, Value* args);
 #include <libsec.h>
-#include <math.h>
 
 /* SHA-256 produces 32 bytes */
 #ifndef SHA2_256dlen
@@ -437,6 +436,33 @@ floorNative(int argCount, Value* args)
 	return NUMBER_VAL((double)result);
 }
 
+/* Quiet NaN / -Inf bit patterns. Plan 9 libc traps on sqrt(-1), log(x<=0),
+ * instead of returning IEEE values, so natives must not call those. */
+static Value
+bitsNumber(uvlong u)
+{
+	double d;
+
+	memcpy(&d, &u, sizeof d);
+	return NUMBER_VAL(d);
+}
+
+static Value
+nanNumber(void)
+{
+	return bitsNumber((uvlong)0x7ff8000000000000);
+}
+
+static int
+doubleIsNaN(double d)
+{
+	uvlong u;
+
+	memcpy(&u, &d, sizeof u);
+	return (u & (uvlong)0x7ff0000000000000) == (uvlong)0x7ff0000000000000
+		&& (u & (uvlong)0x000fffffffffffff) != 0;
+}
+
 static Value
 mathUnaryNative(int argCount, Value* args, double (*fn)(double))
 {
@@ -460,13 +486,29 @@ ceilNative(int argCount, Value* args)
 static Value
 sqrtNative(int argCount, Value* args)
 {
-	return mathUnaryNative(argCount, args, sqrt);
+	double x;
+
+	if (argCount != 1 || !IS_NUMBER(args[0]))
+		return NIL_VAL;
+	x = AS_NUMBER(args[0]);
+	if (doubleIsNaN(x) || x < 0)
+		return nanNumber();
+	return NUMBER_VAL(sqrt(x));
 }
 
 static Value
 logNative(int argCount, Value* args)
 {
-	return mathUnaryNative(argCount, args, log);
+	double x;
+
+	if (argCount != 1 || !IS_NUMBER(args[0]))
+		return NIL_VAL;
+	x = AS_NUMBER(args[0]);
+	if (doubleIsNaN(x) || x < 0)
+		return nanNumber();
+	if (x == 0)
+		return bitsNumber((uvlong)0xfff0000000000000);	/* -Inf */
+	return NUMBER_VAL(log(x));
 }
 
 static Value
