@@ -1,0 +1,450 @@
+// Reusable AWS SigV4 helpers. Import has no side effects.
+// Paths are relative to the process CWD:
+//   import "../lib/aws.lux";
+
+class AwsHeaders {
+    init() {}
+}
+
+class Dict {
+    init() {}
+}
+
+fun attrS(value) {
+    var attr = Dict();
+    attr.S = value;
+    return attr;
+}
+
+fun attrN(value) {
+    var attr = Dict();
+    attr.N = value;
+    return attr;
+}
+
+fun makeKey(idValue) {
+    var key = Dict();
+    key.id = attrS(idValue);
+    return key;
+}
+
+fun makeUserItem(idValue, nameValue, ageValue) {
+    var item = Dict();
+    item.id = attrS(idValue);
+    item.name = attrS(nameValue);
+    item.age = attrN(ageValue);
+    return item;
+}
+
+class AwsConfig {
+    init(accessKey, secretKey, region, sessionToken) {
+        this.accessKey = accessKey;
+        this.secretKey = secretKey;
+        this.region = region;
+        this.sessionToken = sessionToken;
+        this.bucket = nil;
+    }
+}
+
+class AwsRequest {
+    init(config, service) {
+        this.config = config;
+        this.service = service;
+    }
+
+    sign(method, host, uri, queryString, payload) {
+        var timestamp = getAwsTimestamp();
+        var amzDate = timestamp.amzDate;
+        var dateStamp = timestamp.dateStamp;
+        var payloadHash = sha256(payload);
+        var authHeader = awsSignRequest(
+            method,
+            host,
+            uri,
+            queryString,
+            payloadHash,
+            this.config.accessKey,
+            this.config.secretKey,
+            this.config.region,
+            this.service,
+            amzDate,
+            dateStamp,
+            this.config.sessionToken
+        );
+
+        var headers = AwsHeaders();
+        headers.Authorization = authHeader;
+        headers.x_amz_date = amzDate;
+        headers.x_amz_content_sha256 = payloadHash;
+        if (this.config.sessionToken != nil and this.config.sessionToken != "") {
+            headers.x_amz_security_token = this.config.sessionToken;
+        }
+        return headers;
+    }
+}
+
+fun _awsStripQuotes(value) {
+    if (value == nil or len(value) < 2) {
+        return value;
+    }
+    var first = value[0];
+    var last = value[len(value) - 1];
+    if ((first == "\"" and last == "\"") or (first == "'" and last == "'")) {
+        return strSlice(value, 1, len(value) - 1);
+    }
+    return value;
+}
+
+fun _awsFindEnvFile(path) {
+    if (path != nil and path != "") {
+        if (fileExists(path)) {
+            return path;
+        }
+        return nil;
+    }
+    if (fileExists(".env")) {
+        return ".env";
+    }
+    if (fileExists("../.env")) {
+        return "../.env";
+    }
+    if (fileExists("../examples/.env")) {
+        return "../examples/.env";
+    }
+    return nil;
+}
+
+// Load STS / shared-credentials / dotenv keys.
+// Accepts aws_access_key_id, AWS_ACCESS_KEY_ID, region, bucket, session token.
+fun loadAwsCredentials(path) {
+    var file = _awsFindEnvFile(path);
+    if (file == nil) {
+        return nil;
+    }
+    var text = readFile(file);
+    if (text == nil) {
+        return nil;
+    }
+
+    var accessKey = nil;
+    var secretKey = nil;
+    var sessionToken = nil;
+    var region = "us-east-1";
+    var bucket = nil;
+
+    var lines = strSplit(text, "\n");
+    var i = 0;
+    while (i < lines.length) {
+        var line = strTrim(lines[i]);
+        i = i + 1;
+        if (line == "") {
+            continue;
+        }
+        if (strStartsWithAt(line, "#", 0)) {
+            continue;
+        }
+        if (strStartsWithAt(line, "[", 0)) {
+            continue;
+        }
+        var eq = strFind(line, "=");
+        if (eq < 0) {
+            continue;
+        }
+        var key = strTrim(strSlice(line, 0, eq));
+        var value = _awsStripQuotes(strTrim(strSlice(line, eq + 1, len(line))));
+        if (key == "aws_access_key_id" or key == "AWS_ACCESS_KEY_ID") {
+            accessKey = value;
+        } else if (key == "aws_secret_access_key" or key == "AWS_SECRET_ACCESS_KEY") {
+            secretKey = value;
+        } else if (key == "aws_session_token" or key == "AWS_SESSION_TOKEN") {
+            sessionToken = value;
+        } else if (key == "region" or key == "aws_region" or key == "AWS_REGION") {
+            region = value;
+        } else if (key == "bucket" or key == "AWS_BUCKET") {
+            bucket = value;
+        }
+    }
+
+    if (accessKey == nil or secretKey == nil or accessKey == "" or secretKey == "") {
+        return nil;
+    }
+    if (sessionToken == "") {
+        sessionToken = nil;
+    }
+    var cfg = AwsConfig(accessKey, secretKey, region, sessionToken);
+    cfg.bucket = bucket;
+    return cfg;
+}
+
+fun _awsPad2(n) {
+    var v = floor(n);
+    if (v < 10) {
+        return "0" + v;
+    }
+    return "" + v;
+}
+
+fun _awsIsLeapYear(year) {
+    if (year % 400 == 0) {
+        return true;
+    }
+    if (year % 100 == 0) {
+        return false;
+    }
+    if (year % 4 == 0) {
+        return true;
+    }
+    return false;
+}
+
+fun _awsDaysInMonth(month, year) {
+    if (month == 1 or month == 3 or month == 5 or month == 7 or
+        month == 8 or month == 10 or month == 12) {
+        return 31;
+    }
+    if (month == 4 or month == 6 or month == 9 or month == 11) {
+        return 30;
+    }
+    if (month == 2) {
+        if (_awsIsLeapYear(year)) {
+            return 29;
+        }
+        return 28;
+    }
+    return 0;
+}
+
+// Unix seconds -> 2016-10-03T23:00:00Z (CloudWatch query protocol).
+fun awsIsoUtc(epochSeconds) {
+    var seconds = floor(epochSeconds) % 60;
+    var minutes = floor(epochSeconds / 60) % 60;
+    var hours = floor(epochSeconds / 3600) % 24;
+    var days = floor(epochSeconds / 86400);
+    var year = 1970;
+    var daysRemaining = days;
+    var daysInYear = 365;
+    if (_awsIsLeapYear(year)) {
+        daysInYear = 366;
+    }
+    while (daysRemaining >= daysInYear) {
+        daysRemaining = daysRemaining - daysInYear;
+        year = year + 1;
+        daysInYear = 365;
+        if (_awsIsLeapYear(year)) {
+            daysInYear = 366;
+        }
+    }
+    var month = 1;
+    var dim = _awsDaysInMonth(month, year);
+    while (daysRemaining >= dim and month <= 12) {
+        daysRemaining = daysRemaining - dim;
+        month = month + 1;
+        if (month <= 12) {
+            dim = _awsDaysInMonth(month, year);
+        }
+    }
+    var day = daysRemaining + 1;
+    return "" + year + "-" + _awsPad2(month) + "-" + _awsPad2(day) + "T" +
+        _awsPad2(hours) + ":" + _awsPad2(minutes) + ":" + _awsPad2(seconds) + "Z";
+}
+
+fun awsFormEncode(s) {
+    if (s == nil) {
+        return "";
+    }
+    var text = "" + s;
+    var out = "";
+    var i = 0;
+    while (i < len(text)) {
+        var ch = text[i];
+        if (ch == " ") {
+            out = out + "%20";
+        } else if (ch == "/") {
+            out = out + "%2F";
+        } else if (ch == "&") {
+            out = out + "%26";
+        } else if (ch == "=") {
+            out = out + "%3D";
+        } else if (ch == "+") {
+            out = out + "%2B";
+        } else {
+            out = out + ch;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+class S3Client {
+    init(config) {
+        this.config = config;
+        this.request = AwsRequest(config, "s3");
+    }
+
+    getHost(bucket) {
+        return bucket + ".s3." + this.config.region + ".amazonaws.com";
+    }
+
+    listObjects(bucket, prefix) {
+        var host = this.getHost(bucket);
+        var queryString = "list-type=2";
+        if (prefix) {
+            queryString = queryString + "&prefix=" + prefix;
+        }
+        var headers = this.request.sign("GET", host, "/", queryString, "");
+        var url = "https://" + host + "/?" + queryString;
+        return httpRequest("GET", url, nil, headers);
+    }
+
+    listObjectsPage(bucket, prefix, continuationToken, maxKeys) {
+        var host = this.getHost(bucket);
+        var queryString = "list-type=2";
+        if (prefix) {
+            queryString = queryString + "&prefix=" + prefix;
+        }
+        if (continuationToken != nil and continuationToken != "") {
+            queryString = queryString + "&continuation-token=" + continuationToken;
+        }
+        if (maxKeys != nil) {
+            queryString = queryString + "&max-keys=" + maxKeys;
+        }
+        var headers = this.request.sign("GET", host, "/", queryString, "");
+        var url = "https://" + host + "/?" + queryString;
+        return httpRequest("GET", url, nil, headers);
+    }
+
+    listAllObjects(bucket, prefix, maxPages, maxKeys) {
+        var keys = [];
+        var token = nil;
+        var page = 0;
+        var limit = 100;
+        if (maxPages != nil) {
+            limit = maxPages;
+        }
+        while (page < limit) {
+            var xml = this.listObjectsPage(bucket, prefix, token, maxKeys);
+            if (xml == nil) {
+                return keys;
+            }
+            var pageKeys = parseXml(xml, "Key");
+            if (pageKeys != nil and pageKeys.length > 0) {
+                keys = keys + pageKeys;
+            }
+            var truncated = parseXml(xml, "IsTruncated");
+            if (truncated == nil or truncated.length == 0 or truncated[0] != "true") {
+                return keys;
+            }
+            var nextToken = parseXml(xml, "NextContinuationToken");
+            if (nextToken == nil or nextToken.length == 0) {
+                return keys;
+            }
+            token = nextToken[0];
+            page = page + 1;
+        }
+        return keys;
+    }
+
+    getObject(bucket, key) {
+        var host = this.getHost(bucket);
+        var uri = "/" + key;
+        var headers = this.request.sign("GET", host, uri, "", "");
+        var url = "https://" + host + uri;
+        return httpRequest("GET", url, nil, headers);
+    }
+
+    putObject(bucket, key, content) {
+        var host = this.getHost(bucket);
+        var uri = "/" + key;
+        var headers = this.request.sign("PUT", host, uri, "", content);
+        var url = "https://" + host + uri;
+        return httpRequest("PUT", url, content, headers);
+    }
+}
+
+class DynamoDBClient {
+    init(config) {
+        this.config = config;
+        this.request = AwsRequest(config, "dynamodb");
+        this.host = "dynamodb." + config.region + ".amazonaws.com";
+    }
+
+    call(target, payload) {
+        var payloadJson = toJSON(payload);
+        var headers = this.request.sign("POST", this.host, "/", "", payloadJson);
+        headers.X_Amz_Target = target;
+        headers.Content_Type = "application/x-amz-json-1.0";
+        var url = "https://" + this.host + "/";
+        return httpRequest("POST", url, payloadJson, headers);
+    }
+
+    getItem(tableName, key) {
+        var payload = Dict();
+        payload.TableName = tableName;
+        payload.Key = key;
+        return this.call("DynamoDB_20120810.GetItem", payload);
+    }
+
+    putItem(tableName, item) {
+        var payload = Dict();
+        payload.TableName = tableName;
+        payload.Item = item;
+        return this.call("DynamoDB_20120810.PutItem", payload);
+    }
+}
+
+fun awsDim(name, value) {
+    var d = Dict();
+    d.Name = name;
+    d.Value = value;
+    return d;
+}
+
+// CloudWatch uses query protocol (form body + XML), not JSON.
+class CloudWatchClient {
+    init(config) {
+        this.config = config;
+        this.request = AwsRequest(config, "monitoring");
+        this.host = "monitoring." + config.region + ".amazonaws.com";
+    }
+
+    call(formBody) {
+        var headers = this.request.sign("POST", this.host, "/", "", formBody);
+        headers.Content_Type = "application/x-www-form-urlencoded; charset=utf-8";
+        var url = "https://" + this.host + "/";
+        return httpRequest("POST", url, formBody, headers);
+    }
+
+    getMetricStatistics(namespace, metricName, dimensions, period, stat, startTime, endTime) {
+        var body = "Action=GetMetricStatistics&Version=2010-08-01";
+        body = body + "&Namespace=" + awsFormEncode(namespace);
+        body = body + "&MetricName=" + awsFormEncode(metricName);
+        body = body + "&StartTime=" + awsFormEncode(startTime);
+        body = body + "&EndTime=" + awsFormEncode(endTime);
+        body = body + "&Period=" + period;
+        body = body + "&Statistics.member.1=" + awsFormEncode(stat);
+        if (dimensions != nil) {
+            var i = 0;
+            while (i < dimensions.length) {
+                var n = i + 1;
+                body = body + "&Dimensions.member." + n + ".Name=" + awsFormEncode(dimensions[i].Name);
+                body = body + "&Dimensions.member." + n + ".Value=" + awsFormEncode(dimensions[i].Value);
+                i = i + 1;
+            }
+        }
+        return this.call(body);
+    }
+
+    lastDatapoint(xml, stat) {
+        if (xml == nil) {
+            return nil;
+        }
+        if (strFind(xml, "<Error>") >= 0 or strFind(xml, "<ErrorResponse>") >= 0) {
+            return nil;
+        }
+        var values = parseXml(xml, stat);
+        if (values == nil or values.length == 0) {
+            return 0;
+        }
+        return values[values.length - 1];
+    }
+}

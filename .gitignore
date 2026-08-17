@@ -37,6 +37,12 @@ posix/luxlint
 .DS_Store
 Thumbs.db
 
+# AWS credentials (STS / shared-credentials dumps)
+.env
+**/.env
+aws_config.json
+**/aws_config.json
+
 # Logs
 *.log
 

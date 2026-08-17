@@ -1,0 +1,39 @@
+// Parser / timestamp helpers from lib/aws.lux (no live AWS calls).
+import "../lib/aws.lux";
+
+print "=== AWS env loader test ===";
+
+var sample = "[960491734164_AccountAdmin]\n" +
+    "aws_access_key_id=ASIA123\n" +
+    "aws_secret_access_key=secret-value\n" +
+    "aws_session_token=session-value\n" +
+    "region=us-west-2\n" +
+    "bucket=my-bucket\n";
+writeFile("_aws_env_test.txt", sample);
+
+var cfg = loadAwsCredentials("_aws_env_test.txt");
+assert(cfg != nil, "credentials loaded");
+assert(cfg.accessKey == "ASIA123", "access key");
+assert(cfg.secretKey == "secret-value", "secret");
+assert(cfg.sessionToken == "session-value", "session token");
+assert(cfg.region == "us-west-2", "region");
+assert(cfg.bucket == "my-bucket", "bucket");
+
+var quoted = "AWS_ACCESS_KEY_ID=\"AKIATEST\"\nAWS_SECRET_ACCESS_KEY='shh'\n";
+writeFile("_aws_env_test.txt", quoted);
+var cfg2 = loadAwsCredentials("_aws_env_test.txt");
+assert(cfg2 != nil, "uppercase keys loaded");
+assert(cfg2.accessKey == "AKIATEST", "quoted access key");
+assert(cfg2.secretKey == "shh", "quoted secret");
+assert(cfg2.sessionToken == nil, "no token");
+
+var iso = awsIsoUtc(0);
+assert(iso == "1970-01-01T00:00:00Z", "epoch 0 iso");
+var iso2 = awsIsoUtc(86461);
+assert(iso2 == "1970-01-02T00:01:01Z", "day+1m+1s iso");
+
+var encoded = awsFormEncode("AWS/Lambda");
+assert(encoded == "AWS%2FLambda", "slash encoded");
+
+deleteFile("_aws_env_test.txt");
+print "All AWS env tests passed";

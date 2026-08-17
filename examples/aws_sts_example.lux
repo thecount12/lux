@@ -15,13 +15,16 @@ var tempSecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYTEMPORARYKEY";
 var sessionToken = "FwoGZXIvYXdzEBYaDH...very-long-session-token...==";
 var region = "us-east-1";
 
+// Native helper returns {amzDate, dateStamp} — do not hardcode or shadow it.
+var timestamp = getAwsTimestamp();
+var amzDate = timestamp.amzDate;
+var dateStamp = timestamp.dateStamp;
+
 // ===== Example 1: S3 with STS Credentials =====
 print "1. S3 ListObjects with STS Credentials:";
 
 var bucket = "my-secure-bucket";
 var host = bucket + ".s3." + region + ".amazonaws.com";
-var amzDate = "20240307T120000Z";
-var dateStamp = "20240307";
 
 var payloadHash = sha256("");
 
@@ -51,10 +54,17 @@ print "   (Session token is included in signature)";
 print "\n2. DynamoDB with STS Credentials:";
 
 var dynamoHost = "dynamodb." + region + ".amazonaws.com";
-var payload = toJSON({
-    "TableName": "SecureTable",
-    "Key": {"id": {"S": "sensitive-data-123"}}
-});
+class Dict {
+    init() {}
+}
+var dynamoPayload = Dict();
+dynamoPayload.TableName = "SecureTable";
+var dynamoKey = Dict();
+var dynamoId = Dict();
+dynamoId.S = "sensitive-data-123";
+dynamoKey.id = dynamoId;
+dynamoPayload.Key = dynamoKey;
+var payload = toJSON(dynamoPayload);
 var dynamoPayloadHash = sha256(payload);
 
 var dynamoAuth = awsSignRequest(
