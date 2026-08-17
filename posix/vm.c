@@ -2253,6 +2253,7 @@ static Value httpRequestNative(int argCount, Value* args) {
 	curl_easy_setopt(curl, CURLOPT_USERAGENT, "lux/1.0");
 	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+	curl_easy_setopt(curl, CURLOPT_PATH_AS_IS, 1L);
 	
 	/* Build custom headers if provided */
 	struct curl_slist* headers = NULL;
@@ -2571,23 +2572,26 @@ static void createAwsSignature(char* method, char* host, char* uri, char* queryS
 		char* service, char* amzDate, char* dateStamp, char* sessionToken,
 		char* authHeader, int authHeaderLen) {
 	size_t tokLen = (sessionToken && sessionToken[0]) ? strlen(sessionToken) : 0;
-	size_t hdrCap = 64 + strlen(host) + strlen(amzDate) + tokLen + 32;
+	size_t hdrCap = 128 + strlen(host) + strlen(amzDate) + strlen(payloadHash) + tokLen + 32;
 	char* canonicalHeaders = malloc(hdrCap);
 	if (canonicalHeaders == NULL) {
 		authHeader[0] = '\0';
 		return;
 	}
 
+	/* Header names must be sorted: host, x-amz-content-sha256, x-amz-date, [x-amz-security-token] */
 	int n = snprintf(canonicalHeaders, hdrCap,
-		"host:%s\nx-amz-date:%s\n", host, amzDate);
+		"host:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n",
+		host, payloadHash, amzDate);
 	char signedHeaders[256];
 	if (sessionToken && sessionToken[0] && n >= 0 && (size_t)n < hdrCap) {
 		snprintf(canonicalHeaders + n, hdrCap - (size_t)n,
 			"x-amz-security-token:%s\n", sessionToken);
 		snprintf(signedHeaders, sizeof(signedHeaders),
-			"host;x-amz-date;x-amz-security-token");
+			"host;x-amz-content-sha256;x-amz-date;x-amz-security-token");
 	} else {
-		snprintf(signedHeaders, sizeof(signedHeaders), "host;x-amz-date");
+		snprintf(signedHeaders, sizeof(signedHeaders),
+			"host;x-amz-content-sha256;x-amz-date");
 	}
 
 	size_t reqCap = strlen(method) + strlen(uri) + strlen(queryString) +
@@ -2752,6 +2756,7 @@ static Value s3ListObjectsNative(int argCount, Value* args) {
 	
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_PATH_AS_IS, 1L);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&chunk);
 	
@@ -2861,6 +2866,7 @@ static Value s3GetObjectNative(int argCount, Value* args) {
 	
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_PATH_AS_IS, 1L);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&chunk);
 	
@@ -2972,6 +2978,7 @@ static Value s3PutObjectNative(int argCount, Value* args) {
 	
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	curl_easy_setopt(curl, CURLOPT_PATH_AS_IS, 1L);
 	curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
 	curl_easy_setopt(curl, CURLOPT_READDATA, NULL);
 	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, content);

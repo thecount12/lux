@@ -46,5 +46,6 @@ var sigB = awsSignRequest(
 
 assert(sigA != nil and sigB != nil, "signatures produced");
 assert(sigA != sigB, "tokens differing after 512 bytes must change the signature");
+assert(strFind(sigA, "x-amz-content-sha256") >= 0, "S3 signed headers include payload hash");
 
 print "Long STS token signing ok";

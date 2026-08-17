@@ -3484,22 +3484,25 @@ createAwsSignature(char* method, char* host, char* uri, char* queryString,
 
 	if(sessionToken && sessionToken[0])
 		tokLen = strlen(sessionToken);
-	hdrCap = 64 + strlen(host) + strlen(amzDate) + tokLen + 32;
+	hdrCap = 128 + strlen(host) + strlen(amzDate) + strlen(payloadHash) + tokLen + 32;
 	canonicalHeaders = malloc(hdrCap);
 	if(canonicalHeaders == nil){
 		authHeader[0] = 0;
 		return;
 	}
 
+	/* Header names must be sorted: host, x-amz-content-sha256, x-amz-date, [x-amz-security-token] */
 	n = snprint(canonicalHeaders, hdrCap,
-		"host:%s\nx-amz-date:%s\n", host, amzDate);
+		"host:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n",
+		host, payloadHash, amzDate);
 	if(sessionToken && sessionToken[0] && n >= 0 && n < hdrCap){
 		snprint(canonicalHeaders + n, hdrCap - n,
 			"x-amz-security-token:%s\n", sessionToken);
 		snprint(signedHeaders, sizeof(signedHeaders),
-			"host;x-amz-date;x-amz-security-token");
+			"host;x-amz-content-sha256;x-amz-date;x-amz-security-token");
 	}else
-		snprint(signedHeaders, sizeof(signedHeaders), "host;x-amz-date");
+		snprint(signedHeaders, sizeof(signedHeaders),
+			"host;x-amz-content-sha256;x-amz-date");
 
 	reqCap = strlen(method) + strlen(uri) + strlen(queryString) +
 		strlen(canonicalHeaders) + strlen(signedHeaders) + strlen(payloadHash) + 16;

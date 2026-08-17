@@ -30,7 +30,9 @@ if (accessKey == nil or secretKey == nil) {
     print "Missing sessionToken. Temporary ASIA keys need aws_session_token in .env.";
 } else {
     print "Listing s3://" + bucketName + "/" + prefix + "  region=" + awsRegion;
+    print "Using rebuilt posix/lux (SigV4 signs full STS token + x-amz-content-sha256).";
     print "accessKey " + strSlice(accessKey, 0, 8) + "...  tokenLen=" + len(sessionToken);
+    print "secretLen=" + len(secretKey);
 
     var list = s3ListObjects(bucketName, accessKey, secretKey, awsRegion, prefix, sessionToken);
     if (list == nil) {
