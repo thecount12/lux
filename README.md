@@ -320,6 +320,13 @@ while (x > 0) {
 for (var i = 0; i < 10; i = i + 1) {
     print i;
 }
+
+// break / continue
+for (var i = 0; i < 10; i = i + 1) {
+    if (i == 2) continue;  // skip this iteration
+    if (i == 5) break;     // leave the loop
+    print i;
+}
 ```
 
 ### Logical operators and ternary
@@ -328,7 +335,7 @@ for (var i = 0; i < 10; i = i + 1) {
 - `&` — logical AND (short-circuit). Example: `if (a & b) { ... }`
 - Ternary conditional: `cond ? exprTrue : exprFalse` returns a value and can be used inside expressions.
 
-Note: these are logical (short-circuit) operators, not bitwise. `||` and `&&` are not currently aliases.
+`and` / `or` keywords are aliases for `&` / `|`. These are logical (short-circuit) operators, not bitwise. `||` and `&&` are not currently aliases.
 
 ### Functions
 ```lux

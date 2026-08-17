@@ -27,7 +27,7 @@ print "";
 print "--- Operators ---";
 // Arithmetic: +, -, *, /
 // Comparison: ==, !=, <, >, <=, >=
-// Logical: and, or, !
+// Logical: | &, and, or, !
 
 // The + operator is smart:
 // Number + Number = Addition
@@ -59,6 +59,7 @@ while (count > 0) {
 
 // For loop
 for (var i = 0; i < 3; i = i + 1) {
+    if (i == 1) continue;
     // loop body
 }
 print "Loops demonstrated";

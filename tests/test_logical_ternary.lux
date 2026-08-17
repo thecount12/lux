@@ -1,36 +1,51 @@
-// Logical operators (| and &) treated as logical OR/AND and ternary operator tests
+// Logical operators: both symbol (| &) and keyword (or and) forms, plus ternary
 print "=== Logical and Ternary Operators Test ===";
 
 var t = true;
 var f = false;
 
-print "Test OR with |:";
-if (f | t) {
-    print "✓ f | t is true";
-} else {
-    print "✗ f | t is false";
+assert((f | t) == true, "symbol or true");
+assert((t | f) == true, "symbol or left true");
+assert((f | f) == false, "symbol or false");
+assert((t & f) == false, "symbol and false");
+assert((t & t) == true, "symbol and true");
+assert((f & t) == false, "symbol and left false");
+
+assert((f or t) == true, "keyword or true");
+assert((t or f) == true, "keyword or left true");
+assert((f or f) == false, "keyword or false");
+assert((t and f) == false, "keyword and false");
+assert((t and t) == true, "keyword and true");
+assert((f and t) == false, "keyword and left false");
+
+var called = 0;
+fun mark() {
+    called = called + 1;
+    return true;
 }
 
-print "Test AND with &:";
-if (t & f) {
-    print "✗ t & f is true";
-} else {
-    print "✓ t & f is false";
-}
+called = 0;
+assert((f & mark()) == false, "symbol and short-circuit value");
+assert(called == 0, "symbol and short-circuit");
 
-print "Test ternary operator:";
+called = 0;
+assert((f and mark()) == false, "keyword and short-circuit value");
+assert(called == 0, "keyword and short-circuit");
+
+called = 0;
+assert((t | mark()) == true, "symbol or short-circuit value");
+assert(called == 0, "symbol or short-circuit");
+
+called = 0;
+assert((t or mark()) == true, "keyword or short-circuit value");
+assert(called == 0, "keyword or short-circuit");
+
 var x = t ? 1 : 2;
-print "x=" + x;
+assert(x == 1, "ternary true branch");
 
 var y = f ? 100 : 200;
-print "y=" + y;
+assert(y == 200, "ternary false branch");
 
-print "Ternary used as condition:";
-if (f ? t : t) {
-    print "✓ ternary condition true";
-} else {
-    print "✗ ternary condition false";
-}
+assert((f ? t : t) == true, "ternary as condition");
 
 print "=== Logical and Ternary Operators Test Complete ===";
-

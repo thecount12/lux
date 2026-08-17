@@ -90,6 +90,9 @@ struct Compiler {
 	int localCount;
 	Upvalue upvalues[UINT8_COUNT];
 	int scopeDepth;
+	int loopDepth;
+	int loopStart;
+	int loopScopeDepth;
 };
 
 typedef struct ClassCompiler ClassCompiler;
@@ -106,7 +109,6 @@ ClassCompiler* currentClass = nil;
 #define MAX_BREAK_JUMPS 256
 static int breakJumps[MAX_BREAK_JUMPS];
 static int breakJumpCount = 0;
-static int loopDepth = 0;
 
 static Chunk* 
 currentChunk(void)
@@ -123,6 +125,7 @@ static int resolveLocal(Compiler* compiler, Token* name);
 static void forStatement(void);
 static void whileStatement(void);
 static void breakStatement(void);
+static void continueStatement(void);
 static void ifStatement(void);
 static void expression(void);
 static void statement(void);
@@ -323,6 +326,9 @@ initCompiler(Compiler* compiler, FunctionType type)
 	compiler->type = type;
 	compiler->localCount = 0;
 	compiler->scopeDepth = 0;
+	compiler->loopDepth = 0;
+	compiler->loopStart = 0;
+	compiler->loopScopeDepth = 0;
 	compiler->function = newFunction();
 	current = compiler;
 	if (type != TYPE_SCRIPT) {
@@ -779,12 +785,30 @@ returnStatement(void)
 }
 
 static void
+discardLoopLocals(void)
+{
+	int i;
+	for (i = current->localCount - 1;
+	     i >= 0 && current->locals[i].depth > current->loopScopeDepth;
+	     i--) {
+		if (current->locals[i].isCaptured)
+			emitByte(OP_CLOSE_UPVALUE);
+		else
+			emitByte(OP_POP);
+	}
+}
+
+static void
 whileStatement()
 {
 	int savedBreakCount = breakJumpCount;
-	loopDepth++;
+	int savedLoopStart = current->loopStart;
+	int savedLoopScope = current->loopScopeDepth;
+	current->loopDepth++;
 	
 	int loopStart = currentChunk()->count;
+	current->loopStart = loopStart;
+	current->loopScopeDepth = current->scopeDepth;
 	consume(TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
 	expression();
 	consume(TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
@@ -808,27 +832,22 @@ whileStatement()
 	while (breakJumpCount > savedBreakCount) {
 		patchJump(breakJumps[--breakJumpCount]);
 	}
-	
-	loopDepth--;
+
+	current->loopStart = savedLoopStart;
+	current->loopScopeDepth = savedLoopScope;
+	current->loopDepth--;
 }
 
 static void
 breakStatement()
 {
-	if (loopDepth == 0) {
+	if (current->loopDepth == 0) {
 		error("Cannot use 'break' outside of a loop.");
 		return;
 	}
 	
 	consume(TOKEN_SEMICOLON, "Expect ';' after 'break'.");
-	
-	/* Discard any locals created inside the loop */
-	int i;
-	for (i = current->localCount - 1; 
-	     i >= 0 && current->locals[i].depth > current->scopeDepth; 
-	     i--) {
-		emitByte(OP_POP);
-	}
+	discardLoopLocals();
 	
 	if (breakJumpCount >= MAX_BREAK_JUMPS) {
 		error("Too many break statements in one loop.");
@@ -836,6 +855,21 @@ breakStatement()
 	}
 	
 	breakJumps[breakJumpCount++] = emitJump(OP_JUMP);
+	if (lintOpts != nil && lintOpts->lint) lintReachable = 0;
+}
+
+static void
+continueStatement()
+{
+	if (current->loopDepth == 0) {
+		error("Cannot use 'continue' outside of a loop.");
+		return;
+	}
+
+	consume(TOKEN_SEMICOLON, "Expect ';' after 'continue'.");
+	discardLoopLocals();
+	emitLoop(current->loopStart);
+	if (lintOpts != nil && lintOpts->lint) lintReachable = 0;
 }
 
 static void 
@@ -852,6 +886,8 @@ synchronize(void)
 				case TOKEN_FOR:
 				case TOKEN_IF:
 				case TOKEN_WHILE:
+				case TOKEN_BREAK:
+				case TOKEN_CONTINUE:
 				case TOKEN_PRINT:
 				case TOKEN_RETURN:
 					return;
@@ -1054,6 +1090,7 @@ ParseRule rules[] = {
 	{nil,      and_,    PREC_AND},       /* TOKEN_AND */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_BREAK */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_CLASS */
+	{nil,      nil,    PREC_NONE},       /* TOKEN_CONTINUE */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_ELSE */
 	{literal,  nil,    PREC_NONE},       /* TOKEN_FALSE */
 	{nil,      nil,    PREC_NONE},       /* TOKEN_FOR */
@@ -1255,11 +1292,13 @@ expressionStatement(void) {
 	emitByte(OP_POP);
 }
 
-static void
+static void 
 forStatement()
 {
 	int savedBreakCount = breakJumpCount;
-	loopDepth++;
+	int savedLoopStart = current->loopStart;
+	int savedLoopScope = current->loopScopeDepth;
+	current->loopDepth++;
 	
 	beginScope();
 	consume(TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
@@ -1294,6 +1333,9 @@ forStatement()
 		patchJump(bodyJump);
 	}
 
+	current->loopStart = loopStart;
+	current->loopScopeDepth = current->scopeDepth;
+
 	/* If linting enabled, warn when the for body is not a braced block. */
 	if (lintOpts != nil && lintOpts->lint) {
 		if (parser.current.type != TOKEN_LEFT_BRACE) {
@@ -1314,7 +1356,9 @@ forStatement()
 	}
 
 	endScope();
-	loopDepth--;
+	current->loopStart = savedLoopStart;
+	current->loopScopeDepth = savedLoopScope;
+	current->loopDepth--;
 }
 
 static void
@@ -1386,6 +1430,8 @@ statement()
 		returnStatement();
 	} else if (match(TOKEN_BREAK)) {
 		breakStatement();
+	} else if (match(TOKEN_CONTINUE)) {
+		continueStatement();
 	} else if (match(TOKEN_WHILE)) {
 		whileStatement();
 	} else if (match(TOKEN_LEFT_BRACE)) {
