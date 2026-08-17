@@ -1,0 +1,24 @@
+// Network natives (POSIX and Plan 9)
+// netLookup / netPing — no run(), no external hosts required.
+
+assert(netLookup() == nil, "netLookup needs one arg");
+assert(netLookup(123) == nil, "netLookup rejects non-string");
+assert(netLookup("no-such-host.invalid") == nil, "unknown host is nil");
+
+var loop = netLookup("127.0.0.1");
+assert(loop == "127.0.0.1", "lookup of IPv4 literal");
+
+var local = netLookup("localhost");
+assert(typeof(local) == "string", "localhost resolves");
+assert(local == "127.0.0.1" | local == "::1", "localhost is loopback");
+
+assert(netPing("127.0.0.1") == -1, "netPing needs host and port");
+assert(netPing(123, 80) == -1, "netPing rejects non-string host");
+assert(netPing("127.0.0.1", 0) == -1, "port 0 invalid");
+assert(netPing("127.0.0.1", 70000) == -1, "port too high");
+
+var closed = netPing("127.0.0.1", 1);
+assert(typeof(closed) == "number", "netPing returns a number");
+assert(closed == -1, "closed port is -1");
+
+print "test_net: all assertions passed";
