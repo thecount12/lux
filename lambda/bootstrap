@@ -29,8 +29,21 @@ while true; do
   rm -f "$RESPONSE_PATH" /tmp/lux_stdout.log /tmp/lux_stderr.log
 
   set +e
-  /var/task/lux /var/task/lambda/handler.lux > /tmp/lux_stdout.log 2>/tmp/lux_stderr.log
-  lux_status=$?
+  if [ -f /var/task/handler.lux ]; then
+    HANDLER=/var/task/handler.lux
+  elif [ -f /var/task/lambda/handler.lux ]; then
+    HANDLER=/var/task/lambda/handler.lux
+  else
+    echo "Missing handler.lux under /var/task. Contents:" >&2
+    ls -la /var/task /var/task/lambda /var/task/lib 2>&1 >&2 || true
+    HANDLER=""
+  fi
+  if [ -n "$HANDLER" ]; then
+    /var/task/lux "$HANDLER" > /tmp/lux_stdout.log 2>/tmp/lux_stderr.log
+    lux_status=$?
+  else
+    lux_status=74
+  fi
   set -e
 
   if [ -s /tmp/lux_stdout.log ]; then

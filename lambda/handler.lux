@@ -1,4 +1,4 @@
-// Lambda entry: same routes as examples/lambda_web.lux.
+// Copied to /var/task/handler.lux in the image.
 // Custom runtime writes /tmp/lambda_event.json and expects
 // /tmp/lambda_response.json (see lambda/bootstrap).
 // Package so cwd is /var/task and includes lib/mangum.lux.

@@ -38,7 +38,8 @@ RUN chmod 755 /var/runtime/bootstrap \
     && ln -sf /var/runtime/bootstrap /var/task/bootstrap \
     && chmod 755 /var/task/lux
 
-COPY lambda/handler.lux /var/task/lambda/handler.lux
+COPY lambda/handler.lux /var/task/handler.lux
 COPY lib/mangum.lux /var/task/lib/mangum.lux
+RUN test -f /var/task/handler.lux && test -f /var/task/lib/mangum.lux && test -x /var/task/lux
 
 CMD ["/var/runtime/bootstrap"]

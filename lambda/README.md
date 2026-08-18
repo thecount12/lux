@@ -20,7 +20,7 @@ Inside the image:
 ```
 /var/runtime/bootstrap      ← this folder’s bootstrap
 /var/task/lux
-/var/task/lambda/handler.lux
+/var/task/handler.lux
 /var/task/lib/mangum.lux
 ```
 
@@ -145,7 +145,7 @@ curl -s -X POST "http://localhost:9000/2015-03-31/functions/function/invocations
 ## How an invoke works
 
 1. RIE (or real Lambda) gives `bootstrap` the next event.
-2. `bootstrap` writes it to `/tmp/lambda_event.json` and runs `/var/task/lux /var/task/lambda/handler.lux`.
+2. `bootstrap` writes it to `/tmp/lambda_event.json` and runs `/var/task/lux /var/task/handler.lux`.
 3. `Mangum(server)` reads that file, calls `server.handle(...)`, writes `/tmp/lambda_response.json`.
 4. `bootstrap` POSTs that file back as the invocation result.
 
@@ -169,7 +169,7 @@ Then:
 
 Rebuild and push after changing the Dockerfile. A running function keeps the old image until you update the code.
 
-If you zip a custom runtime instead of using the Dockerfile, `bootstrap` must be at the **zip root** (not inside a `lambda/` folder) and executable (`chmod 755 bootstrap`). Include `lux`, `lambda/handler.lux`, and `lib/mangum.lux` as well.
+If you zip a custom runtime instead of using the Dockerfile, `bootstrap` must be at the **zip root** (not inside a `lambda/` folder) and executable (`chmod 755 bootstrap`). Include `lux`, `handler.lux`, and `lib/mangum.lux` as well.
 
 ## Troubleshooting
 
@@ -202,7 +202,7 @@ The Function URL did not unwrap the Lambda proxy JSON (often because the runtime
 - Missing `lib/mangum.lux` in `/var/task/lib/` — the Dockerfile copies it; rebuild
 
 ```bash
-docker run --rm --entrypoint /bin/sh lux-lambda -c '/var/task/lux /var/task/lambda/handler.lux; echo exit:$?'
+docker run --rm --entrypoint /bin/sh lux-lambda -c '/var/task/lux /var/task/handler.lux; echo exit:$?'
 ```
 
 (That fails without a Lambda event file; you still see import/`ldd` errors.)
