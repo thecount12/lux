@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include "common.h"
 //#include "chunk.h"
@@ -23,7 +24,7 @@ static void repl() {
 static char* readFile(const char* path) {
 	FILE* file = fopen(path, "rb");
 	if (file == NULL) {
-		fprintf(stderr, "Could not open file \"%s\".\n", path);
+		fprintf(stderr, "Could not open file \"%s\" (%s).\n", path, strerror(errno));
 		exit(74);
 	}
 	

@@ -9,22 +9,30 @@ Put API Gateway (REST or HTTP API) or a Function URL in **proxy** mode in front 
 | Path | Role |
 |------|------|
 | `lambda/bootstrap` | Custom runtime loop: fetch event → run Lux → post response |
-| `lambda/handler.lux` | Routes + `Mangum(server)` (cwd `/var/task`) |
+| `lambda/handler.lux` | Routes + `Mangum(server)` (staged to `/tmp/luxapp`) |
 | `lib/mangum.lux` | Event → `server.handle()` → Lambda proxy JSON |
 | `../Dockerfile.lambda` | Amazon Linux build + `provided.al2023` image |
 | `../examples/lambda_web.lux` | Same routes as a local HTTP server |
 | `../examples/lambda_raw.lux` | Original handler: event file in, proxy JSON out, no Mangum |
 
-Inside the image:
+Inside the image (confirmed with a local Docker Desktop build + RIE):
 
 ```
-/var/runtime/bootstrap      ← this folder’s bootstrap
+/var/runtime/bootstrap
 /var/task/lux
 /var/task/handler.lux
 /var/task/lib/mangum.lux
+/var/runtime/handler.lux          ← copy (Lambda can block fopen on /var/task)
+/var/runtime/lib/mangum.lux
 ```
 
-`import` paths are relative to the **process working directory**, which must be `/var/task`.
+Each invoke, `bootstrap` copies the handler and mangum into `/tmp/luxapp/` and runs:
+
+```
+cd /tmp/luxapp && /var/task/lux /tmp/luxapp/handler.lux
+```
+
+`import` paths are relative to **cwd**, so that directory must contain `lib/mangum.lux`.
 
 ## Routes (sample app)
 
@@ -85,7 +93,7 @@ docker build -f Dockerfile.lambda -t lux-lambda .
 docker run --rm -p 9000:8080 lux-lambda
 ```
 
-The runtime image already has `openssl-snapsafe-libs`, so the Dockerfile does not `dnf install openssl-libs` (that conflict is what failed the last build). `libcurl` and friends are copied from the build stage into `/var/task/lib64`.
+The runtime image already has `libcurl` and `openssl-snapsafe-libs` in `/lib64`, so the Dockerfile does not `dnf install openssl-libs` (that conflict is what failed the last build). Extra `.so` files from the build stage go into `/var/task/lib64` when `ldd` works (on a Mac/QEMU amd64 build that copy can be empty; the image libs are enough).
 
 For an **arm64** Lambda: `docker build --build-arg LAMBDA_PLATFORM=linux/arm64 -f Dockerfile.lambda -t lux-lambda .`
 
@@ -145,8 +153,8 @@ curl -s -X POST "http://localhost:9000/2015-03-31/functions/function/invocations
 ## How an invoke works
 
 1. RIE (or real Lambda) gives `bootstrap` the next event.
-2. `bootstrap` writes it to `/tmp/lambda_event.json` and runs `/var/task/lux /var/task/handler.lux`.
-3. `Mangum(server)` reads that file, calls `server.handle(...)`, writes `/tmp/lambda_response.json`.
+2. `bootstrap` writes it to `/tmp/lambda_event.json`, copies `handler.lux` and `lib/mangum.lux` into `/tmp/luxapp`, and runs `/var/task/lux /tmp/luxapp/handler.lux` from that directory.
+3. `Mangum(server)` reads the event file, calls `server.handle(...)`, writes `/tmp/lambda_response.json`.
 4. `bootstrap` POSTs that file back as the invocation result.
 
 Logs from Lux are written to CloudWatch (bootstrap copies `/tmp/lux_stdout.log` and `/tmp/lux_stderr.log`). Handler failures become HTTP 500.
@@ -199,7 +207,8 @@ The Function URL did not unwrap the Lambda proxy JSON (often because the runtime
 
 - Image missing `libcurl` / OpenSSL — the Dockerfile copies those `.so` files from the build stage into `/var/task/lib64` (do not `dnf install openssl-libs` on `provided.al2023`; it conflicts with `openssl-snapsafe-libs`)
 - Architecture mismatch — Dockerfile pins `linux/amd64`. If the function is **arm64** in the console, either switch the function to x86_64 or build with `--platform linux/arm64`
-- Missing `lib/mangum.lux` in `/var/task/lib/` — the Dockerfile copies it; rebuild
+- Missing `lib/mangum.lux` — image has it under both `/var/task/lib/` and `/var/runtime/lib/`; bootstrap copies it to `/tmp/luxapp/lib/`
+- `Could not open file "/var/task/handler.lux"` — Lambda denied `fopen` on `/var/task` even though the file exists. Current bootstrap stages to `/tmp/luxapp` instead. Rebuild and redeploy. If it still fails, CloudWatch will now include errno (`Permission denied`, `No such file`, …).
 
 ```bash
 docker run --rm --entrypoint /bin/sh lux-lambda -c '/var/task/lux /var/task/handler.lux; echo exit:$?'

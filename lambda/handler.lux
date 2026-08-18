@@ -1,7 +1,7 @@
-// Copied to /var/task/handler.lux in the image.
-// Custom runtime writes /tmp/lambda_event.json and expects
-// /tmp/lambda_response.json (see lambda/bootstrap).
-// Package so cwd is /var/task and includes lib/mangum.lux.
+// Copied to /var/task/handler.lux and /var/runtime/handler.lux.
+// Bootstrap stages those files under /tmp/luxapp (Lambda can deny fopen
+// on /var/task) and runs lux from there so import "lib/mangum.lux" works.
+// Event: /tmp/lambda_event.json  response: /tmp/lambda_response.json
 
 import "lib/mangum.lux";
 

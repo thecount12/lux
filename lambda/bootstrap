@@ -6,6 +6,7 @@ cd /var/task
 RUNTIME_API="http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime"
 EVENT_PATH="/tmp/lambda_event.json"
 RESPONSE_PATH="/tmp/lambda_response.json"
+APP_DIR="/tmp/luxapp"
 
 post_response() {
   request_id="$1"
@@ -19,6 +20,19 @@ write_error() {
   printf '%s' "{\"statusCode\":500,\"headers\":{\"content-type\":\"application/json\"},\"body\":\"{\\\"error\\\":\\\"${msg}\\\"}\"}" > "$RESPONSE_PATH"
 }
 
+stage_file() {
+  dest="$1"
+  shift
+  for src in "$@"; do
+    if [ -f "$src" ]; then
+      cp "$src" "$dest"
+      chmod a+r "$dest"
+      return 0
+    fi
+  done
+  return 1
+}
+
 while true; do
   HEADERS_PATH="$(mktemp)"
 
@@ -27,22 +41,28 @@ while true; do
   REQUEST_ID="$(awk '/Lambda-Runtime-Aws-Request-Id:/ {print $2}' "$HEADERS_PATH" | tr -d '\r')"
   rm -f "$HEADERS_PATH"
   rm -f "$RESPONSE_PATH" /tmp/lux_stdout.log /tmp/lux_stderr.log
+  rm -rf "$APP_DIR"
+  mkdir -p "$APP_DIR/lib"
 
   set +e
-  if [ -f /var/task/handler.lux ]; then
-    HANDLER=/var/task/handler.lux
-  elif [ -f /var/task/lambda/handler.lux ]; then
-    HANDLER=/var/task/lambda/handler.lux
-  else
-    echo "Missing handler.lux under /var/task. Contents:" >&2
-    ls -la /var/task /var/task/lambda /var/task/lib 2>&1 >&2 || true
-    HANDLER=""
-  fi
-  if [ -n "$HANDLER" ]; then
-    /var/task/lux "$HANDLER" > /tmp/lux_stdout.log 2>/tmp/lux_stderr.log
-    lux_status=$?
-  else
+  stage_file "$APP_DIR/handler.lux" \
+    /var/task/handler.lux /var/runtime/handler.lux /opt/lux/handler.lux
+  stage_handler=$?
+  stage_file "$APP_DIR/lib/mangum.lux" \
+    /var/task/lib/mangum.lux /var/runtime/lib/mangum.lux /opt/lux/lib/mangum.lux
+  stage_mangum=$?
+
+  if [ "$stage_handler" -ne 0 ]; then
+    echo "Missing handler.lux. id=$(id); /var/task and /var/runtime:" >&2
+    ls -la /var/task /var/task/lib /var/runtime /var/runtime/lib 2>&1 >&2 || true
     lux_status=74
+  else
+    if [ "$stage_mangum" -ne 0 ]; then
+      echo "Missing lib/mangum.lux (import will fail)." >&2
+    fi
+    # Lambda's sandbox can block fopen on /var/task; run from /tmp.
+    (cd "$APP_DIR" && /var/task/lux "$APP_DIR/handler.lux") > /tmp/lux_stdout.log 2>/tmp/lux_stderr.log
+    lux_status=$?
   fi
   set -e
 
