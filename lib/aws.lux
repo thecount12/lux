@@ -267,6 +267,8 @@ fun awsFormEncode(s) {
             out = out + "%3D";
         } else if (ch == "+") {
             out = out + "%2B";
+        } else if (ch == ":") {
+            out = out + "%3A";
         } else {
             out = out + ch;
         }
@@ -421,7 +423,16 @@ class CloudWatchClient {
         body = body + "&StartTime=" + awsFormEncode(startTime);
         body = body + "&EndTime=" + awsFormEncode(endTime);
         body = body + "&Period=" + period;
-        body = body + "&Statistics.member.1=" + awsFormEncode(stat);
+        if (typeof(stat) == "array") {
+            var s = 0;
+            while (s < stat.length) {
+                var sn = s + 1;
+                body = body + "&Statistics.member." + sn + "=" + awsFormEncode(stat[s]);
+                s = s + 1;
+            }
+        } else {
+            body = body + "&Statistics.member.1=" + awsFormEncode(stat);
+        }
         if (dimensions != nil) {
             var i = 0;
             while (i < dimensions.length) {
