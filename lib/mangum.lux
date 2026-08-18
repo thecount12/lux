@@ -1,0 +1,99 @@
+// AWS Lambda adapter (Mangum-style): wrap a Lux Server for API Gateway,
+// HTTP APIs, and Lambda Function URLs.
+// Import relative to the process working directory:
+//   import "../lib/mangum.lux";   // from posix/ or tests/
+//   import "lib/mangum.lux";      // from repo root or /var/task on Lambda
+
+fun mangumMethod(event) {
+    var rc = getField(event, "requestContext");
+    if (rc != nil) {
+        var http = getField(rc, "http");
+        if (http != nil) {
+            var m = getField(http, "method");
+            if (m != nil) {
+                return m;
+            }
+        }
+    }
+    var m2 = getField(event, "httpMethod");
+    if (m2 != nil) {
+        return m2;
+    }
+    return "GET";
+}
+
+fun mangumPath(event) {
+    var p = getField(event, "rawPath");
+    if (p != nil) {
+        return p;
+    }
+    p = getField(event, "path");
+    if (p != nil) {
+        return p;
+    }
+    return "/";
+}
+
+fun mangumBody(event) {
+    var b = getField(event, "body");
+    if (b == nil) {
+        return "";
+    }
+    return b;
+}
+
+fun mangumHost(event) {
+    var headers = getField(event, "headers");
+    if (headers == nil) {
+        return "";
+    }
+    var h = getField(headers, "host");
+    if (h != nil) {
+        return h;
+    }
+    h = getField(headers, "Host");
+    if (h != nil) {
+        return h;
+    }
+    return "";
+}
+
+fun mangumProxyJson(statusCode, body, contentType) {
+    var bodyJson = toJSON(body);
+    var ctJson = toJSON(contentType);
+    if (bodyJson == nil) {
+        bodyJson = "\"\"";
+    }
+    if (ctJson == nil) {
+        ctJson = "\"text/plain\"";
+    }
+    return "{\"statusCode\":" + statusCode +
+        ",\"headers\":{\"content-type\":" + ctJson +
+        "},\"body\":" + bodyJson +
+        ",\"isBase64Encoded\":false}";
+}
+
+fun mangumHandle(server, event) {
+    if (event == nil) {
+        return "{\"statusCode\":400,\"headers\":{\"content-type\":\"text/plain\"},\"body\":\"invalid event\",\"isBase64Encoded\":false}";
+    }
+    var out = server.handle(mangumMethod(event), mangumPath(event), mangumBody(event), mangumHost(event));
+    if (out == nil) {
+        return "{\"statusCode\":500,\"headers\":{\"content-type\":\"text/plain\"},\"body\":\"handle failed\",\"isBase64Encoded\":false}";
+    }
+    return mangumProxyJson(out.statusCode, out.body, out.contentType);
+}
+
+fun Mangum(server) {
+    var raw = readFile("/tmp/lambda_event.json");
+    if (raw == nil) {
+        writeFile("/tmp/lambda_response.json", "{\"statusCode\":500,\"headers\":{\"content-type\":\"text/plain\"},\"body\":\"event read failed\",\"isBase64Encoded\":false}");
+        return;
+    }
+    var event = parseJSON(raw);
+    if (event == nil) {
+        writeFile("/tmp/lambda_response.json", "{\"statusCode\":400,\"headers\":{\"content-type\":\"text/plain\"},\"body\":\"invalid event json\",\"isBase64Encoded\":false}");
+        return;
+    }
+    writeFile("/tmp/lambda_response.json", mangumHandle(server, event));
+}

@@ -1,0 +1,80 @@
+/* Server.handle — one-request dispatch without binding a port. */
+
+fun h(req, res) {
+    if (req.path == "/") {
+        res.html("<h1>home</h1>");
+        return;
+    }
+    if (req.path == "/j") {
+        res.json(parseJSON("{\"ok\":true}"));
+        return;
+    }
+    if (req.path == "/n") {
+        res.status(201);
+        res.send(req.body);
+        return;
+    }
+    res.send("host:" + req.host);
+}
+
+fun mw(req, res, next) {
+    next();
+}
+
+print "=== Server.handle ===";
+
+var s = Server(0);
+s.get("/", h);
+s.get("/j", h);
+s.post("/j", h);
+s.post("/n", h);
+s.getHost("app.example", "/hi", h);
+
+var r = s.handle("GET", "/");
+assert(r.statusCode == 200, "home status");
+assert(strFind(r.body, "<h1>home</h1>") >= 0, "home html");
+assert(strStartsWithAt(r.contentType, "text/html", 0), "html type");
+
+r = s.handle("get", "/j?x=1", "");
+assert(r.statusCode == 200, "query stripped");
+assert(strFind(r.body, "\"ok\":true") >= 0, "json");
+
+r = s.handle("POST", "/j", "{\"n\":1}");
+assert(strFind(r.body, "true") >= 0, "post json");
+
+r = s.handle("POST", "/n", "abc");
+assert(r.statusCode == 201, "201");
+assert(r.body == "created:abc" or r.body == "abc", "send");
+assert(r.body == "abc", "send body");
+
+r = s.handle("GET", "/nope");
+assert(r.statusCode == 404, "404");
+
+r = s.handle("GET", "/hi", "", "app.example:443");
+assert(r.body == "host:app.example", "host");
+
+createDir("_hw");
+writeFile("_hw/index.html", "<p>s</p>");
+writeFile("_hw/note.txt", "hello");
+s.static("_hw");
+
+r = s.handle("GET", "/");
+assert(strFind(r.body, "<h1>home</h1>") >= 0, "route over static");
+
+r = s.handle("GET", "/note.txt");
+assert(r.body == "hello", "static file");
+assert(r.contentType == "text/plain", "mime");
+
+var t = Server(0);
+t.static("_hw");
+r = t.handle("GET", "/");
+assert(strFind(r.body, "<p>s</p>") >= 0, "index.html");
+
+t.use(mw);
+t.get("/x", h);
+r = t.handle("GET", "/x");
+assert(strFind(r.body, "host:") >= 0, "mw then handler");
+
+deleteFile("_hw/index.html");
+deleteFile("_hw/note.txt");
+print "All Server.handle tests passed";

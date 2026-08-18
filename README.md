@@ -27,7 +27,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **DataFrame / CSV** — quoted CSV, groupBy, sortBy, `lib/dataframe.lux`
 - **Graphs** — BFS/DFS and Graphviz DOT export, `lib/graph.lux`
 - **Math** — abs, ceil, floor, sqrt, pow, log, sin, cos
-- **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts)
+- **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts, Lambda via `server.handle` / Mangum)
 - **Network** — `netLookup` (DNS) and `netPing` (TCP-connect RTT), no `run()`
 - **Templates** — native `renderTemplate` (`{{ }}`, `{% for %}`, `{% include %}`)
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
@@ -170,6 +170,10 @@ server.workers(4);
 server.vhost("example.com", "public/example");
 server.get("/health", handleHealth);
 server.start();
+
+// Same routes on AWS Lambda (Mangum-style) — no listen/bind:
+// var page = server.handle("GET", "/health");
+// Mangum(server);   // lib/mangum.lux + lambda/handler.lux
 
 // Legacy one-liner with built-in routes:
 httpServer(8080);
@@ -603,6 +607,8 @@ print a[1];      // bar
 8.out tests/test_https.lux              # HTTPS client with TLS (Plan 9)
 posix/lux tests/test_http.lux    # HTTP/HTTPS examples (POSIX)
 8.out tests/test_http_server.lux        # HTTP server (both Plan 9 and POSIX)
+posix/lux examples/lambda_web.lux       # Local HTTP server (Mangum if Lambda event file)
+posix/lux examples/lambda_web.lux --once  # One request via server.handle, no listen
 8.out examples/dataframe_prototype.lux  # DataFrame / CSV demo
 8.out examples/graph_demo.lux           # Graph + Graphviz DOT
 8.out tests/c29-inherit.lux             # Inheritance examples
@@ -1446,6 +1452,36 @@ curl -H 'Host: williamgunnells.com' http://127.0.0.1:8080/api/hello
 - Pass a **value** to serialize (`parseJSON` objects, class instances with fields), not pre-built JSON text.
 - `res.json("{\"a\":1}")` returns a JSON **string** (`"{\"a\":1}"`), not an object.
 - `Dict` data lives in native storage; `res.json(aDict)` only sees internal fields (e.g. `_ptr`). Use `parseJSON`/`toJSON`, `dict.iter()`, or `res.send` with a string you build. See `tests/test_dict.lux`.
+
+**AWS Lambda (Mangum-style):** Use the same `Server` routes without `start()`. `server.handle(method, path, [body], [host])` runs one request and returns `{statusCode, body, contentType}`. `lib/mangum.lux` maps API Gateway REST (v1), HTTP API / Function URL (v2) events onto that, and writes a Lambda proxy response. The custom runtime in `lambda/bootstrap` still feeds `/tmp/lambda_event.json` and posts `/tmp/lambda_response.json`.
+
+```lux
+import "../lib/mangum.lux";   /* or "lib/mangum.lux" when cwd is the repo / Lambda task root */
+
+fun handleHome(req, res) {
+  res.html("<h1>Hello from Lux</h1>");
+}
+
+var server = Server(0);   /* port unused for handle / Mangum */
+server.get("/", handleHome);
+
+/* Local, no socket: */
+var page = server.handle("GET", "/");
+print page.statusCode;    /* 200 */
+print page.body;
+
+/* On Lambda (see lambda/handler.lux): */
+Mangum(server);
+```
+
+Package `lux`, `lambda/bootstrap`, `lambda/handler.lux`, and `lib/mangum.lux` so the task cwd is `/var/task`.
+
+Same routes in both examples (`GET /` HTML, `GET /health` JSON, `GET`/`POST /echo`):
+
+- `examples/lambda_web.lux` — local `server.start()` on 8084; `--once` uses `server.handle`; `Mangum` when `/tmp/lambda_event.json` exists
+- `lambda/handler.lux` — Lambda custom-runtime entry (`Mangum(server)`)
+
+See `tests/test_mangum.lux`.
 
 **Middleware (`server.use`):** Register functions with signature `(req, res, next)`. Call `next()` to continue the chain (more middleware, then the matched route handler). See `examples/server_middleware.lux`.
 

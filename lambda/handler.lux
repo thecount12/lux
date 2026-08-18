@@ -1,34 +1,30 @@
-// Lambda Lux handler.
-// Input event is available at /tmp/lambda_event.json.
-// Write Lambda proxy response JSON to /tmp/lambda_response.json.
+// Lambda entry: same routes as examples/lambda_web.lux.
+// Custom runtime writes /tmp/lambda_event.json and expects
+// /tmp/lambda_response.json (see lambda/bootstrap).
+// Package so cwd is /var/task and includes lib/mangum.lux.
 
-class LambdaResponse {
-    init(statusCode, body) {
-        this.statusCode = statusCode;
-        this.body = body;
-    }
+import "lib/mangum.lux";
+
+fun handleHome(req, res) {
+    res.html("<!DOCTYPE html><html><head><title>Lux</title></head><body><h1>Hello from Lux</h1><p>Served on AWS Lambda.</p></body></html>");
 }
 
-fun writeLambdaResponse(statusCode, bodyJsonString) {
-    var response = LambdaResponse(statusCode, bodyJsonString);
-    var serialized = toJSON(response);
-    if (serialized == nil) {
-        // Last-resort static response if serialization fails.
-        writeFile("/tmp/lambda_response.json", "{\"statusCode\":500,\"body\":\"{\\\"error\\\":\\\"serialization failed\\\"}\"}");
-        return;
-    }
-    writeFile("/tmp/lambda_response.json", serialized);
+fun handleHealth(req, res) {
+    res.json(parseJSON("{\"ok\":true}"));
 }
 
-var rawEvent = readFile("/tmp/lambda_event.json");
-if (rawEvent == nil) {
-    writeLambdaResponse(500, "{\"ok\":false,\"error\":\"event read failed\"}");
-} else {
-    var event = parseJSON(rawEvent);
-    if (event == nil) {
-        writeLambdaResponse(400, "{\"ok\":false,\"error\":\"invalid event json\"}");
-    } else {
-        // Minimal default response. Customize this block for your app logic.
-        writeLambdaResponse(200, "{\"ok\":true,\"message\":\"hello from lux lambda\"}");
-    }
+fun handleEcho(req, res) {
+    var obj = parseJSON("{\"method\":\"\",\"path\":\"\",\"body\":\"\"}");
+    obj.method = req.method;
+    obj.path = req.path;
+    obj.body = req.body;
+    res.json(obj);
 }
+
+var server = Server(0);
+server.get("/", handleHome);
+server.get("/health", handleHealth);
+server.get("/echo", handleEcho);
+server.post("/echo", handleEcho);
+
+Mangum(server);

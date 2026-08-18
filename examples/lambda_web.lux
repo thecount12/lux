@@ -1,0 +1,65 @@
+/* Same Server routes locally and on AWS Lambda (Mangum-style).
+ *
+ * Local HTTP server:
+ *   cd posix && ./lux ../examples/lambda_web.lux
+ *   curl http://127.0.0.1:8084/
+ *   curl http://127.0.0.1:8084/health
+ *
+ * One request, no listen (like a Lambda invoke):
+ *   ./lux ../examples/lambda_web.lux --once
+ *
+ * Lambda: if /tmp/lambda_event.json exists (custom runtime), uses Mangum.
+ * Packaged entry with the same routes: lambda/handler.lux
+ */
+
+import "../lib/mangum.lux";
+
+fun handleHome(req, res) {
+    res.html("<!DOCTYPE html><html><head><title>Lux</title></head><body><h1>Hello from Lux</h1><p>path=" + req.path + "</p></body></html>");
+}
+
+fun handleHealth(req, res) {
+    res.json(parseJSON("{\"ok\":true}"));
+}
+
+fun handleEcho(req, res) {
+    var obj = parseJSON("{\"method\":\"\",\"path\":\"\",\"body\":\"\"}");
+    obj.method = req.method;
+    obj.path = req.path;
+    obj.body = req.body;
+    res.json(obj);
+}
+
+var server = Server(8084);
+server.get("/", handleHome);
+server.get("/health", handleHealth);
+server.get("/echo", handleEcho);
+server.post("/echo", handleEcho);
+
+var argv = args();
+var once = false;
+if (argv.length > 0) {
+    if (argv[0] == "--once") {
+        once = true;
+    }
+}
+
+if (once) {
+    var page = server.handle("GET", "/");
+    print page.statusCode;
+    print page.contentType;
+    print page.body;
+    var health = server.handle("GET", "/health");
+    print health.body;
+} else {
+    if (fileExists("/tmp/lambda_event.json")) {
+        Mangum(server);
+    } else {
+        print "Starting Lambda app on http://127.0.0.1:8084/";
+        print "  GET  /         HTML";
+        print "  GET  /health   JSON";
+        print "  GET  /echo     JSON";
+        print "  POST /echo     JSON";
+        server.start();
+    }
+}
