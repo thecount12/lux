@@ -163,7 +163,27 @@ Then:
 - Memory / timeout: start at 256 MB / 10 s (cold start compiles the script each invoke)
 - Trigger: **Function URL** (auth NONE or AWS_IAM) or API Gateway **proxy** integration
 
-If you zip a custom runtime instead of using the Dockerfile, the zip/cwd must still contain `lux`, `lambda/handler.lux`, `lib/mangum.lux`, and `bootstrap` as `/var/runtime/bootstrap`.
+Rebuild and push after changing the Dockerfile. A running function keeps the old image until you update the code.
+
+If you zip a custom runtime instead of using the Dockerfile, `bootstrap` must be at the **zip root** (not inside a `lambda/` folder) and executable (`chmod 755 bootstrap`). Include `lux`, `lambda/handler.lux`, and `lib/mangum.lux` as well.
+
+## Troubleshooting
+
+**`/bin/sh: /var/runtime/bootstrap: Permission denied`**
+
+Lambda found the bootstrap path but could not exec it. Common causes:
+
+1. `/var/runtime/bootstrap` was a **directory** in the base image and `COPY` placed the script *inside* it. The Dockerfile now `rm -rf` that path first. Rebuild and redeploy.
+2. The script was not executable. `lambda/bootstrap` is `0755` in git; the image `chmod 755`s it. For a zip: `chmod 755 bootstrap` before zipping from the **repo root**, not from `lambda/` as a nested folder.
+3. Image not updated: `docker build -f Dockerfile.lambda -t lux-lambda .` then push and `aws lambda update-function-code`.
+
+Confirm inside a local container:
+
+```bash
+docker run --rm --entrypoint ls lux-lambda -l /var/runtime/bootstrap /var/task/bootstrap /var/task/lux
+```
+
+You want a **file** (`-rwxr-xr-x`), not `drwx`.
 
 ## Limits
 
