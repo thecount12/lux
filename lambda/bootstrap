@@ -1,9 +1,23 @@
 #!/bin/sh
 set -eu
 
+cd /var/task
+
 RUNTIME_API="http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime"
 EVENT_PATH="/tmp/lambda_event.json"
 RESPONSE_PATH="/tmp/lambda_response.json"
+
+post_response() {
+  request_id="$1"
+  curl -sS -X POST "$RUNTIME_API/invocation/${request_id}/response" \
+    -H "Content-Type: application/json" \
+    --data-binary @"$RESPONSE_PATH" >/dev/null
+}
+
+write_error() {
+  msg="$1"
+  printf '%s' "{\"statusCode\":500,\"headers\":{\"content-type\":\"application/json\"},\"body\":\"{\\\"error\\\":\\\"${msg}\\\"}\"}" > "$RESPONSE_PATH"
+}
 
 while true; do
   HEADERS_PATH="$(mktemp)"
@@ -12,20 +26,28 @@ while true; do
 
   REQUEST_ID="$(awk '/Lambda-Runtime-Aws-Request-Id:/ {print $2}' "$HEADERS_PATH" | tr -d '\r')"
   rm -f "$HEADERS_PATH"
+  rm -f "$RESPONSE_PATH" /tmp/lux_stdout.log /tmp/lux_stderr.log
 
-  # Clear previous response file to avoid stale responses.
-  rm -f "$RESPONSE_PATH"
+  set +e
+  /var/task/lux /var/task/lambda/handler.lux > /tmp/lux_stdout.log 2>/tmp/lux_stderr.log
+  lux_status=$?
+  set -e
 
-  # handler.lux imports lib/mangum.lux (cwd must be /var/task).
-  if /var/task/lux /var/task/lambda/handler.lux > /tmp/lux_stdout.log 2>/tmp/lux_stderr.log; then
-    if [ -s "$RESPONSE_PATH" ]; then
-      curl -sS -X POST "$RUNTIME_API/invocation/$REQUEST_ID/response" --data-binary @"$RESPONSE_PATH" >/dev/null
-    else
-      printf '%s' '{"statusCode":500,"body":"{\\"error\\":\\"handler produced no response file\\"}"}' > "$RESPONSE_PATH"
-      curl -sS -X POST "$RUNTIME_API/invocation/$REQUEST_ID/response" --data-binary @"$RESPONSE_PATH" >/dev/null
-    fi
+  if [ -s /tmp/lux_stdout.log ]; then
+    cat /tmp/lux_stdout.log
+  fi
+  if [ -s /tmp/lux_stderr.log ]; then
+    cat /tmp/lux_stderr.log >&2
+  fi
+
+  if [ "$lux_status" -eq 0 ] && [ -s "$RESPONSE_PATH" ]; then
+    post_response "$REQUEST_ID"
   else
-    printf '%s' '{"statusCode":500,"body":"{\\"error\\":\\"lux handler execution failed\\"}"}' > "$RESPONSE_PATH"
-    curl -sS -X POST "$RUNTIME_API/invocation/$REQUEST_ID/response" --data-binary @"$RESPONSE_PATH" >/dev/null
+    if [ "$lux_status" -ne 0 ]; then
+      write_error "lux handler execution failed"
+    else
+      write_error "handler produced no response file"
+    fi
+    post_response "$REQUEST_ID"
   fi
 done

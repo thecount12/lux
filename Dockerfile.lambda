@@ -1,4 +1,4 @@
-FROM amazonlinux:2023 AS build
+FROM --platform=linux/amd64 amazonlinux:2023 AS build
 
 RUN dnf -y update \
     && dnf -y install gcc make curl-devel openssl-devel \
@@ -8,22 +8,24 @@ WORKDIR /src
 COPY posix/ ./posix/
 RUN make -C posix clean && make -C posix
 
-FROM public.ecr.aws/lambda/provided:al2023
+# Lambda default architecture is x86_64. Build arm64 only if the function is arm64.
+FROM --platform=linux/amd64 public.ecr.aws/lambda/provided:al2023
 
 WORKDIR /var/task
 
-# Lux runtime binary built for Linux.
+# lux is dynamically linked; the provided image does not include these by default.
+RUN dnf install -y libcurl openssl-libs \
+    && dnf clean all
+
 COPY --from=build /src/posix/lux /var/task/lux
 
 # provided.al2023 may already have /var/runtime/bootstrap (file or dir).
-# Replace it with our script so Lambda exec's a file, not a directory.
 RUN rm -rf /var/runtime/bootstrap
 COPY lambda/bootstrap /var/runtime/bootstrap
 RUN chmod 755 /var/runtime/bootstrap \
     && ln -sf /var/runtime/bootstrap /var/task/bootstrap \
     && chmod 755 /var/task/lux
 
-# Lux handler script (edit this to implement your business logic).
 COPY lambda/handler.lux /var/task/lambda/handler.lux
 COPY lib/mangum.lux /var/task/lib/mangum.lux
 

@@ -145,7 +145,7 @@ curl -s -X POST "http://localhost:9000/2015-03-31/functions/function/invocations
 3. `Mangum(server)` reads that file, calls `server.handle(...)`, writes `/tmp/lambda_response.json`.
 4. `bootstrap` POSTs that file back as the invocation result.
 
-Logs from Lux go to `/tmp/lux_stdout.log` and `/tmp/lux_stderr.log` inside the container (`docker exec` if you need them). Handler failures become `statusCode` 500.
+Logs from Lux are written to CloudWatch (bootstrap copies `/tmp/lux_stdout.log` and `/tmp/lux_stderr.log`). Handler failures become HTTP 500.
 
 ## Deploy
 
@@ -184,6 +184,30 @@ docker run --rm --entrypoint ls lux-lambda -l /var/runtime/bootstrap /var/task/b
 ```
 
 You want a **file** (`-rwxr-xr-x`), not `drwx`.
+
+**Browser downloads a file / curl prints `{"statusCode":...}`**
+
+The Function URL did not unwrap the Lambda proxy JSON (often because the runtime response had no `Content-Type: application/json`). Rebuild with the current `lambda/bootstrap`, which sets that header. After a good deploy, `curl -i` on the Function URL should show `HTTP/2 200` and `content-type: text/html`, not a JSON blob.
+
+**`lux handler execution failed`**
+
+`lux` exited non-zero. Look at the same CloudWatch stream for the real error (import path, missing `.so`, exec format). Typical causes:
+
+- Image missing `libcurl` / OpenSSL — the Dockerfile now `dnf install`s them
+- Architecture mismatch — Dockerfile pins `linux/amd64`. If the function is **arm64** in the console, either switch the function to x86_64 or build with `--platform linux/arm64`
+- Missing `lib/mangum.lux` in `/var/task/lib/` — the Dockerfile copies it; rebuild
+
+```bash
+docker run --rm --entrypoint /bin/sh lux-lambda -c '/var/task/lux /var/task/lambda/handler.lux; echo exit:$?'
+```
+
+(That fails without a Lambda event file; you still see import/`ldd` errors.)
+
+```bash
+docker run --rm --entrypoint ldd lux-lambda /var/task/lux
+```
+
+No `not found` lines.
 
 ## Limits
 
