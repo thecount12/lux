@@ -1,4 +1,8 @@
-FROM --platform=linux/amd64 amazonlinux:2023 AS build
+# Default matches a typical x86_64 Lambda. Override:
+#   docker build --build-arg LAMBDA_PLATFORM=linux/arm64 -f Dockerfile.lambda ...
+ARG LAMBDA_PLATFORM=linux/amd64
+
+FROM --platform=$LAMBDA_PLATFORM amazonlinux:2023 AS build
 
 RUN dnf -y update \
     && dnf -y install gcc make curl-devel openssl-devel \
@@ -8,18 +12,26 @@ WORKDIR /src
 COPY posix/ ./posix/
 RUN make -C posix clean && make -C posix
 
-# Lambda default architecture is x86_64. Build arm64 only if the function is arm64.
-FROM --platform=linux/amd64 public.ecr.aws/lambda/provided:al2023
+# Shared libs lux needs, excluding libc (use the Lambda image's glibc).
+RUN mkdir -p /src/lux-libs \
+    && ldd /src/posix/lux | awk '/=> \// { print $3 }' | while read -r lib; do \
+         case "$lib" in \
+           */ld-linux*|*/libc.so*|*/libm.so*|*/libpthread.so*|*/libdl.so*|*/librt.so*|*/libresolv.so*) \
+             continue ;; \
+         esac; \
+         cp -a "$lib" /src/lux-libs/; \
+       done
+
+ARG LAMBDA_PLATFORM=linux/amd64
+FROM --platform=$LAMBDA_PLATFORM public.ecr.aws/lambda/provided:al2023
 
 WORKDIR /var/task
 
-# lux is dynamically linked; the provided image does not include these by default.
-RUN dnf install -y libcurl openssl-libs \
-    && dnf clean all
-
+# Do not dnf install openssl-libs: provided.al2023 already has openssl-snapsafe-libs.
 COPY --from=build /src/posix/lux /var/task/lux
+COPY --from=build /src/lux-libs /var/task/lib64
+ENV LD_LIBRARY_PATH=/var/task/lib64
 
-# provided.al2023 may already have /var/runtime/bootstrap (file or dir).
 RUN rm -rf /var/runtime/bootstrap
 COPY lambda/bootstrap /var/runtime/bootstrap
 RUN chmod 755 /var/runtime/bootstrap \

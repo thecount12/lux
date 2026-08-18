@@ -85,6 +85,10 @@ docker build -f Dockerfile.lambda -t lux-lambda .
 docker run --rm -p 9000:8080 lux-lambda
 ```
 
+The runtime image already has `openssl-snapsafe-libs`, so the Dockerfile does not `dnf install openssl-libs` (that conflict is what failed the last build). `libcurl` and friends are copied from the build stage into `/var/task/lib64`.
+
+For an **arm64** Lambda: `docker build --build-arg LAMBDA_PLATFORM=linux/arm64 -f Dockerfile.lambda -t lux-lambda .`
+
 The image is `public.ecr.aws/lambda/provided:al2023`. Port **8080 in the container** is the [Runtime Interface Emulator](https://docs.aws.amazon.com/lambda/latest/dg/images-test.html) (RIE), mapped to **9000** on the host.
 
 You do **not** `curl http://localhost:9000/`. You POST a Lambda **event** to the invoke URL.
@@ -193,7 +197,7 @@ The Function URL did not unwrap the Lambda proxy JSON (often because the runtime
 
 `lux` exited non-zero. Look at the same CloudWatch stream for the real error (import path, missing `.so`, exec format). Typical causes:
 
-- Image missing `libcurl` / OpenSSL — the Dockerfile now `dnf install`s them
+- Image missing `libcurl` / OpenSSL — the Dockerfile copies those `.so` files from the build stage into `/var/task/lib64` (do not `dnf install openssl-libs` on `provided.al2023`; it conflicts with `openssl-snapsafe-libs`)
 - Architecture mismatch — Dockerfile pins `linux/amd64`. If the function is **arm64** in the console, either switch the function to x86_64 or build with `--platform linux/arm64`
 - Missing `lib/mangum.lux` in `/var/task/lib/` — the Dockerfile copies it; rebuild
 
