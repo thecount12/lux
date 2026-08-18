@@ -18,6 +18,7 @@ COPY lambda/bootstrap /var/runtime/bootstrap
 
 # Lux handler script (edit this to implement your business logic).
 COPY lambda/handler.lux /var/task/lambda/handler.lux
+COPY lib/mangum.lux /var/task/lib/mangum.lux
 
 RUN chmod +x /var/runtime/bootstrap /var/task/lux
 
