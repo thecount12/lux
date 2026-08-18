@@ -5,7 +5,7 @@ Lux is a dynamically-typed scripting language for system automation, cloud integ
 ## 🌟 Why "Lux"?
 The name **Lux** (Latin for "light") signifies the evolution of this project. While it maintains full parity with the original Lox specification, it has been "enlightened" with new features, better performance, and first-class support for the **Plan 9** operating system.
 
-Built from first principles (inspired by "Crafting Interpreters"), Lux combines a clean language design with modern features: HTTP/HTTPS, cryptography, AWS integration, databases, and file I/O.
+Built from first principles (inspired by "Crafting Interpreters"), Lux combines a clean language design with modern features: HTTP/HTTPS, cryptography, AWS integration, databases, and file I/O. The language itself is defined in [SPEC.md](SPEC.md).
 
 ## Features
 
@@ -1962,6 +1962,7 @@ if (loaded != nil) {
 
 ## Learning Resources
 
+- **[SPEC.md](SPEC.md)** — language definition (grammar, types, operators, natives)
 - **tutorial.lux** - Start here for a guided tour of all features
 - **examples.lux** - Practical examples including bank accounts, game characters, and data structures
 - **quickref.lux** - Syntax cheatsheet and common patterns
