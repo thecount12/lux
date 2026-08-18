@@ -1,166 +1,154 @@
-// Example: Using AWS credentials to make custom AWS API calls from Lux
-// This shows how to call S3 (or any AWS service) without using the built-in s3* functions
+// Custom AWS API calls from Lux without the built-in s3* natives.
+// Uses native getAwsTimestamp() (do not redefine it — it returns
+// {amzDate, dateStamp}, not a string) and httpRequest() for the real call.
+//
+// Credentials: paste STS Option 2 into .env (see examples/config.lux).
+// Run from posix/ or examples/:
+//   ./lux ../examples/aws_custom_api.lux
+//   ./lux ../examples/aws_custom_api.lux my-bucket documents/
 
-// AWS Configuration
-var bucket = "my-bucket";
-var accessKey = "AKIAIOSFODNN7EXAMPLE";
-var secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
-var region = "us-east-1";
-var sessionToken = nil;  // Optional, for temporary credentials
+import "../lib/aws.lux";
+import "../examples/config.lux";
 
-class Dict {
+class Headers {
     init() {}
 }
 
-fun attrS(value) {
-    var attr = Dict();
-    attr.S = value;
-    return attr;
-}
-
-fun makeKey(idValue) {
-    var key = Dict();
-    key.id = attrS(idValue);
-    return key;
-}
-
-// Get current UTC timestamp in AWS format
-fun getAwsTimestamp() {
-    // In production, you'd get actual UTC time
-    // For now, hardcode example: "20240307T123045Z"
-    return "20240307T123045Z";
-}
-
-fun getAwsDateStamp() {
-    // Extract date from timestamp: "20240307"
-    return "20240307";
-}
-
-// Example 1: Custom S3 ListObjects request
-fun listS3Objects(bucket, prefix) {
-    var amzDate = getAwsTimestamp();
-    var dateStamp = getAwsDateStamp();
-    
-    var host = bucket + ".s3." + region + ".amazonaws.com";
-    var uri = "/";
-    var queryString = "list-type=2&prefix=" + prefix;
-    
-    // Hash empty payload for GET request
-    var payloadHash = sha256("");
-    
-    // Create AWS Signature V4
+fun signedHeaders(method, host, uri, queryString, payload) {
+    var timestamp = getAwsTimestamp();
+    var amzDate = timestamp.amzDate;
+    var dateStamp = timestamp.dateStamp;
+    var payloadHash = sha256(payload);
     var authHeader = awsSignRequest(
-        "GET",           // method
-        host,            // host
-        uri,             // uri
-        queryString,     // queryString
-        payloadHash,     // payloadHash
-        accessKey,       // accessKey
-        secretKey,       // secretKey
-        region,          // region
-        "s3",            // service
-        amzDate,         // amzDate
-        dateStamp,       // dateStamp
-        sessionToken     // sessionToken (nil = not included)
+        method,
+        host,
+        uri,
+        queryString,
+        payloadHash,
+        accessKey,
+        secretKey,
+        region,
+        "s3",
+        amzDate,
+        dateStamp,
+        sessionToken
     );
-    
-    // Build full URL
-    var url = "https://" + host + "/?" + queryString;
-    
-    // Make HTTP request (manual approach since httpGet doesn't support custom headers)
-    print "URL: " + url;
-    print "Authorization: " + authHeader;
-    print "x-amz-date: " + amzDate;
-    print "x-amz-content-sha256: " + payloadHash;
-    
-    // Note: You would need to extend httpGet to accept custom headers, or use httpPost
-    // with a custom HTTP client that supports full header control
-    
-    return authHeader;
+
+    var headers = Headers();
+    headers.Authorization = authHeader;
+    headers.x_amz_date = amzDate;
+    headers.x_amz_content_sha256 = payloadHash;
+    if (sessionToken != nil and sessionToken != "") {
+        headers.x_amz_security_token = sessionToken;
+    }
+    return headers;
 }
 
-// Example 2: DynamoDB GetItem (JSON protocol)
-fun dynamoGetItem(tableName, key) {
-    var amzDate = getAwsTimestamp();
-    var dateStamp = getAwsDateStamp();
-    
-    var host = "dynamodb." + region + ".amazonaws.com";
+fun listS3Objects(bucketName, prefix) {
+    var host = bucketName + ".s3." + region + ".amazonaws.com";
     var uri = "/";
-    var queryString = "";
-    
-    // Build JSON payload
+    var queryString = "list-type=2";
+    if (prefix != nil and prefix != "") {
+        queryString = queryString + "&prefix=" + awsFormEncode(prefix);
+    }
+
+    var headers = signedHeaders("GET", host, uri, queryString, "");
+    var url = "https://" + host + "/?" + queryString;
+    print "GET " + url;
+    return httpRequest("GET", url, nil, headers);
+}
+
+fun dynamoGetItem(tableName, key) {
+    var host = "dynamodb." + region + ".amazonaws.com";
     var requestPayload = Dict();
     requestPayload.TableName = tableName;
     requestPayload.Key = key;
     var payload = toJSON(requestPayload);
-    
-    // Hash the payload
     var payloadHash = sha256(payload);
-    
-    // Create AWS Signature V4
+
+    var timestamp = getAwsTimestamp();
+    var amzDate = timestamp.amzDate;
+    var dateStamp = timestamp.dateStamp;
     var authHeader = awsSignRequest(
-        "POST",          // method
-        host,            // host
-        uri,             // uri
-        queryString,     // queryString (empty for POST)
-        payloadHash,     // payloadHash
-        accessKey,       // accessKey
-        secretKey,       // secretKey
-        region,          // region
-        "dynamodb",      // service
-        amzDate,         // amzDate
-        dateStamp,       // dateStamp
-        sessionToken     // sessionToken
+        "POST",
+        host,
+        "/",
+        "",
+        payloadHash,
+        accessKey,
+        secretKey,
+        region,
+        "dynamodb",
+        amzDate,
+        dateStamp,
+        sessionToken
     );
-    
+
+    var headers = Headers();
+    headers.Authorization = authHeader;
+    headers.x_amz_date = amzDate;
+    headers.x_amz_content_sha256 = payloadHash;
+    headers.X_Amz_Target = "DynamoDB_20120810.GetItem";
+    headers.Content_Type = "application/x-amz-json-1.0";
+    if (sessionToken != nil and sessionToken != "") {
+        headers.x_amz_security_token = sessionToken;
+    }
+
     var url = "https://" + host + "/";
-    
-    print "DynamoDB Request:";
-    print "URL: " + url;
-    print "Authorization: " + authHeader;
-    print "x-amz-date: " + amzDate;
-    print "x-amz-target: DynamoDB_20120810.GetItem";
-    print "Payload: " + payload;
-    
-    return authHeader;
+    print "POST " + url + "  target=DynamoDB_20120810.GetItem";
+    return httpRequest("POST", url, payload, headers);
 }
 
-// Example 3: Calculate signature components independently
 fun demonstrateCrypto() {
-    print "\n=== Crypto Utilities ===";
-    
+    print "=== Crypto utilities ===";
     var data = "Hello, World!";
-    var hash = sha256(data);
-    print "SHA256('" + data + "') = " + hash;
-    
-    var key = "secret";
-    var hmac = hmacSha256(key, data);
-    print "HMAC-SHA256(key='" + key + "', data='" + data + "') = " + hmac;
-    
-    // Empty payload hash (common for GET requests)
-    var emptyHash = sha256("");
-    print "SHA256('') = " + emptyHash;
+    print "SHA256('" + data + "') = " + sha256(data);
+    print "HMAC-SHA256('secret', '" + data + "') = " + hmacSha256("secret", data);
+    print "SHA256('') = " + sha256("");
 }
 
-// Run examples
-print "=== AWS Custom API Examples ===\n";
+fun printBody(label, body) {
+    if (body == nil) {
+        print label + ": request failed (nil)";
+        return;
+    }
+    var shown = body;
+    if (len(shown) > 800) {
+        shown = strSlice(shown, 0, 800) + "...";
+    }
+    print label + ":";
+    print shown;
+}
 
-// Example with S3
-print "Example 1: S3 ListObjects";
-listS3Objects(bucket, "documents/");
-
-print "\n";
-
-// Example with DynamoDB
-print "Example 2: DynamoDB GetItem";
-var key = makeKey("user123");
-dynamoGetItem("Users", key);
-
-print "\n";
-
-// Crypto utilities demo
+print "=== AWS Custom API Examples ===";
 demonstrateCrypto();
+print "";
 
-print "\n=== Complete! ===";
-print "Note: To actually make requests, you need to extend httpGet/httpPost";
-print "to accept custom headers (Authorization, x-amz-date, etc.)";
+if (accessKey == nil) {
+    print "No credentials loaded.";
+    print "Copy examples/env.example to .env and paste STS keys, then re-run.";
+} else {
+    var argv = args();
+    var bucketName = bucket;
+    var prefix = "documents/";
+    if (argv.length > 0) {
+        bucketName = argv[0];
+    }
+    if (argv.length > 1) {
+        prefix = argv[1];
+    }
+
+    print "Using access key " + strSlice(accessKey, 0, 8) + "... region=" + region;
+    print "";
+    print "Example 1: S3 ListObjects";
+    var listed = listS3Objects(bucketName, prefix);
+    printBody("S3", listed);
+
+    print "";
+    print "Example 2: DynamoDB GetItem";
+    var item = dynamoGetItem("Users", makeKey("user123"));
+    printBody("DynamoDB", item);
+}
+
+print "";
+print "=== Complete ===";

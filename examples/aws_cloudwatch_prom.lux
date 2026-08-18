@@ -1,0 +1,117 @@
+// CloudWatch -> Prometheus exporter.
+// GET /metrics pulls GetMetricStatistics and returns exposition format.
+// Optional Pushgateway PUT via a third CLI arg.
+//
+// Usage (from posix/ or examples/):
+//   ./lux ../examples/aws_cloudwatch_prom.lux my-function 9106
+//   ./lux ../examples/aws_cloudwatch_prom.lux my-function 9106 http://127.0.0.1:9091
+//
+// Credentials: .env in the working directory (examples/config.lux).
+
+import "../lib/aws.lux";
+import "../examples/config.lux";
+
+var cwClient = nil;
+var cwFunctionName = "my-function";
+var cwPushUrl = nil;
+
+fun promLabels(functionName, stat) {
+    return "{region=\"" + region + "\",functionname=\"" + functionName +
+        "\",stat=\"" + stat + "\"}";
+}
+
+fun scrapeMetric(cw, namespace, metricName, functionName, period, stat, startIso, endIso) {
+    var dims = [awsDim("FunctionName", functionName)];
+    var xml = cw.getMetricStatistics(namespace, metricName, dims, period, stat, startIso, endIso);
+    return cw.lastDatapoint(xml, stat);
+}
+
+fun collectText(cw, functionName) {
+    var now = epoch();
+    var startIso = awsIsoUtc(now - 600);
+    var endIso = awsIsoUtc(now);
+    var period = 60;
+
+    var invocations = scrapeMetric(cw, "AWS/Lambda", "Invocations", functionName, period, "Sum", startIso, endIso);
+    var errors = scrapeMetric(cw, "AWS/Lambda", "Errors", functionName, period, "Sum", startIso, endIso);
+    var duration = scrapeMetric(cw, "AWS/Lambda", "Duration", functionName, period, "Average", startIso, endIso);
+
+    var ok = 1;
+    if (invocations == nil or errors == nil or duration == nil) {
+        ok = 0;
+        if (invocations == nil) {
+            invocations = 0;
+        }
+        if (errors == nil) {
+            errors = 0;
+        }
+        if (duration == nil) {
+            duration = 0;
+        }
+    }
+
+    var text = "# HELP cloudwatch_scrape_success 1 if last CloudWatch pull worked\n";
+    text = text + "# TYPE cloudwatch_scrape_success gauge\n";
+    text = text + "cloudwatch_scrape_success " + ok + "\n";
+    text = text + "# HELP aws_lambda_invocations CloudWatch AWS/Lambda Invocations\n";
+    text = text + "# TYPE aws_lambda_invocations gauge\n";
+    text = text + "aws_lambda_invocations" + promLabels(functionName, "Sum") + " " + invocations + "\n";
+    text = text + "# HELP aws_lambda_errors CloudWatch AWS/Lambda Errors\n";
+    text = text + "# TYPE aws_lambda_errors gauge\n";
+    text = text + "aws_lambda_errors" + promLabels(functionName, "Sum") + " " + errors + "\n";
+    text = text + "# HELP aws_lambda_duration CloudWatch AWS/Lambda Duration\n";
+    text = text + "# TYPE aws_lambda_duration gauge\n";
+    text = text + "aws_lambda_duration" + promLabels(functionName, "Average") + " " + duration + "\n";
+    return text;
+}
+
+fun pushGateway(text, url, regionName) {
+    var target = url;
+    if (!strStartsWithAt(target, "http", 0)) {
+        return;
+    }
+    var slash = len(target) - 1;
+    if (target[slash] == "/") {
+        target = strSlice(target, 0, slash);
+    }
+    target = target + "/metrics/job/cloudwatch/region/" + regionName;
+    var headers = AwsHeaders();
+    headers.Content_Type = "text/plain";
+    httpRequest("PUT", target, text, headers);
+}
+
+fun handleMetrics(req, res) {
+    var text = collectText(cwClient, cwFunctionName);
+    if (cwPushUrl != nil) {
+        pushGateway(text, cwPushUrl, region);
+    }
+    res.send(text);
+}
+
+if (accessKey == nil) {
+    print "No credentials loaded. Copy examples/env.example to .env and paste STS keys.";
+} else {
+    var argv = args();
+    var port = 9106;
+    if (argv.length > 0) {
+        cwFunctionName = argv[0];
+    }
+    if (argv.length > 1) {
+        var parsed = parseJSON(argv[1]);
+        if (parsed != nil) {
+            port = parsed;
+        }
+    }
+    if (argv.length > 2) {
+        cwPushUrl = argv[2];
+    }
+
+    cwClient = CloudWatchClient(aws);
+    print "CloudWatch Prometheus exporter on http://0.0.0.0:" + port + "/metrics";
+    print "function=" + cwFunctionName + " region=" + region;
+
+    var server = Server(port);
+    server.workers(1);
+    server.get("/metrics", handleMetrics);
+    server.start();
+}

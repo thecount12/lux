@@ -132,7 +132,10 @@ var auth = awsSignRequest(
 
 ### DynamoDB (JSON)
 ```lux
-var payload = toJSON({"TableName": "Users", "Key": {"id": {"S": "user123"}}});
+var requestPayload = Dict();
+requestPayload.TableName = "Users";
+requestPayload.Key = makeKey("user123");
+var payload = toJSON(requestPayload);
 var payloadHash = sha256(payload);
 var host = "dynamodb.us-east-1.amazonaws.com";
 
@@ -146,6 +149,29 @@ var auth = awsSignRequest(
 // Headers: Authorization, x-amz-date, x-amz-target: DynamoDB_20120810.GetItem
 // Body: {payload}
 ```
+
+### CloudWatch (query protocol, XML)
+
+CloudWatch is **not** JSON like DynamoDB. Sign a POST whose body is `application/x-www-form-urlencoded` (`Action=GetMetricStatistics&Version=2010-08-01&...`). The response is XML; use `parseXml(xml, "Sum")` (or `"Average"`). See `CloudWatchClient` in `lib/aws.lux` and the Prometheus exporters:
+
+- `examples/aws_cloudwatch_prom.lux` — Lux `/metrics` server
+- `examples/cw_prom.py` — boto3 `/metrics` server (and optional Pushgateway)
+
+## Credentials from `.env`
+
+`loadAwsCredentials()` in `lib/aws.lux` reads a dotenv / shared-credentials dump (STS “Option 2”):
+
+```
+[960491734164_AccountAdmin]
+aws_access_key_id=ASIA...
+aws_secret_access_key=...
+aws_session_token=...
+region=us-east-1
+```
+
+Copy `examples/env.example` to `.env` in the working directory. `examples/config.lux` loads that file into `accessKey`, `secretKey`, `sessionToken`, `region`, and `bucket`.
+
+**Do not** define a Lux function named `getAwsTimestamp`. The native returns an instance with `amzDate` / `dateStamp`; a local function that returns a string will break signing.
 
 ### With STS Temporary Credentials
 AWS STS (Security Token Service) provides temporary credentials that include a session token. These work with all AWS services:
@@ -176,12 +202,15 @@ var auth = awsSignRequest(
 
 ## Example Files
 
-Four example files demonstrate usage:
-
-1. **`examples/aws_crypto_utils.lux`** - Low-level crypto functions
-2. **`examples/aws_custom_api.lux`** - Basic AWS API calls
-3. **`examples/aws_helper.lux`** - Structured helper classes for S3 and DynamoDB
-4. **`examples/aws_sts_example.lux`** - Using temporary credentials from AWS STS
+1. **`lib/aws.lux`** - Importable clients (S3, DynamoDB, CloudWatch) and `.env` loader
+2. **`examples/config.lux`** - Loads `.env` into globals
+3. **`examples/aws_custom_api.lux`** - Signed `httpRequest` calls without the built-in `s3*` natives
+4. **`examples/aws_helper.lux`** - Demo of the helper classes
+5. **`examples/aws_cloudwatch_prom.lux`** - CloudWatch → Prometheus `/metrics`
+6. **`examples/cw_prom.py`** - Same exporter in Python/boto3
+7. **`examples/aws_ecs_metrics.lux`** - ECS CPU/memory CloudWatch → CSV
+8. **`examples/aws_sts_example.lux`** - Temporary credentials from AWS STS
+9. **`examples/aws_crypto_utils.lux`** - Low-level crypto functions
 
 ## STS (Temporary Credentials) Support
 
@@ -215,7 +244,7 @@ To improve AWS ergonomics further:
 2. Add an HTTP variant that returns status code + headers + body.
 3. Add higher-level XML helpers for S3 list/get workflows.
 
-You can already make full AWS API calls from Lux today using `getAwsTimestamp()`, `awsSignRequest()`, and `httpRequest()`.
+You can already make full AWS API calls from Lux today using `getAwsTimestamp()`, `awsSignRequest()`, and `httpRequest()`. For CloudWatch, use query-protocol form bodies (`CloudWatchClient` in `lib/aws.lux`), not `X-Amz-Target` JSON.
 
 ## Platform Differences
 

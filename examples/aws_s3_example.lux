@@ -76,4 +76,5 @@ if (response != nil) {
 }
 */
 
-print "AWS S3 example loaded. Edit the file to add your credentials and test!";
+print "AWS S3 example loaded.";
+print "Prefer examples/aws_custom_api.lux with a .env (see examples/config.lux).";

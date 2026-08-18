@@ -1,0 +1,209 @@
+// Pull ECS Fargate CPU/memory from CloudWatch Container Insights.
+// Matches the console graph:
+//   Namespace  ECS/ContainerInsights
+//   Metrics    TaskCpuUtilization / TaskMemoryUtilization
+//   Dimensions ServiceName, ClusterName  (console order)
+//   Stats      Average, Minimum, Maximum
+//   Period     60s
+//
+// Usage (from posix/ or examples/, with .env credentials):
+//   ./lux ../examples/aws_ecs_metrics.lux dcp-web-bff-staging-a-ecs-fargate
+//   ./lux ../examples/aws_ecs_metrics.lux CLUSTER SERVICE 3 ecs-cpu-mem.csv
+
+import "../lib/aws.lux";
+import "../examples/config.lux";
+
+fun csvCell(value) {
+    var text = "";
+    if (value != nil) {
+        text = "" + value;
+    }
+    if (strFind(text, ",") >= 0 or strFind(text, "\"") >= 0) {
+        var out = "\"";
+        var i = 0;
+        while (i < len(text)) {
+            if (text[i] == "\"") {
+                out = out + "\"\"";
+            } else {
+                out = out + text[i];
+            }
+            i = i + 1;
+        }
+        return out + "\"";
+    }
+    return text;
+}
+
+fun valueAt(series, timestamp) {
+    if (series == nil) {
+        return "";
+    }
+    var idx = arrayIndexOf(series.timestamps, timestamp);
+    if (idx < 0) {
+        return "";
+    }
+    return series.values[idx];
+}
+
+fun collectTimestamps(cpu, mem) {
+    var stamps = [];
+    var i = 0;
+    while (cpu != nil and i < cpu.timestamps.length) {
+        var ts = cpu.timestamps[i];
+        if (!arrayContains(stamps, ts)) {
+            stamps = stamps + [ts];
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (mem != nil and i < mem.timestamps.length) {
+        var ts = mem.timestamps[i];
+        if (!arrayContains(stamps, ts)) {
+            stamps = stamps + [ts];
+        }
+        i = i + 1;
+    }
+    arraySort(stamps);
+    return stamps;
+}
+
+fun csvHeader() {
+    return "timestamp,region,cluster,service,cpu_avg,cpu_min,cpu_max,mem_avg,mem_min,mem_max";
+}
+
+fun csvRow(ts, clusterName, serviceName, cpuAvg, cpuMin, cpuMax, memAvg, memMin, memMax) {
+    return csvCell(ts) + "," + csvCell(region) + "," +
+        csvCell(clusterName) + "," + csvCell(serviceName) + "," +
+        csvCell(valueAt(cpuAvg, ts)) + "," + csvCell(valueAt(cpuMin, ts)) + "," +
+        csvCell(valueAt(cpuMax, ts)) + "," + csvCell(valueAt(memAvg, ts)) + "," +
+        csvCell(valueAt(memMin, ts)) + "," + csvCell(valueAt(memMax, ts));
+}
+
+fun dumpXml(label, xml) {
+    if (xml == nil) {
+        print label + ": nil";
+        return;
+    }
+    var shown = xml;
+    if (len(shown) > 600) {
+        shown = strSlice(shown, 0, 600) + "...";
+    }
+    print label + ": " + shown;
+}
+
+if (accessKey == nil) {
+    print "No credentials loaded. Copy examples/env.example to .env and paste STS keys.";
+} else {
+    var argv = args();
+    var clusterName = "dcp-web-bff-staging-a-ecs-fargate";
+    var serviceName = "dcp-web-bff-staging-a-ecs-fargate";
+    var hours = 3;
+    var outfile = "ecs-cpu-memory.csv";
+    if (argv.length > 0) {
+        clusterName = argv[0];
+        serviceName = argv[0];
+    }
+    if (argv.length > 1 and argv[1] != "-") {
+        serviceName = argv[1];
+    }
+    if (argv.length > 1 and argv[1] == "-") {
+        serviceName = "";
+    }
+    if (argv.length > 2) {
+        var parsedHours = parseJSON(argv[2]);
+        if (parsedHours != nil) {
+            hours = parsedHours;
+        }
+    }
+    if (argv.length > 3) {
+        outfile = argv[3];
+    }
+
+    var now = epoch();
+    var startIso = awsIsoUtc(now - hours * 3600);
+    var endIso = awsIsoUtc(now);
+    var period = 60;
+    var stats = ["Average", "Minimum", "Maximum"];
+    var dims = [awsDim("ServiceName", serviceName), awsDim("ClusterName", clusterName)];
+    if (serviceName == "") {
+        dims = [awsDim("ClusterName", clusterName)];
+    }
+
+    print "ECS/ContainerInsights TaskCpuUtilization + TaskMemoryUtilization";
+    print "cluster=" + clusterName + "  service=" + serviceName + "  region=" + region;
+    print "window " + startIso + " .. " + endIso + "  period=" + period + "s  stats=avg/min/max";
+
+    var cw = CloudWatchClient(aws);
+    var ns = "ECS/ContainerInsights";
+    var cpuXml = cw.getMetricStatistics(ns, "TaskCpuUtilization", dims, period, stats, startIso, endIso);
+    var memXml = cw.getMetricStatistics(ns, "TaskMemoryUtilization", dims, period, stats, startIso, endIso);
+
+    var cpuAvg = cw.parseSeries(cpuXml, "Average");
+    var cpuMin = cw.parseSeries(cpuXml, "Minimum");
+    var cpuMax = cw.parseSeries(cpuXml, "Maximum");
+    var memAvg = cw.parseSeries(memXml, "Average");
+    var memMin = cw.parseSeries(memXml, "Minimum");
+    var memMax = cw.parseSeries(memXml, "Maximum");
+
+    if (cpuAvg == nil) {
+        print "CPU error: " + cw.errorMessage(cpuXml);
+        dumpXml("CPU XML", cpuXml);
+    }
+    if (memAvg == nil) {
+        print "Memory error: " + cw.errorMessage(memXml);
+        dumpXml("Memory XML", memXml);
+    }
+
+    var stamps = collectTimestamps(cpuAvg, memAvg);
+    print "datapoints: " + stamps.length;
+    print "";
+    print "--- sample ---";
+    print csvHeader();
+    var shown = stamps.length;
+    if (shown > 8) {
+        shown = 8;
+    }
+    var i = 0;
+    while (i < shown) {
+        print csvRow(stamps[i], clusterName, serviceName, cpuAvg, cpuMin, cpuMax, memAvg, memMin, memMax);
+        i = i + 1;
+    }
+    if (stamps.length > shown) {
+        print "... " + (stamps.length - shown) + " more rows";
+    }
+    print "--- end sample ---";
+    print "";
+
+    if (stamps.length == 0) {
+        dumpXml("CPU XML", cpuXml);
+        dumpXml("Memory XML", memXml);
+        print "No datapoints. Listing ECS/ContainerInsights metrics for this cluster...";
+        var listed = cw.listMetrics(ns, "TaskCpuUtilization", [
+            awsDim("ServiceName", serviceName),
+            awsDim("ClusterName", clusterName)
+        ]);
+        var names = parseXml(listed, "MetricName");
+        if (names == nil or names.length == 0) {
+            dumpXml("ListMetrics", listed);
+        } else {
+            print "Available MetricName values:";
+            var ni = 0;
+            while (ni < names.length) {
+                print "  " + names[ni];
+                ni = ni + 1;
+            }
+        }
+    } else {
+        var csv = csvHeader() + "\n";
+        i = 0;
+        while (i < stamps.length) {
+            csv = csv + csvRow(stamps[i], clusterName, serviceName, cpuAvg, cpuMin, cpuMax, memAvg, memMin, memMax) + "\n";
+            i = i + 1;
+        }
+        if (writeFile(outfile, csv)) {
+            print "Wrote " + stamps.length + " rows to " + outfile;
+        } else {
+            print "Failed to write " + outfile;
+        }
+    }
+}

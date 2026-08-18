@@ -1,0 +1,66 @@
+// List S3 object keys under a prefix (native s3ListObjects + parseXml).
+// Run from posix/ or examples/ with .env credentials (STS session token required).
+//
+//   ./lux ../examples/s3_list_prefix.lux
+//   ./lux ../examples/s3_list_prefix.lux my-bucket Container_IPs/
+
+import "../examples/config.lux";
+
+var bucketName = "abc123";
+var prefix = "Container_IPs/";
+var awsRegion = region;
+if (awsRegion == nil or awsRegion == "") {
+    awsRegion = "us-west-2";
+}
+
+var argv = args();
+if (argv.length > 0) {
+    bucketName = argv[0];
+}
+if (argv.length > 1) {
+    prefix = argv[1];
+}
+if (argv.length > 2) {
+    awsRegion = argv[2];
+}
+
+if (accessKey == nil or secretKey == nil) {
+    print "No credentials. Put STS keys in .env (see examples/config.lux).";
+} else if (sessionToken == nil or sessionToken == "") {
+    print "Missing sessionToken. Temporary ASIA keys need aws_session_token in .env.";
+} else {
+    print "Listing s3://" + bucketName + "/" + prefix + "  region=" + awsRegion;
+    print "Using rebuilt posix/lux (SigV4 signs full STS token + x-amz-content-sha256).";
+    print "accessKey " + strSlice(accessKey, 0, 8) + "...  tokenLen=" + len(sessionToken);
+    print "secretLen=" + len(secretKey);
+
+    var list = s3ListObjects(bucketName, accessKey, secretKey, awsRegion, prefix, sessionToken);
+    if (list == nil) {
+        print "s3ListObjects returned nil (HTTP/network failure). Rebuild posix/lux if you still see SignatureDoesNotMatch.";
+    } else if (strFind(list, "<Error>") >= 0) {
+        var codes = parseXml(list, "Code");
+        var msgs = parseXml(list, "Message");
+        var code = "";
+        var msg = list;
+        if (codes != nil and codes.length > 0) {
+            code = codes[0];
+        }
+        if (msgs != nil and msgs.length > 0) {
+            msg = msgs[0];
+        }
+        print "S3 error " + code + ": " + msg;
+    } else {
+        var keys = parseXml(list, "Key");
+        if (keys == nil) {
+            print "No <Key> tags. Raw response:";
+            print list;
+        } else {
+            print "keys: " + keys.length;
+            var i = 0;
+            while (i < keys.length) {
+                print keys[i];
+                i = i + 1;
+            }
+        }
+    }
+}

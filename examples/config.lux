@@ -1,0 +1,29 @@
+// Load AWS credentials from a dotenv / shared-credentials file into globals.
+// Paste STS "Option 2" output into .env in the working directory:
+//
+//   [960491734164_AccountAdmin]
+//   aws_access_key_id=ASIA...
+//   aws_secret_access_key=...
+//   aws_session_token=...
+//   region=us-east-1
+//
+// Run from posix/ or examples/ (import paths are relative to CWD).
+
+import "../lib/aws.lux";
+
+var accessKey = nil;
+var secretKey = nil;
+var sessionToken = nil;
+var region = "us-east-1";
+var bucket = "my-bucket";
+
+var aws = loadAwsCredentials(nil);
+if (aws != nil) {
+    accessKey = aws.accessKey;
+    secretKey = aws.secretKey;
+    sessionToken = aws.sessionToken;
+    region = aws.region;
+    if (aws.bucket != nil) {
+        bucket = aws.bucket;
+    }
+}
