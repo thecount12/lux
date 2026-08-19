@@ -1,0 +1,40 @@
+// Pre-Mangum Lambda handler: read the event file, write a proxy JSON file.
+// No Server, no lib/mangum.lux. Same contract as lambda/bootstrap:
+//   /tmp/lambda_event.json  →  /tmp/lambda_response.json
+//
+// Local:
+//   printf '%s' '{"hello":"world"}' > /tmp/lambda_event.json
+//   cd posix && ./lux ../examples/lambda_raw.lux
+//   cat /tmp/lambda_response.json
+//
+// To use this on Lambda instead of handler.lux, copy it to
+// lambda/handler.lux (and drop lib/mangum.lux from the image).
+
+class LambdaResponse {
+    init(statusCode, body) {
+        this.statusCode = statusCode;
+        this.body = body;
+    }
+}
+
+fun writeLambdaResponse(statusCode, bodyJsonString) {
+    var response = LambdaResponse(statusCode, bodyJsonString);
+    var serialized = toJSON(response);
+    if (serialized == nil) {
+        writeFile("/tmp/lambda_response.json", "{\"statusCode\":500,\"body\":\"{\\\"error\\\":\\\"serialization failed\\\"}\"}");
+        return;
+    }
+    writeFile("/tmp/lambda_response.json", serialized);
+}
+
+var rawEvent = readFile("/tmp/lambda_event.json");
+if (rawEvent == nil) {
+    writeLambdaResponse(500, "{\"ok\":false,\"error\":\"event read failed\"}");
+} else {
+    var event = parseJSON(rawEvent);
+    if (event == nil) {
+        writeLambdaResponse(400, "{\"ok\":false,\"error\":\"invalid event json\"}");
+    } else {
+        writeLambdaResponse(200, "{\"ok\":true,\"message\":\"hello from lux lambda\"}");
+    }
+}

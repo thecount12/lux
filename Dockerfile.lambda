@@ -1,4 +1,8 @@
-FROM amazonlinux:2023 AS build
+# Default matches a typical x86_64 Lambda. Override:
+#   docker build --build-arg LAMBDA_PLATFORM=linux/arm64 -f Dockerfile.lambda ...
+ARG LAMBDA_PLATFORM=linux/amd64
+
+FROM --platform=$LAMBDA_PLATFORM amazonlinux:2023 AS build
 
 RUN dnf -y update \
     && dnf -y install gcc make curl-devel openssl-devel \
@@ -8,18 +12,40 @@ WORKDIR /src
 COPY posix/ ./posix/
 RUN make -C posix clean && make -C posix
 
-FROM public.ecr.aws/lambda/provided:al2023
+# Shared libs lux needs, excluding libc (use the Lambda image's glibc).
+RUN mkdir -p /src/lux-libs \
+    && ldd /src/posix/lux | awk '/=> \// { print $3 }' | while read -r lib; do \
+         case "$lib" in \
+           */ld-linux*|*/libc.so*|*/libm.so*|*/libpthread.so*|*/libdl.so*|*/librt.so*|*/libresolv.so*) \
+             continue ;; \
+         esac; \
+         cp -a "$lib" /src/lux-libs/; \
+       done
 
-# Lux runtime binary built for Linux.
+ARG LAMBDA_PLATFORM=linux/amd64
+FROM --platform=$LAMBDA_PLATFORM public.ecr.aws/lambda/provided:al2023
+
+WORKDIR /var/task
+
+# Do not dnf install openssl-libs: provided.al2023 already has openssl-snapsafe-libs.
 COPY --from=build /src/posix/lux /var/task/lux
+COPY --from=build /src/lux-libs /var/task/lib64
+ENV LD_LIBRARY_PATH=/var/task/lib64
 
-# Custom runtime bootstrap expected by AWS Lambda custom runtimes.
+RUN rm -rf /var/runtime/bootstrap
 COPY lambda/bootstrap /var/runtime/bootstrap
+RUN chmod 755 /var/runtime/bootstrap \
+    && ln -sf /var/runtime/bootstrap /var/task/bootstrap \
+    && chmod 755 /var/task/lux
 
-# Lux handler script (edit this to implement your business logic).
-COPY lambda/handler.lux /var/task/lambda/handler.lux
+COPY lambda/handler.lux /var/task/handler.lux
+COPY lambda/handler.lux /var/runtime/handler.lux
+COPY lib/mangum.lux /var/task/lib/mangum.lux
+COPY lib/mangum.lux /var/runtime/lib/mangum.lux
+RUN chmod a+rX /var/task /var/runtime \
+    && chmod a+r /var/task/handler.lux /var/runtime/handler.lux \
+       /var/task/lib/mangum.lux /var/runtime/lib/mangum.lux \
+    && chmod a+rx /var/task/lux \
+    && test -f /var/task/handler.lux && test -f /var/task/lib/mangum.lux && test -x /var/task/lux
 
-RUN chmod +x /var/runtime/bootstrap /var/task/lux
-
-# Unused for custom runtime, but AWS expects a CMD to exist.
-CMD ["bootstrap"]
+CMD ["/var/runtime/bootstrap"]

@@ -99,7 +99,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
 	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request."},
 	{"httpServer", "httpServer(port)", "Start a simple HTTP server (legacy, built-in routes)."},
-	{"Server", "Server(port)", "Create HTTP server with routing, middleware, static files."},
+	{"Server", "Server(port)", "Create HTTP server with routing, middleware, static files, and .handle() for Lambda."},
 	{"sha256", "sha256(text)", "Compute SHA-256 hash."},
 	{"hmacSha256", "hmacSha256(key, text)", "Compute HMAC-SHA256."},
 	{"typeof", "typeof(value)", "Return the runtime type name or class name for objects."},
@@ -3080,6 +3080,44 @@ static ObjClass* dictClass;
 static bool call(ObjClosure* closure, int argCount);
 static InterpretResult run(void);
 
+static const char* httpStatusText(int statusCode) {
+	if (statusCode == 200) return "OK";
+	if (statusCode == 201) return "Created";
+	if (statusCode == 400) return "Bad Request";
+	if (statusCode == 404) return "Not Found";
+	if (statusCode == 500) return "Internal Server Error";
+	return "OK";
+}
+
+static int resGetFd(ObjInstance* res) {
+	Value fdVal;
+	if (!tableGet(&res->fields, copyString("_fd", 3), &fdVal) || !IS_NUMBER(fdVal))
+		return -1;
+	return (int)AS_NUMBER(fdVal);
+}
+
+/* Write to the client socket, or capture body/type on res when _fd is absent (Server.handle). */
+static void resEmit(ObjInstance* res, int statusCode, const char* contentType,
+		const void* body, int bodyLen) {
+	int fd = resGetFd(res);
+	if (contentType == NULL) contentType = "text/plain";
+	if (body == NULL) {
+		body = "";
+		bodyLen = 0;
+	}
+	if (bodyLen < 0) bodyLen = 0;
+	tableSet(&res->fields, copyString("_statusCode", 11), NUMBER_VAL((double)statusCode));
+	if (fd >= 0) {
+		sendHttpResponseBinary(fd, statusCode, httpStatusText(statusCode),
+			contentType, body, bodyLen);
+		return;
+	}
+	tableSet(&res->fields, copyString("_contentType", 12),
+		OBJ_VAL(copyString(contentType, (int)strlen(contentType))));
+	tableSet(&res->fields, copyString("_body", 5),
+		OBJ_VAL(copyString((const char*)body, bodyLen)));
+}
+
 /* res.status(code) -> returns res for chaining */
 static Value resStatusNative(int argCount, Value* args) {
 	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_NUMBER(args[1]))
@@ -3095,21 +3133,13 @@ static Value resSendNative(int argCount, Value* args) {
 	if (argCount != 2 || !IS_INSTANCE(args[0]))
 		return NIL_VAL;
 	ObjInstance* res = AS_INSTANCE(args[0]);
-	Value fdVal;
-	ObjString* fdKey = copyString("_fd", 3);
-	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
-		return NIL_VAL;
-	int fd = (int)AS_NUMBER(fdVal);
 	Value statusVal;
-	ObjString* statusKey = copyString("_statusCode", 11);
 	int statusCode = 200;
-	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
+	ObjString* bodyObj;
+	if (tableGet(&res->fields, copyString("_statusCode", 11), &statusVal) && IS_NUMBER(statusVal))
 		statusCode = (int)AS_NUMBER(statusVal);
-	const char* statusText = (statusCode == 200) ? "OK" :
-		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
-		(statusCode == 500) ? "Internal Server Error" : "OK";
-	ObjString* bodyObj = valueToString(args[1]);
-	sendHttpResponseEx(fd, statusCode, statusText, "text/plain", bodyObj->chars);
+	bodyObj = valueToString(args[1]);
+	resEmit(res, statusCode, "text/plain", bodyObj->chars, bodyObj->length);
 	return NIL_VAL;
 }
 
@@ -3118,21 +3148,13 @@ static Value resHtmlNative(int argCount, Value* args) {
 	if (argCount != 2 || !IS_INSTANCE(args[0]))
 		return NIL_VAL;
 	ObjInstance* res = AS_INSTANCE(args[0]);
-	Value fdVal;
-	ObjString* fdKey = copyString("_fd", 3);
-	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
-		return NIL_VAL;
-	int fd = (int)AS_NUMBER(fdVal);
 	Value statusVal;
-	ObjString* statusKey = copyString("_statusCode", 11);
 	int statusCode = 200;
-	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
+	ObjString* bodyObj;
+	if (tableGet(&res->fields, copyString("_statusCode", 11), &statusVal) && IS_NUMBER(statusVal))
 		statusCode = (int)AS_NUMBER(statusVal);
-	const char* statusText = (statusCode == 200) ? "OK" :
-		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
-		(statusCode == 500) ? "Internal Server Error" : "OK";
-	ObjString* bodyObj = valueToString(args[1]);
-	sendHttpResponseEx(fd, statusCode, statusText, "text/html; charset=utf-8", bodyObj->chars);
+	bodyObj = valueToString(args[1]);
+	resEmit(res, statusCode, "text/html; charset=utf-8", bodyObj->chars, bodyObj->length);
 	return NIL_VAL;
 }
 
@@ -3183,26 +3205,18 @@ static Value resJsonNative(int argCount, Value* args) {
 	if (argCount != 2 || !IS_INSTANCE(args[0]))
 		return NIL_VAL;
 	ObjInstance* res = AS_INSTANCE(args[0]);
-	Value fdVal;
-	ObjString* fdKey = copyString("_fd", 3);
-	if (!tableGet(&res->fields, fdKey, &fdVal) || !IS_NUMBER(fdVal))
-		return NIL_VAL;
-	int fd = (int)AS_NUMBER(fdVal);
 	Value statusVal;
-	ObjString* statusKey = copyString("_statusCode", 11);
 	int statusCode = 200;
-	if (tableGet(&res->fields, statusKey, &statusVal) && IS_NUMBER(statusVal))
-		statusCode = (int)AS_NUMBER(statusVal);
-	const char* statusText = (statusCode == 200) ? "OK" :
-		(statusCode == 201) ? "Created" : (statusCode == 404) ? "Not Found" :
-		(statusCode == 500) ? "Internal Server Error" : "OK";
 	int cap = 256;
 	int len = 0;
-	char* buffer = malloc((size_t)cap);
+	char* buffer;
+	if (tableGet(&res->fields, copyString("_statusCode", 11), &statusVal) && IS_NUMBER(statusVal))
+		statusCode = (int)AS_NUMBER(statusVal);
+	buffer = malloc((size_t)cap);
 	if (buffer == NULL) return NIL_VAL;
 	buffer[0] = '\0';
 	serializeJsonValue(args[1], &buffer, &len, &cap);
-	sendHttpResponseEx(fd, statusCode, statusText, "application/json", buffer);
+	resEmit(res, statusCode, "application/json", buffer, len);
 	free(buffer);
 	return NIL_VAL;
 }
@@ -3349,6 +3363,175 @@ static char* serverLookupVhostRoot(ObjInstance* server, char* host) {
 	return NULL;
 }
 
+static ObjClosure* serverFindHandler(ObjArray* routes, const char* method,
+		const char* path, const char* host) {
+	ObjClosure* handler = NULL;
+	int pass;
+
+	if (routes == NULL || method == NULL || path == NULL)
+		return NULL;
+	if (host == NULL)
+		host = "";
+	for (pass = 0; pass < 2 && handler == NULL; pass++) {
+		int i;
+		for (i = 0; i < routes->count; i++) {
+			Value entVal = routes->elements[i];
+			Value methodVal, pathVal, handlerVal, hostVal;
+			int hasHost;
+			ObjInstance* ent;
+			if (!IS_INSTANCE(entVal)) continue;
+			ent = AS_INSTANCE(entVal);
+			if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
+			if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
+			if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
+			if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
+			hasHost = tableGet(&ent->fields, copyString("host", 4), &hostVal) && IS_STRING(hostVal);
+			if (pass == 0) {
+				if (!hasHost) continue;
+				if (strcasecmp(AS_CSTRING(hostVal), host) != 0) continue;
+			} else {
+				if (hasHost) continue;
+			}
+			if (strcmp(AS_CSTRING(methodVal), method) != 0) continue;
+			if (strcmp(AS_CSTRING(pathVal), path) != 0) continue;
+			handler = AS_CLOSURE(handlerVal);
+			break;
+		}
+	}
+	return handler;
+}
+
+static int serverTryStatic(ObjInstance* server, ObjInstance* res,
+		const char* method, const char* path, const char* host) {
+	Value staticVal;
+	const char* staticDir;
+	char filepath[2048];
+	size_t dirLen, pathLen;
+	FILE* f;
+	char* content;
+	const char* mime;
+	const char* reqPath;
+
+	if (method == NULL || strcmp(method, "GET") != 0)
+		return 0;
+	staticDir = serverLookupVhostRoot(server, (char*)host);
+	if (staticDir == NULL) {
+		if (!tableGet(&server->fields, copyString("_static_dir", 11), &staticVal) || !IS_STRING(staticVal))
+			return 0;
+		staticDir = AS_CSTRING(staticVal);
+	}
+	reqPath = (path != NULL) ? path : "/";
+	if (strstr(reqPath, "..") != NULL)
+		return 0;
+	dirLen = strlen(staticDir);
+	pathLen = strlen(reqPath);
+	if (dirLen + pathLen + 12 >= sizeof(filepath))
+		return 0;
+	snprintf(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
+	if (pathLen > 0 && (reqPath[pathLen - 1] == '/' || (pathLen == 1 && reqPath[0] == '/')))
+		strncat(filepath, "index.html", sizeof(filepath) - strlen(filepath) - 1);
+	f = fopen(filepath, "rb");
+	if (f == NULL)
+		return 0;
+	if (fseek(f, 0, SEEK_END) != 0) {
+		fclose(f);
+		return 0;
+	}
+	{
+		long fsize = ftell(f);
+		rewind(f);
+		if (fsize <= 0 || fsize >= 16 * 1024 * 1024) {
+			resEmit(res, 500, "application/json",
+				"{\"error\":\"file too large or empty\"}", 36);
+			fclose(f);
+			return 1;
+		}
+		content = malloc((size_t)fsize);
+		if (content == NULL) {
+			resEmit(res, 500, "application/json",
+				"{\"error\":\"out of memory\"}", 26);
+			fclose(f);
+			return 1;
+		}
+		{
+			size_t nread = fread(content, 1, (size_t)fsize, f);
+			mime = getMimeType(filepath);
+			resEmit(res, 200, mime, content, (int)nread);
+			free(content);
+		}
+	}
+	fclose(f);
+	return 1;
+}
+
+static void serverDispatch(ObjInstance* server, const char* method, const char* path,
+		const char* host, const char* body, ObjInstance* resObj) {
+	ObjInstance* reqObj;
+	Value reqVal, resVal, mwVal, routesVal, nextFn;
+	ObjArray* middlewares = NULL;
+	ObjArray* routes = NULL;
+	ObjClosure* handler;
+	Value* savedTop;
+
+	if (method == NULL) method = "GET";
+	if (path == NULL || path[0] == '\0') path = "/";
+	if (host == NULL) host = "";
+	if (body == NULL) body = "";
+
+	reqObj = newInstance(NULL);
+	push(OBJ_VAL(reqObj));
+	tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(method, (int)strlen(method))));
+	tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(path, (int)strlen(path))));
+	tableSet(&reqObj->fields, copyString("host", 4), OBJ_VAL(copyString(host, (int)strlen(host))));
+	tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(body, (int)strlen(body))));
+
+	if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
+		middlewares = AS_ARRAY(mwVal);
+	if (tableGet(&server->fields, copyString("_routes", 7), &routesVal) && IS_ARRAY(routesVal))
+		routes = AS_ARRAY(routesVal);
+
+	handler = serverFindHandler(routes, method, path, host);
+	reqVal = OBJ_VAL(reqObj);
+	resVal = OBJ_VAL(resObj);
+	nextFn = NIL_VAL;
+	if (handler != NULL && middlewares != NULL && middlewares->count > 0)
+		nextFn = OBJ_VAL(newNative(resNextNative));
+
+	pop(); /* req */
+
+	if (handler != NULL) {
+		savedTop = vm.stackTop;
+		if (middlewares != NULL && middlewares->count > 0) {
+			Value firstMw = middlewares->elements[0];
+			_mwChainMiddlewares = middlewares;
+			_mwChainIndex = 0;
+			_mwChainHandler = handler;
+			_mwChainReq = reqVal;
+			_mwChainRes = resVal;
+			push(firstMw);
+			push(reqVal);
+			push(resVal);
+			push(nextFn);
+			if (call(AS_CLOSURE(firstMw), 3)) {
+				run();
+			}
+		} else {
+			push(OBJ_VAL(handler));
+			push(reqVal);
+			push(resVal);
+			if (call(handler, 2)) {
+				run();
+			}
+		}
+		vm.stackTop = savedTop;
+	} else if (!serverTryStatic(server, resObj, method, path, host)) {
+		char errBody[256];
+		snprintf(errBody, sizeof(errBody),
+			"{\"error\":\"Not Found\",\"path\":\"%s\"}", path);
+		resEmit(resObj, 404, "application/json", errBody, (int)strlen(errBody));
+	}
+}
+
 /* Server.use(middleware) */
 static Value serverUseNative(int argCount, Value* args) {
 	if (argCount != 2 || !IS_INSTANCE(args[0]) || !IS_CLOSURE(args[1]))
@@ -3405,34 +3588,40 @@ static void serverHandleClient(ObjInstance* server, int client_fd, ObjArray* rou
 	char buffer[8192];
 	int totalRead = 0;
 	int n = read(client_fd, buffer, sizeof(buffer) - 1);
+	HttpRequest req;
+	ObjInstance* resObj;
+	(void)routes;
+	(void)defaultStaticDir;
+
 	if (n <= 0)
 		return;
 	totalRead = n;
 	buffer[totalRead] = '\0';
 
-	char* headerEnd = strstr(buffer, "\r\n\r\n");
-	if (headerEnd == NULL) headerEnd = strstr(buffer, "\n\n");
-	if (headerEnd != NULL) {
-		char* clHeader = strstr(buffer, "Content-Length:");
-		if (clHeader == NULL) clHeader = strstr(buffer, "content-length:");
-		if (clHeader != NULL) {
-			int contentLen = atoi(clHeader + 15);
-			int bodyStart = (headerEnd - buffer) + 4;
-			if (strstr(buffer, "\n\n") != NULL && strstr(buffer, "\r\n\r\n") == NULL)
-				bodyStart = (headerEnd - buffer) + 2;
-			int bodyReceived = totalRead - bodyStart;
-			int needMore = contentLen - bodyReceived;
-			while (needMore > 0 && totalRead < (int)sizeof(buffer) - 1) {
-				n = read(client_fd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
-				if (n <= 0) break;
-				totalRead += n;
-				needMore -= n;
+	{
+		char* headerEnd = strstr(buffer, "\r\n\r\n");
+		if (headerEnd == NULL) headerEnd = strstr(buffer, "\n\n");
+		if (headerEnd != NULL) {
+			char* clHeader = strstr(buffer, "Content-Length:");
+			if (clHeader == NULL) clHeader = strstr(buffer, "content-length:");
+			if (clHeader != NULL) {
+				int contentLen = atoi(clHeader + 15);
+				int bodyStart = (headerEnd - buffer) + 4;
+				if (strstr(buffer, "\n\n") != NULL && strstr(buffer, "\r\n\r\n") == NULL)
+					bodyStart = (headerEnd - buffer) + 2;
+				int bodyReceived = totalRead - bodyStart;
+				int needMore = contentLen - bodyReceived;
+				while (needMore > 0 && totalRead < (int)sizeof(buffer) - 1) {
+					n = read(client_fd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
+					if (n <= 0) break;
+					totalRead += n;
+					needMore -= n;
+				}
+				buffer[totalRead] = '\0';
 			}
-			buffer[totalRead] = '\0';
 		}
 	}
 
-	HttpRequest req;
 	if (parseHttpRequest(buffer, totalRead, &req) < 0) {
 		sendHttpResponse(client_fd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
 		return;
@@ -3440,142 +3629,109 @@ static void serverHandleClient(ObjInstance* server, int client_fd, ObjArray* rou
 	fprintf(stdout, "%s %s Host:%s\n", req.method, req.path, req.host);
 	fflush(stdout);
 
-	ObjInstance* reqObj = newInstance(NULL);
-	push(OBJ_VAL(reqObj));
-	tableSet(&reqObj->fields, copyString("method", 6), OBJ_VAL(copyString(req.method, strlen(req.method))));
-	tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(req.path, strlen(req.path))));
-	tableSet(&reqObj->fields, copyString("host", 4), OBJ_VAL(copyString(req.host, strlen(req.host))));
-	tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(req.body, strlen(req.body))));
-
-	ObjInstance* resObj = newInstance(serverResClass);
+	resObj = newInstance(serverResClass);
 	push(OBJ_VAL(resObj));
 	tableSet(&resObj->fields, copyString("_fd", 3), NUMBER_VAL((double)client_fd));
 	tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
-
-	Value reqVal = OBJ_VAL(reqObj);
-	Value resVal = OBJ_VAL(resObj);
-
-	Value mwVal;
-	ObjArray* middlewares = NULL;
-	if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
-		middlewares = AS_ARRAY(mwVal);
-
-	ObjClosure* handler = NULL;
-	if (routes != NULL) {
-		int pass;
-		for (pass = 0; pass < 2 && handler == NULL; pass++) {
-			int i;
-			for (i = 0; i < routes->count; i++) {
-				Value entVal = routes->elements[i];
-				Value methodVal, pathVal, handlerVal, hostVal;
-				int hasHost;
-				if (!IS_INSTANCE(entVal)) continue;
-				ObjInstance* ent = AS_INSTANCE(entVal);
-				if (!tableGet(&ent->fields, copyString("method", 6), &methodVal)) continue;
-				if (!tableGet(&ent->fields, copyString("path", 4), &pathVal)) continue;
-				if (!tableGet(&ent->fields, copyString("handler", 7), &handlerVal)) continue;
-				if (!IS_STRING(methodVal) || !IS_STRING(pathVal) || !IS_CLOSURE(handlerVal)) continue;
-				hasHost = tableGet(&ent->fields, copyString("host", 4), &hostVal) && IS_STRING(hostVal);
-				if (pass == 0) {
-					if (!hasHost) continue;
-					if (strcasecmp(AS_CSTRING(hostVal), req.host) != 0) continue;
-				} else {
-					if (hasHost) continue;
-				}
-				if (strcmp(AS_CSTRING(methodVal), req.method) != 0) continue;
-				if (strcmp(AS_CSTRING(pathVal), req.path) != 0) continue;
-				handler = AS_CLOSURE(handlerVal);
-				break;
-			}
-		}
-	}
-
-	Value nextFn = NIL_VAL;
-	if (handler != NULL && middlewares != NULL && middlewares->count > 0)
-		nextFn = OBJ_VAL(newNative(resNextNative));
-
+	serverDispatch(server, req.method, req.path, req.host, req.body, resObj);
 	pop(); /* res */
-	pop(); /* req */
+}
 
-	if (handler != NULL) {
-		Value* savedTop = vm.stackTop;
-		if (middlewares != NULL && middlewares->count > 0) {
-			Value firstMw = middlewares->elements[0];
-			_mwChainMiddlewares = middlewares;
-			_mwChainIndex = 0;
-			_mwChainHandler = handler;
-			_mwChainReq = reqVal;
-			_mwChainRes = resVal;
-			push(firstMw);
-			push(reqVal);
-			push(resVal);
-			push(nextFn);
-			if (call(AS_CLOSURE(firstMw), 3)) {
-				run();
-			}
-		} else {
-			push(OBJ_VAL(handler));
-			push(reqVal);
-			push(resVal);
-			if (call(handler, 2)) {
-				run();
-			}
-		}
-		vm.stackTop = savedTop;
-	} else {
-		int servedStatic = 0;
-		const char* staticDir = serverLookupVhostRoot(server, req.host);
-		if (staticDir == NULL)
-			staticDir = defaultStaticDir;
-		if (staticDir != NULL && strcmp(req.method, "GET") == 0) {
-			char filepath[2048];
-			const char* reqPath = req.path;
-			if (strstr(reqPath, "..") == NULL) {
-				size_t dirLen = strlen(staticDir);
-				size_t pathLen = strlen(reqPath);
-				if (dirLen + pathLen + 2 < sizeof(filepath)) {
-					snprintf(filepath, sizeof(filepath), "%s%s", staticDir, reqPath);
-					if (pathLen > 0 && (reqPath[pathLen - 1] == '/' ||
-					    (pathLen == 1 && reqPath[0] == '/'))) {
-						strncat(filepath, "index.html",
-							sizeof(filepath) - strlen(filepath) - 1);
-					}
-					FILE* f = fopen(filepath, "rb");
-					if (f != NULL) {
-						fseek(f, 0, SEEK_END);
-						long fsize = ftell(f);
-						rewind(f);
-						if (fsize > 0 && fsize < 16 * 1024 * 1024) {
-							char* content = malloc((size_t)fsize);
-							if (content != NULL) {
-								size_t nread = fread(content, 1, (size_t)fsize, f);
-								const char* mime = getMimeType(filepath);
-								sendHttpResponseBinary(client_fd, 200, "OK", mime,
-									content, (int)nread);
-								free(content);
-								servedStatic = 1;
-							} else {
-								sendHttpResponse(client_fd, 500, "Internal Server Error",
-									"{\"error\":\"out of memory\"}");
-								servedStatic = 1;
-							}
-						} else {
-							sendHttpResponse(client_fd, 500, "Internal Server Error",
-								"{\"error\":\"file too large or empty\"}");
-							servedStatic = 1;
-						}
-						fclose(f);
-					}
-				}
-			}
-		}
-		if (!servedStatic) {
-			char errBody[256];
-			snprintf(errBody, sizeof(errBody),
-				"{\"error\":\"Not Found\",\"path\":\"%s\"}", req.path);
-			sendHttpResponse(client_fd, 404, "Not Found", errBody);
-		}
+static void httpCopyUpper(char* dst, int dstSz, const char* src) {
+	int i = 0;
+	if (dstSz <= 0) return;
+	while (src != NULL && src[i] != '\0' && i < dstSz - 1) {
+		char c = src[i];
+		if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+		dst[i] = c;
+		i++;
 	}
+	dst[i] = '\0';
+}
+
+static void httpPathWithoutQuery(char* dst, int dstSz, const char* src) {
+	int i = 0;
+	if (dstSz <= 0) return;
+	if (src == NULL || src[0] == '\0') {
+		if (dstSz > 1) {
+			dst[0] = '/';
+			dst[1] = '\0';
+		} else {
+			dst[0] = '\0';
+		}
+		return;
+	}
+	while (src[i] != '\0' && src[i] != '?' && i < dstSz - 1) {
+		dst[i] = src[i];
+		i++;
+	}
+	dst[i] = '\0';
+	if (dst[0] == '\0' && dstSz > 1) {
+		dst[0] = '/';
+		dst[1] = '\0';
+	}
+}
+
+/* Server.handle(method, path, [body], [host]) — one request, no socket.
+   Returns an instance with statusCode, body, contentType. */
+static Value serverHandleNative(int argCount, Value* args) {
+	ObjInstance* server;
+	ObjInstance* resObj;
+	ObjInstance* out;
+	const char* methodSrc;
+	const char* pathSrc;
+	const char* bodySrc = "";
+	const char* hostSrc = "";
+	char methodBuf[16];
+	char pathBuf[1024];
+	char hostBuf[256];
+	Value statusVal, bodyVal, typeVal;
+	int statusCode = 200;
+
+	if (argCount < 3 || argCount > 5 || !IS_INSTANCE(args[0]) ||
+	    !IS_STRING(args[1]) || !IS_STRING(args[2]))
+		return NIL_VAL;
+	if (argCount >= 4) {
+		if (IS_STRING(args[3])) bodySrc = AS_CSTRING(args[3]);
+		else if (!IS_NIL(args[3])) return NIL_VAL;
+	}
+	if (argCount == 5) {
+		if (IS_STRING(args[4])) hostSrc = AS_CSTRING(args[4]);
+		else if (!IS_NIL(args[4])) return NIL_VAL;
+	}
+
+	server = AS_INSTANCE(args[0]);
+	methodSrc = AS_CSTRING(args[1]);
+	pathSrc = AS_CSTRING(args[2]);
+	httpCopyUpper(methodBuf, (int)sizeof(methodBuf), methodSrc);
+	httpPathWithoutQuery(pathBuf, (int)sizeof(pathBuf), pathSrc);
+	snprintf(hostBuf, sizeof(hostBuf), "%s", hostSrc);
+	httpStripHostPort(hostBuf);
+
+	resObj = newInstance(serverResClass);
+	push(OBJ_VAL(resObj));
+	tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
+	tableSet(&resObj->fields, copyString("_body", 5), OBJ_VAL(copyString("", 0)));
+	tableSet(&resObj->fields, copyString("_contentType", 12),
+		OBJ_VAL(copyString("text/plain", 10)));
+	serverDispatch(server, methodBuf, pathBuf, hostBuf, bodySrc, resObj);
+
+	out = newInstance(NULL);
+	push(OBJ_VAL(out));
+	if (tableGet(&resObj->fields, copyString("_statusCode", 11), &statusVal) && IS_NUMBER(statusVal))
+		statusCode = (int)AS_NUMBER(statusVal);
+	tableSet(&out->fields, copyString("statusCode", 10), NUMBER_VAL((double)statusCode));
+	if (tableGet(&resObj->fields, copyString("_body", 5), &bodyVal) && IS_STRING(bodyVal))
+		tableSet(&out->fields, copyString("body", 4), bodyVal);
+	else
+		tableSet(&out->fields, copyString("body", 4), OBJ_VAL(copyString("", 0)));
+	if (tableGet(&resObj->fields, copyString("_contentType", 12), &typeVal) && IS_STRING(typeVal))
+		tableSet(&out->fields, copyString("contentType", 11), typeVal);
+	else
+		tableSet(&out->fields, copyString("contentType", 11), OBJ_VAL(copyString("text/plain", 10)));
+	pop(); /* out */
+	pop(); /* res */
+	return OBJ_VAL(out);
 }
 
 static void serverAcceptLoop(ObjInstance* server, int server_fd, ObjArray* routes,
@@ -4563,6 +4719,7 @@ void initVM() {
 	tableSet(&serverClass->methods, copyString("use", 3), OBJ_VAL(newNative(serverUseNative)));
 	tableSet(&serverClass->methods, copyString("static", 6), OBJ_VAL(newNative(serverStaticNative)));
 	tableSet(&serverClass->methods, copyString("workers", 7), OBJ_VAL(newNative(serverWorkersNative)));
+	tableSet(&serverClass->methods, copyString("handle", 6), OBJ_VAL(newNative(serverHandleNative)));
 	tableSet(&serverClass->methods, copyString("start", 5), OBJ_VAL(newNative(serverStartNative)));
 	push(OBJ_VAL(copyString("Server", 6)));
 	push(OBJ_VAL(serverClass));

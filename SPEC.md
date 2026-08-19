@@ -545,9 +545,11 @@ May be absent in a given build.
 
 **`Server`** — `Server(port)` then:
 
-`.get(path, handler)`, `.post(path, handler)`, `.getHost(host, path, handler)`, `.postHost(host, path, handler)`, `.vhost(host, root)`, `.static(root)`, `.use(middleware)`, `.workers(n)`, `.start()`.
+`.get(path, handler)`, `.post(path, handler)`, `.getHost(host, path, handler)`, `.postHost(host, path, handler)`, `.vhost(host, root)`, `.static(root)`, `.use(middleware)`, `.workers(n)`, `.start()`, `.handle(method, path, [body], [host])`.
 
 Handlers are `fun (req, res) { … }`. Middleware is `fun (req, res, next) { …; next(); }`.
+
+`server.handle(method, path, [body], [host])` dispatches **one** request without binding a port. Query string on `path` is stripped; `method` is matched case-insensitively. Returns an instance with `statusCode`, `body`, and `contentType`. This is the Mangum-style hook: same routes as `.start()`, usable from AWS Lambda. See `lib/mangum.lux`.
 
 **`Res`** (second argument): `.send(text)`, `.html(html)`, `.json(value)`, `.status(code)`.
 
@@ -562,6 +564,7 @@ Not natives. Import by path from the working directory:
 - `lib/dataframe.lux` — CSV / DataFrame
 - `lib/graph.lux` — graphs and Graphviz DOT
 - `lib/aws.lux` — AWS helpers
+- `lib/mangum.lux` — AWS Lambda adapter: `mangumHandle(server, event)` → API Gateway proxy JSON; `Mangum(server)` reads `/tmp/lambda_event.json` and writes `/tmp/lambda_response.json`
 
 These are ordinary Lux source. They are not keywords.
 

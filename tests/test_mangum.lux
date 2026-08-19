@@ -1,0 +1,38 @@
+/* Mangum adapter: API Gateway v1 / HTTP API v2 events -> Lambda proxy JSON. */
+import "../lib/mangum.lux";
+
+fun handleHome(req, res) {
+    res.html("<h1>" + req.path + "</h1>");
+}
+
+fun handlePost(req, res) {
+    res.status(201);
+    res.send(req.body);
+}
+
+print "=== Mangum ===";
+
+var app = Server(0);
+app.get("/", handleHome);
+app.post("/data", handlePost);
+
+var v2 = parseJSON("{\"version\":\"2.0\",\"rawPath\":\"/\",\"headers\":{\"host\":\"abc.execute-api.us-east-1.amazonaws.com\"},\"requestContext\":{\"http\":{\"method\":\"GET\",\"path\":\"/\"}}}");
+var j2 = mangumHandle(app, v2);
+assert(strFind(j2, "\"statusCode\":200") >= 0, "v2 status");
+assert(strFind(j2, "content-type") >= 0, "v2 content-type header");
+assert(strFind(j2, "<h1>/</h1>") >= 0, "v2 html body escaped in json");
+assert(strFind(j2, "text/html") >= 0, "v2 html type");
+
+var v1 = parseJSON("{\"httpMethod\":\"POST\",\"path\":\"/data\",\"headers\":{\"Host\":\"example.com\"},\"body\":\"hello\"}");
+var j1 = mangumHandle(app, v1);
+assert(strFind(j1, "\"statusCode\":201") >= 0, "v1 status");
+assert(strFind(j1, "hello") >= 0, "v1 body");
+
+var miss = parseJSON("{\"httpMethod\":\"GET\",\"path\":\"/missing\"}");
+var jm = mangumHandle(app, miss);
+assert(strFind(jm, "\"statusCode\":404") >= 0, "404 via mangum");
+
+var bad = mangumHandle(app, nil);
+assert(strFind(bad, "\"statusCode\":400") >= 0, "nil event");
+
+print "All Mangum tests passed";
