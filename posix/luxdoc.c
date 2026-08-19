@@ -92,6 +92,7 @@ static const char* callableCategory(const char* name) {
 	if (strncmp(name, "float64_", 8) == 0) return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
+	    strcmp(name, "httpPostForm") == 0 ||
 	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0) return "HTTP";
 	if (strcmp(name, "sha256") == 0 || strcmp(name, "hmacSha256") == 0) return "Crypto";
 	if (strcmp(name, "awsSignRequest") == 0 || strcmp(name, "getAwsTimestamp") == 0 ||

@@ -515,9 +515,10 @@ There is **no** `{ "k": v }` literal. Build objects with classes / `Dict`, or pa
 | Name | Returns |
 |---|---|
 | `httpGet(url)` | Body string or `nil` |
-| `httpPost(url, body)` | Body string or `nil` |
+| `httpPost(url, body)` | Body string or `nil` (JSON `Content-Type`) |
 | `httpPut(url, body)` | Body string or `nil` |
-| `httpRequest(method, url, body, headers)` | Body string or `nil` |
+| `httpRequest(method, url, body, headers)` | Body string or `nil`. `body` may be a string, `nil`, `Form`, or parts array |
+| `httpPostForm(url, parts, [headers])` | Body string or `nil`. POST `multipart/form-data` |
 | `httpServer(port)` | Legacy blocking server |
 | `netLookup(host)` | First IP string or `nil` |
 | `netPing(host, port)` | RTT ms, or `-1` |

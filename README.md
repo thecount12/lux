@@ -160,6 +160,16 @@ var resp = httpRequest("POST", "https://api.example.com/users", body, headers);
 if (resp != nil) {
     print "User created!";
 }
+
+// Multipart POST (curl -F). httpPost() is JSON-only — use Form + httpRequest.
+import "../lib/http.lux";
+var form = Form();
+form.field("name", "legacy");
+form.file("file", "script.js", "application/x-javascript");
+var formHeaders = Headers();
+formHeaders.accept = "application/json";
+var formResp = httpRequest("POST", "https://api.example.com/upload", form, formHeaders);
+
 ```
 
 ### HTTP Server
@@ -1224,7 +1234,7 @@ while (idx + 64 <= 10000) {
 
 ### DataFrame, CSV, and graphs
 
-Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`).
+Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`). Multipart HTTP lives in `lib/http.lux` (`Form`).
 
 #### CSV and DataFrame (`lib/dataframe.lux`)
 
@@ -1296,7 +1306,7 @@ if (httpResp != nil) {
 ```
 
 #### `httpPost(url, body)` → string or nil
-Makes an HTTP POST request with JSON body and returns the response.
+Makes an HTTP POST request with JSON body and returns the response. Always sends `Content-Type: application/json`. For `multipart/form-data`, use `httpRequest` with a `Form` or `httpPostForm`.
 
 ```lux
 class User {
@@ -1319,6 +1329,28 @@ if (jsonBody != nil) {
         }
     }
 }
+```
+
+#### `httpPostForm(url, parts, [headers])` → string or nil
+POST `multipart/form-data`. `parts` is a `Form` instance or an array of part instances (`name`, optional `value` / `path` / `filename` / `type`). File parts are read from disk in C (length-aware). Extra headers are merged; `Content-Type` is always set with a boundary.
+
+Prefer the `Form` helper in `lib/http.lux`:
+
+```lux
+import "../lib/http.lux";
+
+class Headers { init() {} }
+
+var form = Form();
+form.field("method", "GET");
+form.field("name", "legacy");
+form.file("file", "script.js", "application/x-javascript");
+
+var headers = Headers();
+headers.accept = "application/json";
+
+var resp = httpRequest("POST", "https://api.example.com/scenarios", form, headers);
+// or: var resp = form.post(url, headers);
 ```
 
 #### `httpPut(url, body)` → string or nil

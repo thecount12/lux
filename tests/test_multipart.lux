@@ -1,0 +1,92 @@
+// Multipart form POST via Form + httpRequest / httpPostForm
+import "../lib/http.lux";
+
+print "=== Multipart Form Test ===";
+print "";
+
+class Headers { init() {} }
+
+var scriptPath = "tmp_multipart_script.js";
+var scriptBody = "console.log('lux-multipart');";
+if (!writeFile(scriptPath, scriptBody)) {
+    print "✗ Could not write temp script";
+} else {
+    var form = Form();
+    form.field("method", "GET");
+    form.field("target_endpoint", "k6");
+    form.field("test_type", "k6");
+    form.field("name", "legacy");
+    form.field("k6_entry_point", "");
+    form.field("ramp", "1");
+    form.field("concurrency", 1);
+    form.field("task_count", "1");
+    form.field("automation", "true");
+    form.field("automation_key", "c1dd1364");
+    form.file("file", scriptPath, "application/x-javascript");
+    form.field("file_type", "script");
+    form.field("hold", "1");
+
+    var headers = Headers();
+    headers.accept = "application/json";
+    headers.Content_Type = "multipart/form-data";
+
+    print "Test 1: httpRequest POST with Form";
+    var resp = httpRequest("POST", "https://httpbin.org/post", form, headers);
+    if (resp == nil) {
+        print "✗ httpRequest multipart failed (network?)";
+    } else {
+        var data = parseJSON(resp);
+        if (data == nil or data.form == nil) {
+            print "✗ Response was not JSON form echo";
+        } else {
+            if (data.form.method == "GET") {
+                print "✓ form.method echoed";
+            } else {
+                print "✗ form.method: " + data.form.method;
+            }
+            if (data.form.name == "legacy") {
+                print "✓ form.name echoed";
+            } else {
+                print "✗ form.name: " + data.form.name;
+            }
+            if (data.form.k6_entry_point == "") {
+                print "✓ empty k6_entry_point echoed";
+            } else {
+                print "✗ k6_entry_point should be empty";
+            }
+            if (data.form.ramp == "1") {
+                print "✓ numeric field stringified";
+            } else {
+                print "✗ form.ramp: " + data.form.ramp;
+            }
+            if (data.files != nil and data.files.file != nil) {
+                if (data.files.file == scriptBody) {
+                    print "✓ files.file echoed";
+                } else {
+                    print "✓ files.file present";
+                }
+            } else {
+                print "✗ files.file missing";
+            }
+        }
+    }
+
+    print "";
+    print "Test 2: form.post / httpPostForm";
+    var resp2 = form.post("https://httpbin.org/post", headers);
+    if (resp2 == nil) {
+        print "✗ form.post failed (network?)";
+    } else {
+        var data2 = parseJSON(resp2);
+        if (data2 != nil and data2.form != nil and data2.form.file_type == "script") {
+            print "✓ form.post echoed file_type";
+        } else {
+            print "✗ form.post echo missing file_type";
+        }
+    }
+
+    deleteFile(scriptPath);
+}
+
+print "";
+print "=== Multipart Tests Complete ===";
