@@ -28,6 +28,14 @@ class Form {
     }
 
     file(name, path, type) {
+        if (typeof(path) == "string" and len(path) > 0) {
+            if (path[0] == "@") {
+                path = strSlice(path, 1, len(path));
+            }
+        }
+        if (typeof(path) != "string" or path == "" or !fileExists(path)) {
+            print "Form.file: file not found: " + path;
+        }
         this.parts[this.parts.length] = MultipartPart(name, nil, path, nil, type);
         return this;
     }

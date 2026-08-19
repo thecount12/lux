@@ -2316,6 +2316,14 @@ pathBasename(const char* path)
 	return path;
 }
 
+static const char*
+skipAtPrefix(const char* path)
+{
+	if (path != nil && path[0] == '@')
+		return path + 1;
+	return path;
+}
+
 static int
 readFileBytes(const char* path, char** out, long* outLen)
 {
@@ -2439,6 +2447,8 @@ encodeMultipart(ObjArray* parts, MultipartBody* out)
 		}
 
 		isFile = partFieldChars(part, "path", &path, &pathLen) && pathLen > 0;
+		if (isFile)
+			path = skipAtPrefix(path);
 		if (!mimeBufAppendCstr(&buf, "--") ||
 		    !mimeBufAppendCstr(&buf, boundary) ||
 		    !mimeBufAppendCstr(&buf, "\r\n") ||
@@ -2481,6 +2491,7 @@ encodeMultipart(ObjArray* parts, MultipartBody* out)
 				return 0;
 			}
 			if (!readFileBytes(path, &fileData, &fileLen)) {
+				fprint(2, "httpRequest: cannot read file '%s'\n", path);
 				mimeBufFree(&buf);
 				return 0;
 			}
@@ -2577,8 +2588,10 @@ httpRequestNative(int argCount, Value* args)
 		ObjArray* mpParts = multipartPartsFromValue(args[2]);
 		if (mpParts != nil) {
 			MultipartBody mp;
-			if (!encodeMultipart(mpParts, &mp))
+			if (!encodeMultipart(mpParts, &mp)) {
+				fprint(2, "httpRequest: multipart encode failed\n");
 				return NIL_VAL;
+			}
 			requestBody = mp.data;
 			requestBodyLen = mp.size;
 			bodyOwned = 1;

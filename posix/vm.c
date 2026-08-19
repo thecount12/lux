@@ -2178,6 +2178,15 @@ pathBasename(const char* path)
 	return path;
 }
 
+/* curl -F file=@path uses a leading @; Lux paths are plain filesystem paths. */
+static const char*
+skipAtPrefix(const char* path)
+{
+	if (path != NULL && path[0] == '@')
+		return path + 1;
+	return path;
+}
+
 static int
 readFileBytes(const char* path, char** out, size_t* outLen)
 {
@@ -2298,6 +2307,8 @@ encodeMultipart(ObjArray* parts, MultipartBody* out)
 		}
 
 		isFile = partFieldChars(part, "path", &path, &pathLen) && pathLen > 0;
+		if (isFile)
+			path = skipAtPrefix(path);
 		if (!mimeBufAppendCstr(&buf, "--") ||
 		    !mimeBufAppendCstr(&buf, boundary) ||
 		    !mimeBufAppendCstr(&buf, "\r\n") ||
@@ -2340,6 +2351,7 @@ encodeMultipart(ObjArray* parts, MultipartBody* out)
 				return 0;
 			}
 			if (!readFileBytes(path, &fileData, &fileLen)) {
+				fprintf(stderr, "httpRequest: cannot read file '%s'\n", path);
 				mimeBufFree(&buf);
 				return 0;
 			}
@@ -2548,8 +2560,10 @@ static Value httpRequestNative(int argCount, Value* args) {
 		ObjArray* parts = multipartPartsFromValue(args[2]);
 		if (parts != NULL) {
 			MultipartBody mp;
-			if (!encodeMultipart(parts, &mp))
+			if (!encodeMultipart(parts, &mp)) {
+				fprintf(stderr, "httpRequest: multipart encode failed\n");
 				return NIL_VAL;
+			}
 			body = mp.data;
 			bodyLen = (long)mp.size;
 			bodyOwned = 1;
@@ -2616,6 +2630,9 @@ static Value httpRequestNative(int argCount, Value* args) {
 	headers = appendInstanceHeaders(headers, headersObj, isMultipart);
 	if (isMultipart)
 		headers = curl_slist_append(headers, contentTypeLine);
+	/* Lambda Function URLs (and many proxies) mishandle Expect: 100-continue. */
+	if (body != NULL)
+		headers = curl_slist_append(headers, "Expect:");
 	
 	if (headers != NULL) {
 		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -2630,6 +2647,7 @@ static Value httpRequestNative(int argCount, Value* args) {
 		free(body);
 	
 	if (res != CURLE_OK) {
+		fprintf(stderr, "httpRequest: %s\n", curl_easy_strerror(res));
 		free(resp.data);
 		return NIL_VAL;
 	}

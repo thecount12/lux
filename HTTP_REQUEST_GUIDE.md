@@ -112,7 +112,7 @@ Each part instance may have:
 
 - `name` (required)
 - `value` — text field (including `""`)
-- `path` — file on disk; if set, this is a file part
+- `path` — file on disk; if set, this is a file part. Use a real path (`"script.js"`), not curl's `@script.js`.
 - `filename` — optional; defaults to the basename of `path`
 - `type` — optional MIME (files default to `application/octet-stream`)
 
