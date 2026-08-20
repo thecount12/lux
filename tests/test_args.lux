@@ -1,10 +1,43 @@
-// Command-line args: args() builtin
+// Command-line args: args() builtin.
+// Locates the interpreter from posix/, tests/, repo root, or PATH.
 print "=== Script Args Test ===";
 
 var empty = args();
 assert(empty.length == 0, "no args when run without extras");
 
-var out = run("./lux ../tests/test_args_child.lux alpha beta gamma");
+fun firstExisting(paths) {
+    var i = 0;
+    while (i < paths.length) {
+        if (fileExists(paths[i])) return paths[i];
+        i = i + 1;
+    }
+    return nil;
+}
+
+var child = firstExisting([
+    "test_args_child.lux",
+    "../tests/test_args_child.lux",
+    "tests/test_args_child.lux"
+]);
+assert(child != nil, "found test_args_child.lux");
+
+var bins = ["./lux", "../posix/lux", "posix/lux", "lux"];
+var out = nil;
+var i = 0;
+while (i < bins.length) {
+    var bin = bins[i];
+    if (bin != "lux" and !fileExists(bin)) {
+        i = i + 1;
+        continue;
+    }
+    out = run(bin + " " + child + " alpha beta gamma");
+    if (out != nil and strFind(out, "CHILD_OK") >= 0) {
+        i = bins.length;
+    } else {
+        i = i + 1;
+    }
+}
+
 assert(out != nil, "child process ran");
 assert(strFind(out, "CHILD_OK") >= 0, "child received args");
 

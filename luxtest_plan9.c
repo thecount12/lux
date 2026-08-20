@@ -81,6 +81,7 @@ collectTests(char *dir, TestFile *tests, int maxTests)
 	}
 	for (i = 0; i < n && count < maxTests; i++) {
 		if (!endsWith(d[i].name, ".lux")) continue;
+		if (endsWith(d[i].name, "_child.lux")) continue;
 		snprint(tests[count].path, PATH_BUF, "%s/%s", dir, d[i].name);
 		count++;
 	}
