@@ -27,7 +27,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **DataFrame / CSV** — quoted CSV, groupBy, sortBy, `lib/dataframe.lux`
 - **Graphs** — BFS/DFS and Graphviz DOT export, `lib/graph.lux`
 - **Math** — abs, ceil, floor, sqrt, pow, log, sin, cos
-- **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts, Lambda via `server.handle` / Mangum)
+- **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts, OpenAPI/Swagger UI, Lambda via `server.handle` / Mangum)
 - **Network** — `netLookup` (DNS) and `netPing` (TCP-connect RTT), no `run()`
 - **Templates** — native `renderTemplate` (`{{ }}`, `{% for %}`, `{% include %}`)
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
@@ -175,10 +175,12 @@ var formResp = httpRequest("POST", "https://api.example.com/upload", form, formH
 ### HTTP Server
 ```lux
 // Configurable Server: routes, static, multi-domain vhosts (see examples/vhost_server.lux)
+import "../lib/swagger.lux";
 var server = Server(8080);
 server.workers(4);
 server.vhost("example.com", "public/example");
-server.get("/health", handleHealth);
+server.get("/health", handleHealth, Op("Health check", "ops"));
+swagger(server);   // GET /docs
 server.start();
 
 // Same routes on AWS Lambda (Mangum-style) — no listen/bind:
@@ -1234,7 +1236,7 @@ while (idx + 64 <= 10000) {
 
 ### DataFrame, CSV, and graphs
 
-Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`). Multipart HTTP lives in `lib/http.lux` (`Form`).
+Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`). Multipart HTTP lives in `lib/http.lux` (`Form`). OpenAPI / Swagger UI lives in `lib/swagger.lux` (`Op`, `swagger`).
 
 #### CSV and DataFrame (`lib/dataframe.lux`)
 
@@ -1538,6 +1540,41 @@ fun requireAuth(req, res, next) {
 }
 server.use(requireAuth);
 ```
+
+**OpenAPI / Swagger UI (`lib/swagger.lux`):** `swagger(server)` mounts FastAPI-style `GET /docs` (Swagger UI) and `GET /openapi.json` from the route table. Pass an optional `Op` as the last argument to `get` / `post` / `getHost` / `postHost`, or attach one later with `swaggerDoc`. See `examples/swagger_server.lux` and `tests/test_swagger.lux`.
+
+```lux
+import "../lib/swagger.lux";
+
+fun handleHealth(req, res) {
+  res.json(parseJSON("{\"ok\":true}"));
+}
+
+fun handleEcho(req, res) {
+  res.json(parseJSON("{\"ok\":true}"));
+}
+
+var server = Server(8085);
+server.swaggerTitle = "Demo API";   /* optional; default "Lux API" */
+
+var healthOp = Op("Health check", "ops");
+healthOp.example = parseJSON("{\"ok\":true}");
+server.get("/health", handleHealth, healthOp);
+
+var echoOp = Op("Echo the request", "echo");
+echoOp.body = parseJSON("{\"msg\":\"hi\"}");
+echoOp.status = 200;
+server.post("/echo", handleEcho, echoOp);
+
+/* After the fact, e.g. from an imported route file: */
+server.get("/later", handleEcho);
+swaggerDoc(server, "GET", "/later", Op("Registered later", "misc"));
+
+swagger(server);
+server.start();
+```
+
+`Op(summary, tag)` also accepts `description`, `body` (example request), `example` (example response), and `status` (response code, default 200). Without an `Op`, the spec still lists the path so Try it out works. `/docs` and `/openapi.json` are omitted from the spec. `server.swaggerVersion` defaults to `"1.0.0"`. Swagger UI loads from a CDN; `GET /openapi.json` works offline.
 
 **Test from another machine:**
 ```sh
