@@ -1,0 +1,46 @@
+// Multipart form helpers. Import has no side effects.
+// Paths are relative to the process CWD:
+//   import "../lib/http.lux";
+
+class MultipartPart {
+    init(name, value, path, filename, type) {
+        this.name = name;
+        this.value = value;
+        this.path = path;
+        this.filename = filename;
+        this.type = type;
+    }
+}
+
+class Form {
+    init() {
+        this.parts = [];
+    }
+
+    field(name, value) {
+        if (value == nil) {
+            value = "";
+        } else if (typeof(value) != "string") {
+            value = "" + value;
+        }
+        this.parts[this.parts.length] = MultipartPart(name, value, nil, nil, nil);
+        return this;
+    }
+
+    file(name, path, type) {
+        if (typeof(path) == "string" and len(path) > 0) {
+            if (path[0] == "@") {
+                path = strSlice(path, 1, len(path));
+            }
+        }
+        if (typeof(path) != "string" or path == "" or !fileExists(path)) {
+            print "Form.file: file not found: " + path;
+        }
+        this.parts[this.parts.length] = MultipartPart(name, nil, path, nil, type);
+        return this;
+    }
+
+    post(url, headers) {
+        return httpPostForm(url, this.parts, headers);
+    }
+}

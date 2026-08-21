@@ -19,9 +19,10 @@ httpRequest(method, url, body, headers) -> string or nil
   - Must start with `http://` or `https://`
   - Example: `"https://api.example.com/resource"`
   
-- **body** (string or nil): Request body
+- **body** (string, Form, parts array, or nil): Request body
   - Use `nil` for no body (typical for GET)
   - Use string for POST/PUT with data
+  - Use a `Form` instance or parts array for `multipart/form-data` (see below)
   
 - **headers** (instance or nil): Custom HTTP headers
   - Use instance with fields for headers
@@ -84,6 +85,36 @@ headers.Content_Type = "application/json";
 var body = toJSON({"key": "value"});
 var response = httpRequest("POST", "https://api.example.com/create", body, headers);
 ```
+
+### Multipart form POST (`curl -F`)
+
+`httpPost()` always sends JSON. For `multipart/form-data`, pass a `Form` (from `lib/http.lux`) or a parts array as the body. The native sets `Content-Type` with a boundary and reads file parts from disk.
+
+```lux
+import "../lib/http.lux";
+
+class Headers { init() {} }
+
+var form = Form();
+form.field("method", "GET");
+form.field("name", "legacy");
+form.field("k6_entry_point", "");
+form.file("file", "devops-agent-test.js", "application/x-javascript");
+
+var headers = Headers();
+headers.accept = "application/json";
+
+var response = httpRequest("POST", "https://api.example.com/scenarios", form, headers);
+// equivalent: httpPostForm(url, form.parts, headers) or form.post(url, headers)
+```
+
+Each part instance may have:
+
+- `name` (required)
+- `value` — text field (including `""`)
+- `path` — file on disk; if set, this is a file part. Use a real path (`"script.js"`), not curl's `@script.js`.
+- `filename` — optional; defaults to the basename of `path`
+- `type` — optional MIME (files default to `application/octet-stream`)
 
 ### AWS S3 Authenticated Request
 
@@ -182,5 +213,6 @@ if (response == nil) {
 ## See Also
 
 - [AWS_API_GUIDE.md](AWS_API_GUIDE.md) - Using AWS APIs with httpRequest
+- [lib/http.lux](lib/http.lux) - `Form` helper for multipart POST
 - [examples/aws_s3_example.lux](examples/aws_s3_example.lux) - Working S3 example
 - [examples/aws_helper.lux](examples/aws_helper.lux) - AWS helper classes

@@ -95,9 +95,10 @@ static const NativeDoc kNativeDocs[] = {
 	{"parseCSV", "parseCSV(text, [sep])", "Parse quoted CSV text into an array of row arrays."},
 	{"getField", "getField(obj, name)", "Get an instance field by string name, or nil."},
 	{"httpGet", "httpGet(url)", "Make an HTTP GET request."},
-	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request."},
+	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request with a JSON body."},
 	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
-	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request."},
+	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request. Body may be a string, nil, Form, or parts array."},
+	{"httpPostForm", "httpPostForm(url, parts, [headers])", "POST multipart/form-data from a parts array or Form instance."},
 	{"httpServer", "httpServer(port)", "Start a simple HTTP server (legacy, built-in routes)."},
 	{"Server", "Server(port)", "Create HTTP server with routing, middleware, static files, and .handle() for Lambda."},
 	{"sha256", "sha256(text)", "Compute SHA-256 hash."},
@@ -204,6 +205,7 @@ static const char* callableCategory(const char* name) {
 	if (strncmp(name, "float64_", 8) == 0) return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
+	    strcmp(name, "httpPostForm") == 0 ||
 	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0) return "HTTP";
 	if (strcmp(name, "sha256") == 0 || strcmp(name, "hmacSha256") == 0) return "Crypto";
 	if (strcmp(name, "awsSignRequest") == 0 || strcmp(name, "getAwsTimestamp") == 0 ||
@@ -2106,6 +2108,342 @@ static size_t writeCallback(void* contents, size_t size, size_t nmemb, void* use
 	return realsize;
 }
 
+typedef struct {
+	char* data;
+	size_t size;
+	size_t cap;
+} MimeBuf;
+
+typedef struct {
+	char* data;
+	size_t size;
+	char contentType[128];
+} MultipartBody;
+
+static int
+mimeBufGrow(MimeBuf* b, size_t extra)
+{
+	size_t need = b->size + extra;
+	size_t cap;
+	char* p;
+
+	if (need <= b->cap)
+		return 1;
+	cap = b->cap == 0 ? 4096 : b->cap;
+	while (cap < need) {
+		if (cap > ((size_t)-1) / 2)
+			return 0;
+		cap *= 2;
+	}
+	p = realloc(b->data, cap);
+	if (p == NULL)
+		return 0;
+	b->data = p;
+	b->cap = cap;
+	return 1;
+}
+
+static int
+mimeBufAppend(MimeBuf* b, const char* s, size_t n)
+{
+	if (!mimeBufGrow(b, n))
+		return 0;
+	if (n > 0)
+		memcpy(b->data + b->size, s, n);
+	b->size += n;
+	return 1;
+}
+
+static int
+mimeBufAppendCstr(MimeBuf* b, const char* s)
+{
+	return mimeBufAppend(b, s, strlen(s));
+}
+
+static void
+mimeBufFree(MimeBuf* b)
+{
+	free(b->data);
+	b->data = NULL;
+	b->size = 0;
+	b->cap = 0;
+}
+
+static const char*
+pathBasename(const char* path)
+{
+	const char* slash = strrchr(path, '/');
+	if (slash != NULL && slash[1] != '\0')
+		return slash + 1;
+	return path;
+}
+
+/* curl -F file=@path uses a leading @; Lux paths are plain filesystem paths. */
+static const char*
+skipAtPrefix(const char* path)
+{
+	if (path != NULL && path[0] == '@')
+		return path + 1;
+	return path;
+}
+
+static int
+readFileBytes(const char* path, char** out, size_t* outLen)
+{
+	FILE* file;
+	long fileSize;
+	char* buffer;
+	size_t bytesRead;
+
+	file = fopen(path, "rb");
+	if (file == NULL)
+		return 0;
+	if (fseek(file, 0L, SEEK_END) != 0) {
+		fclose(file);
+		return 0;
+	}
+	fileSize = ftell(file);
+	if (fileSize < 0) {
+		fclose(file);
+		return 0;
+	}
+	rewind(file);
+	buffer = (char*)malloc((size_t)fileSize + 1);
+	if (buffer == NULL) {
+		fclose(file);
+		return 0;
+	}
+	bytesRead = fread(buffer, 1, (size_t)fileSize, file);
+	fclose(file);
+	buffer[bytesRead] = '\0';
+	*out = buffer;
+	*outLen = bytesRead;
+	return 1;
+}
+
+static int
+instanceField(ObjInstance* inst, const char* name, Value* out)
+{
+	return tableGet(&inst->fields, copyString(name, (int)strlen(name)), out);
+}
+
+static ObjArray*
+multipartPartsFromValue(Value v)
+{
+	Value partsVal;
+
+	if (IS_ARRAY(v))
+		return AS_ARRAY(v);
+	if (IS_INSTANCE(v) && instanceField(AS_INSTANCE(v), "parts", &partsVal) &&
+	    IS_ARRAY(partsVal))
+		return AS_ARRAY(partsVal);
+	return NULL;
+}
+
+static int
+partFieldChars(ObjInstance* part, const char* field, const char** chars, int* len)
+{
+	Value v;
+
+	if (!instanceField(part, field, &v) || IS_NIL(v)) {
+		*chars = NULL;
+		*len = 0;
+		return 0;
+	}
+	if (IS_STRING(v)) {
+		*chars = AS_CSTRING(v);
+		*len = AS_STRING(v)->length;
+		return 1;
+	}
+	{
+		ObjString* s = valueToString(v);
+		*chars = s->chars;
+		*len = s->length;
+		return 1;
+	}
+}
+
+static int
+headerNameIsContentType(const char* convertedName)
+{
+	return strcasecmp(convertedName, "Content-Type") == 0;
+}
+
+/* Build multipart/form-data. Caller frees out->data on success. */
+static int
+encodeMultipart(ObjArray* parts, MultipartBody* out)
+{
+	MimeBuf buf = {0};
+	char boundary[64];
+	int i;
+
+	snprintf(boundary, sizeof(boundary), "----LuxFormBoundary%ld%d",
+		(long)time(NULL), (int)getpid());
+	snprintf(out->contentType, sizeof(out->contentType),
+		"multipart/form-data; boundary=%s", boundary);
+
+	for (i = 0; i < parts->count; i++) {
+		ObjInstance* part;
+		const char* name;
+		int nameLen;
+		const char* path;
+		int pathLen;
+		const char* value;
+		int valueLen;
+		const char* filename;
+		int filenameLen;
+		const char* type;
+		int typeLen;
+		int isFile;
+
+		if (!IS_INSTANCE(parts->elements[i])) {
+			mimeBufFree(&buf);
+			return 0;
+		}
+		part = AS_INSTANCE(parts->elements[i]);
+		if (!partFieldChars(part, "name", &name, &nameLen) || nameLen <= 0) {
+			mimeBufFree(&buf);
+			return 0;
+		}
+
+		isFile = partFieldChars(part, "path", &path, &pathLen) && pathLen > 0;
+		if (isFile)
+			path = skipAtPrefix(path);
+		if (!mimeBufAppendCstr(&buf, "--") ||
+		    !mimeBufAppendCstr(&buf, boundary) ||
+		    !mimeBufAppendCstr(&buf, "\r\n") ||
+		    !mimeBufAppendCstr(&buf, "Content-Disposition: form-data; name=\"") ||
+		    !mimeBufAppend(&buf, name, (size_t)nameLen) ||
+		    !mimeBufAppendCstr(&buf, "\"")) {
+			mimeBufFree(&buf);
+			return 0;
+		}
+
+		if (isFile) {
+			char* fileData = NULL;
+			size_t fileLen = 0;
+			const char* useName;
+			int useNameLen;
+			const char* useType;
+			int useTypeLen;
+
+			if (partFieldChars(part, "filename", &filename, &filenameLen) &&
+			    filenameLen > 0) {
+				useName = filename;
+				useNameLen = filenameLen;
+			} else {
+				useName = pathBasename(path);
+				useNameLen = (int)strlen(useName);
+			}
+			if (partFieldChars(part, "type", &type, &typeLen) && typeLen > 0) {
+				useType = type;
+				useTypeLen = typeLen;
+			} else {
+				useType = "application/octet-stream";
+				useTypeLen = (int)strlen(useType);
+			}
+			if (!mimeBufAppendCstr(&buf, "; filename=\"") ||
+			    !mimeBufAppend(&buf, useName, (size_t)useNameLen) ||
+			    !mimeBufAppendCstr(&buf, "\"\r\nContent-Type: ") ||
+			    !mimeBufAppend(&buf, useType, (size_t)useTypeLen) ||
+			    !mimeBufAppendCstr(&buf, "\r\n\r\n")) {
+				mimeBufFree(&buf);
+				return 0;
+			}
+			if (!readFileBytes(path, &fileData, &fileLen)) {
+				fprintf(stderr, "httpRequest: cannot read file '%s'\n", path);
+				mimeBufFree(&buf);
+				return 0;
+			}
+			if (!mimeBufAppend(&buf, fileData, fileLen) ||
+			    !mimeBufAppendCstr(&buf, "\r\n")) {
+				free(fileData);
+				mimeBufFree(&buf);
+				return 0;
+			}
+			free(fileData);
+		} else {
+			if (!partFieldChars(part, "value", &value, &valueLen)) {
+				value = "";
+				valueLen = 0;
+			}
+			if (partFieldChars(part, "type", &type, &typeLen) && typeLen > 0) {
+				if (!mimeBufAppendCstr(&buf, "\r\nContent-Type: ") ||
+				    !mimeBufAppend(&buf, type, (size_t)typeLen)) {
+					mimeBufFree(&buf);
+					return 0;
+				}
+			}
+			if (!mimeBufAppendCstr(&buf, "\r\n\r\n") ||
+			    !mimeBufAppend(&buf, value, (size_t)valueLen) ||
+			    !mimeBufAppendCstr(&buf, "\r\n")) {
+				mimeBufFree(&buf);
+				return 0;
+			}
+		}
+	}
+
+	if (!mimeBufAppendCstr(&buf, "--") ||
+	    !mimeBufAppendCstr(&buf, boundary) ||
+	    !mimeBufAppendCstr(&buf, "--\r\n")) {
+		mimeBufFree(&buf);
+		return 0;
+	}
+
+	if (buf.data == NULL) {
+		buf.data = (char*)calloc(1, 1);
+		if (buf.data == NULL)
+			return 0;
+	}
+	out->data = buf.data;
+	out->size = buf.size;
+	return 1;
+}
+
+static struct curl_slist*
+appendInstanceHeaders(struct curl_slist* headers, ObjInstance* headersObj,
+	int skipContentType)
+{
+	int i;
+
+	if (headersObj == NULL)
+		return headers;
+	for (i = 0; i < headersObj->fields.capacity; i++) {
+		if (headersObj->fields.entries[i].key != NULL) {
+			char* headerName = headersObj->fields.entries[i].key->chars;
+			Value headerValue = headersObj->fields.entries[i].value;
+
+			if (IS_STRING(headerValue)) {
+				char convertedName[256];
+				const char* headerVal;
+				size_t lineCap;
+				char* headerLine;
+				char* p;
+
+				strncpy(convertedName, headerName, sizeof(convertedName) - 1);
+				convertedName[sizeof(convertedName) - 1] = '\0';
+				for (p = convertedName; *p; p++) {
+					if (*p == '_')
+						*p = '-';
+				}
+				if (skipContentType && headerNameIsContentType(convertedName))
+					continue;
+
+				headerVal = AS_CSTRING(headerValue);
+				lineCap = strlen(convertedName) + 2 + strlen(headerVal) + 1;
+				headerLine = malloc(lineCap);
+				if (headerLine == NULL)
+					continue;
+				snprintf(headerLine, lineCap, "%s: %s",
+					convertedName, headerVal);
+				headers = curl_slist_append(headers, headerLine);
+				free(headerLine);
+			}
+		}
+	}
+	return headers;
+}
+
 /* httpGet(url) -> string or nil */
 static Value httpGetNative(int argCount, Value* args) {
 	if (argCount != 1 || !IS_STRING(args[0])) {
@@ -2190,40 +2528,73 @@ static Value httpPostNative(int argCount, Value* args) {
 /* httpRequest(method, url, [body], [headers]) -> string or nil
  * method: "GET", "POST", "PUT", "DELETE", etc.
  * url: target URL
- * body: optional request body (nil or string)
+ * body: optional request body (nil, string, Form instance, or parts array)
  * headers: optional instance with header fields (nil or instance)
  */
 static Value httpRequestNative(int argCount, Value* args) {
+	char* method;
+	char* url;
+	char* body = NULL;
+	long bodyLen = 0;
+	int bodyOwned = 0;
+	int isMultipart = 0;
+	char contentTypeLine[160];
+	ObjInstance* headersObj = NULL;
+	CURL* curl;
+	HttpResponse resp = {0};
+	struct curl_slist* headers = NULL;
+	CURLcode res;
+	Value result;
+
 	if (argCount < 2 || argCount > 4)
 		return NIL_VAL;
 	
 	if (!IS_STRING(args[0]) || !IS_STRING(args[1]))
 		return NIL_VAL;
 	
-	char* method = AS_CSTRING(args[0]);
-	char* url = AS_CSTRING(args[1]);
-	char* body = NULL;
-	ObjInstance* headersObj = NULL;
+	method = AS_CSTRING(args[0]);
+	url = AS_CSTRING(args[1]);
 	
-	/* Optional body (arg 2) */
+	/* Optional body (arg 2): string, Form, or parts array */
 	if (argCount >= 3 && !IS_NIL(args[2])) {
-		if (!IS_STRING(args[2]))
+		ObjArray* parts = multipartPartsFromValue(args[2]);
+		if (parts != NULL) {
+			MultipartBody mp;
+			if (!encodeMultipart(parts, &mp)) {
+				fprintf(stderr, "httpRequest: multipart encode failed\n");
+				return NIL_VAL;
+			}
+			body = mp.data;
+			bodyLen = (long)mp.size;
+			bodyOwned = 1;
+			isMultipart = 1;
+			snprintf(contentTypeLine, sizeof(contentTypeLine),
+				"Content-Type: %s", mp.contentType);
+		} else if (IS_STRING(args[2])) {
+			body = AS_CSTRING(args[2]);
+			bodyLen = AS_STRING(args[2])->length;
+		} else {
 			return NIL_VAL;
-		body = AS_CSTRING(args[2]);
+		}
 	}
 	
 	/* Optional headers (arg 3) */
 	if (argCount >= 4 && !IS_NIL(args[3])) {
-		if (!IS_INSTANCE(args[3]))
+		if (!IS_INSTANCE(args[3])) {
+			if (bodyOwned)
+				free(body);
 			return NIL_VAL;
+		}
 		headersObj = AS_INSTANCE(args[3]);
 	}
 	
-	CURL* curl = curl_easy_init();
-	if (!curl)
+	curl = curl_easy_init();
+	if (!curl) {
+		if (bodyOwned)
+			free(body);
 		return NIL_VAL;
+	}
 	
-	HttpResponse resp = {0};
 	resp.data = malloc(1);
 	resp.size = 0;
 	
@@ -2242,9 +2613,10 @@ static Value httpRequestNative(int argCount, Value* args) {
 		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
 	}
 	
-	/* Set body if provided */
+	/* Set body if provided (length-aware so NULs are not truncated) */
 	if (body != NULL) {
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, bodyLen);
 	}
 	
 	curl_easy_setopt(curl, CURLOPT_URL, url);
@@ -2255,54 +2627,59 @@ static Value httpRequestNative(int argCount, Value* args) {
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 	curl_easy_setopt(curl, CURLOPT_PATH_AS_IS, 1L);
 	
-	/* Build custom headers if provided */
-	struct curl_slist* headers = NULL;
-	if (headersObj != NULL) {
-		for (int i = 0; i < headersObj->fields.capacity; i++) {
-			if (headersObj->fields.entries[i].key != NULL) {
-				char* headerName = headersObj->fields.entries[i].key->chars;
-				Value headerValue = headersObj->fields.entries[i].value;
-				
-				if (IS_STRING(headerValue)) {
-					/* Convert underscores to hyphens in header names */
-					char convertedName[256];
-					strncpy(convertedName, headerName, sizeof(convertedName) - 1);
-					convertedName[sizeof(convertedName) - 1] = '\0';
-					for (char* p = convertedName; *p; p++) {
-						if (*p == '_') *p = '-';
-					}
-
-					const char* headerVal = AS_CSTRING(headerValue);
-					size_t lineCap = strlen(convertedName) + 2 + strlen(headerVal) + 1;
-					char* headerLine = malloc(lineCap);
-					if (headerLine == NULL)
-						continue;
-					snprintf(headerLine, lineCap, "%s: %s",
-						convertedName, headerVal);
-					headers = curl_slist_append(headers, headerLine);
-					free(headerLine);
-				}
-			}
-		}
-	}
+	headers = appendInstanceHeaders(headers, headersObj, isMultipart);
+	if (isMultipart)
+		headers = curl_slist_append(headers, contentTypeLine);
+	/* Lambda Function URLs (and many proxies) mishandle Expect: 100-continue. */
+	if (body != NULL)
+		headers = curl_slist_append(headers, "Expect:");
 	
 	if (headers != NULL) {
 		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	}
 	
-	CURLcode res = curl_easy_perform(curl);
+	res = curl_easy_perform(curl);
 	
 	if (headers != NULL)
 		curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
+	if (bodyOwned)
+		free(body);
 	
 	if (res != CURLE_OK) {
+		fprintf(stderr, "httpRequest: %s\n", curl_easy_strerror(res));
 		free(resp.data);
 		return NIL_VAL;
 	}
 	
-	Value result = OBJ_VAL(copyString(resp.data, (int)resp.size));
+	result = OBJ_VAL(copyString(resp.data, (int)resp.size));
 	free(resp.data);
+	return result;
+}
+
+/* httpPostForm(url, parts, [headers]) -> string or nil */
+static Value httpPostFormNative(int argCount, Value* args) {
+	Value reqArgs[4];
+	Value method;
+	Value result;
+
+	if (argCount < 2 || argCount > 3)
+		return NIL_VAL;
+	if (!IS_STRING(args[0]))
+		return NIL_VAL;
+
+	method = OBJ_VAL(copyString("POST", 4));
+	push(method);
+	reqArgs[0] = method;
+	reqArgs[1] = args[0];
+	reqArgs[2] = args[1];
+	if (argCount >= 3) {
+		reqArgs[3] = args[2];
+		result = httpRequestNative(4, reqArgs);
+	} else {
+		result = httpRequestNative(3, reqArgs);
+	}
+	pop();
 	return result;
 }
 
@@ -4699,6 +5076,7 @@ void initVM() {
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
 	defineNative("httpRequest", httpRequestNative);
+	defineNative("httpPostForm", httpPostFormNative);
 	defineNative("httpServer", httpServerNative);
 	defineNative("sha256", sha256Native);
 

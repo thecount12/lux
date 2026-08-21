@@ -10,6 +10,7 @@
  * A test PASSES if the interpreter exits with code 0.
  * A test FAILS  if the interpreter exits with a non-zero code.
  * A test TIMES OUT if it exceeds the timeout (killed by SIGALRM in child).
+ * Directory scans skip *_child.lux helpers (spawned by another test).
  */
 
 #include <stdio.h>
@@ -61,6 +62,7 @@ static int collectTests(const char* dir, TestFile* tests, int maxTests) {
     struct dirent* entry;
     while ((entry = readdir(d)) != NULL && count < maxTests) {
         if (!endsWith(entry->d_name, ".lux")) continue;
+        if (endsWith(entry->d_name, "_child.lux")) continue;
         snprintf(tests[count].path, PATH_BUF, "%s/%s", dir, entry->d_name);
         count++;
     }
