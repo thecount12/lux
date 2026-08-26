@@ -1,0 +1,8 @@
+graph G {
+  "alice";
+  "bob";
+  "carol";
+  "alice" -- "bob";
+  "bob" -- "carol";
+  "alice" -- "carol";
+}

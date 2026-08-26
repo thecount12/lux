@@ -1,0 +1,61 @@
+/* openai configuration
+.env 
+KEYID=sk-proj-asdf
+ORG=org-6xyzzzz
+PRJ=proj_ILBzzzz
+*/
+
+var env = fileExists(".env");
+var url = "https://api.openai.com";
+var model_id = "gpt-4o-mini";
+if (env) {
+	env = readFile(".env");
+}
+var lines = strSplit(env, "\n");
+var env_config = []; // 0=key, 1=org, 2=prj
+
+for (var i = 0; i < lines.length; i = i + 1) {
+	var item = strSplit(lines[i], "=");
+	var result = item[1];
+	env_config[i] = result;
+}
+
+class Input {
+	init(role, content) {
+		this.role = role;
+		this.content = content;
+	}
+}
+
+class Message {
+	init(model, input) {
+		this.model = model;
+		this.input = input;
+	}
+}
+
+var input = Input("user", "hello");
+var body = toJSON(Message(model_id, [input]));
+print "body: " + body;
+
+class Headers { init() {} }
+
+fun models() {
+	var headers = Headers();
+	headers.Authorization = "Bearer " + env_config[0];
+	headers.OpenAI_Organization = env_config[1];
+	headers.OpenAI_Project = env_config[2];
+	var res = httpRequest("GET", url + "/v1/models", nil, headers);
+	return res;
+}
+
+fun chat() {
+	var headers = Headers();
+	headers.accept = "application/json";
+	headers.Authorization = "Bearer " + env_config[0];
+	var res = httpRequest("POST", url + "/v1/responses", body, headers);
+	return res;
+}
+
+//print models();
+print chat();
