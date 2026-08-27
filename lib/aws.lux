@@ -269,6 +269,8 @@ fun awsFormEncode(s) {
             out = out + "%2B";
         } else if (ch == ":") {
             out = out + "%3A";
+        } else if (ch == "%") {
+            out = out + "%25";
         } else {
             out = out + ch;
         }
@@ -391,6 +393,61 @@ class DynamoDBClient {
         payload.TableName = tableName;
         payload.Item = item;
         return this.call("DynamoDB_20120810.PutItem", payload);
+    }
+}
+
+// HTTP path vs SigV4 URI for POST /model/{id}/converse.
+// Sign URIEncode(http path). Do not put awsFormEncode(id) in the URL
+// (Bedrock then encodes again → %253A / SignatureDoesNotMatch).
+fun awsBedrockConverseUris(modelId) {
+    var id = "";
+    if (modelId != nil) {
+        id = "" + modelId;
+    }
+    var httpId = "";
+    var i = 0;
+    while (i < len(id)) {
+        var ch = id[i];
+        if (ch == "/") {
+            httpId = httpId + "%2F";
+        } else {
+            httpId = httpId + ch;
+        }
+        i = i + 1;
+    }
+    var loc = Dict();
+    loc.path = "/model/" + httpId + "/converse";
+    loc.uri = "/model/" + awsFormEncode(httpId) + "/converse";
+    return loc;
+}
+
+class BedrockRuntimeClient {
+    init(config) {
+        this.config = config;
+        this.request = AwsRequest(config, "bedrock");
+        this.host = "bedrock-runtime." + config.region + ".amazonaws.com";
+    }
+
+    call(modelId, payload) {
+        var loc = awsBedrockConverseUris(modelId);
+        var body = toJSON(payload);
+        var headers = this.request.sign("POST", this.host, loc.uri, "", body);
+        headers.Content_Type = "application/json";
+        var url = "https://" + this.host + loc.path;
+        return httpRequest("POST", url, body, headers);
+    }
+
+    converse(modelId, messages, inferenceConfig) {
+        var msgs = messages;
+        if (typeof(messages) != "array") {
+            msgs = [messages];
+        }
+        var payload = Dict();
+        payload.messages = msgs;
+        if (inferenceConfig != nil) {
+            payload.inferenceConfig = inferenceConfig;
+        }
+        return this.call(modelId, payload);
     }
 }
 
