@@ -45,6 +45,12 @@ assert(strFind(brArn.path, "%2F") >= 0, "arn slash in http path");
 assert(strFind(brArn.path, ":") >= 0, "arn colon literal in http path");
 assert(strFind(brArn.uri, "%252F") >= 0, "arn slash double-encoded for sign");
 assert(strFind(brArn.uri, "%3A") >= 0, "arn colon encoded for sign");
+assert(awsBedrockArnRegion("anthropic.claude-sonnet-4-5-20250929-v1:0") == nil, "model id has no arn region");
+assert(awsBedrockArnRegion("arn:aws:bedrock:us-west-2:060395286242:inference-profile/us.anthropic.x:0") == "us-west-2", "us profile arn region");
+assert(awsBedrockArnRegion("arn:aws:bedrock:us-west-2:060395286242:inference-profile/global.anthropic.x:0") == "us-west-2", "global profile arn region");
+var brClient = BedrockRuntimeClient(AwsConfig("AKIA", "secret", "us-east-1", nil));
+assert(brClient.hostFor("anthropic.x:0") == "bedrock-runtime.us-east-1.amazonaws.com", "host from config");
+assert(brClient.hostFor("arn:aws:bedrock:us-west-2:1:inference-profile/us.x:0") == "bedrock-runtime.us-west-2.amazonaws.com", "host from arn");
 
 var cwXml = "<GetMetricStatisticsResponse><Datapoints>" +
     "<member><Timestamp>2026-01-01T00:00:00Z</Timestamp><Average>10.5</Average></member>" +
