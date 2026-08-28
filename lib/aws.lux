@@ -269,6 +269,8 @@ fun awsFormEncode(s) {
             out = out + "%2B";
         } else if (ch == ":") {
             out = out + "%3A";
+        } else if (ch == "%") {
+            out = out + "%25";
         } else {
             out = out + ch;
         }
@@ -391,6 +393,112 @@ class DynamoDBClient {
         payload.TableName = tableName;
         payload.Item = item;
         return this.call("DynamoDB_20120810.PutItem", payload);
+    }
+}
+
+// HTTP path vs SigV4 URI for POST /model/{id}/converse.
+// Sign URIEncode(http path). Do not put awsFormEncode(id) in the URL
+// (Bedrock then encodes again → %253A / SignatureDoesNotMatch).
+fun awsBedrockConverseUris(modelId) {
+    var id = "";
+    if (modelId != nil) {
+        id = "" + modelId;
+    }
+    var httpId = "";
+    var i = 0;
+    while (i < len(id)) {
+        var ch = id[i];
+        if (ch == "/") {
+            httpId = httpId + "%2F";
+        } else {
+            httpId = httpId + ch;
+        }
+        i = i + 1;
+    }
+    var loc = Dict();
+    loc.path = "/model/" + httpId + "/converse";
+    loc.uri = "/model/" + awsFormEncode(httpId) + "/converse";
+    return loc;
+}
+
+// arn:aws:bedrock:REGION:account:... → REGION. Foundation model ids return nil.
+fun awsBedrockArnRegion(modelId) {
+    if (modelId == nil) {
+        return nil;
+    }
+    var text = "" + modelId;
+    var prefix = "arn:aws:bedrock:";
+    if (!strStartsWithAt(text, prefix, 0)) {
+        return nil;
+    }
+    var rest = strSlice(text, len(prefix), len(text));
+    var colon = strFind(rest, ":");
+    if (colon <= 0) {
+        return nil;
+    }
+    return strSlice(rest, 0, colon);
+}
+
+class BedrockRuntimeClient {
+    init(config) {
+        this.config = config;
+        this.request = AwsRequest(config, "bedrock");
+        this.host = "bedrock-runtime." + config.region + ".amazonaws.com";
+    }
+
+    requestFor(modelId) {
+        var arnRegion = awsBedrockArnRegion(modelId);
+        if (arnRegion == nil or arnRegion == this.config.region) {
+            return this.request;
+        }
+        var cfg = AwsConfig(
+            this.config.accessKey,
+            this.config.secretKey,
+            arnRegion,
+            this.config.sessionToken
+        );
+        return AwsRequest(cfg, "bedrock");
+    }
+
+    hostFor(modelId) {
+        var arnRegion = awsBedrockArnRegion(modelId);
+        if (arnRegion == nil) {
+            return this.host;
+        }
+        return "bedrock-runtime." + arnRegion + ".amazonaws.com";
+    }
+
+    call(modelId, payload) {
+        var loc = awsBedrockConverseUris(modelId);
+        var host = this.hostFor(modelId);
+        var body = toJSON(payload);
+        var headers = this.requestFor(modelId).sign("POST", host, loc.uri, "", body);
+        headers.Content_Type = "application/json";
+        var url = "https://" + host + loc.path;
+        return httpRequest("POST", url, body, headers);
+    }
+
+    converse(modelId, messages, inferenceConfig) {
+        return this.converseEx(modelId, messages, inferenceConfig, nil, nil);
+    }
+
+    converseEx(modelId, messages, inferenceConfig, additionalModelRequestFields, performanceConfig) {
+        var msgs = messages;
+        if (typeof(messages) != "array") {
+            msgs = [messages];
+        }
+        var payload = Dict();
+        payload.messages = msgs;
+        if (inferenceConfig != nil) {
+            payload.inferenceConfig = inferenceConfig;
+        }
+        if (additionalModelRequestFields != nil) {
+            payload.additionalModelRequestFields = additionalModelRequestFields;
+        }
+        if (performanceConfig != nil) {
+            payload.performanceConfig = performanceConfig;
+        }
+        return this.call(modelId, payload);
     }
 }
 

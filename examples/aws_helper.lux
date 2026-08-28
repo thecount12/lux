@@ -41,5 +41,5 @@ if (aws == nil) {
 }
 
 print "\n=== Complete ===";
-print "Clients: S3Client, DynamoDBClient, CloudWatchClient in lib/aws.lux";
+print "Clients: S3Client, DynamoDBClient, CloudWatchClient, BedrockRuntimeClient in lib/aws.lux";
 print "Prometheus exporter: examples/aws_cloudwatch_prom.lux";

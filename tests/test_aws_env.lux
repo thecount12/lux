@@ -34,6 +34,23 @@ assert(iso2 == "1970-01-02T00:01:01Z", "day+1m+1s iso");
 
 var encoded = awsFormEncode("AWS/Lambda");
 assert(encoded == "AWS%2FLambda", "slash encoded");
+assert(awsFormEncode("v1:0") == "v1%3A0", "colon encoded");
+assert(awsFormEncode("a%2Fb") == "a%252Fb", "percent encoded");
+
+var br = awsBedrockConverseUris("anthropic.claude-sonnet-4-20250514-v1:0");
+assert(br.path == "/model/anthropic.claude-sonnet-4-20250514-v1:0/converse", "bedrock http path");
+assert(br.uri == "/model/anthropic.claude-sonnet-4-20250514-v1%3A0/converse", "bedrock sign uri");
+var brArn = awsBedrockConverseUris("arn:aws:bedrock:us-west-2:1:inference-profile/us.model:0");
+assert(strFind(brArn.path, "%2F") >= 0, "arn slash in http path");
+assert(strFind(brArn.path, ":") >= 0, "arn colon literal in http path");
+assert(strFind(brArn.uri, "%252F") >= 0, "arn slash double-encoded for sign");
+assert(strFind(brArn.uri, "%3A") >= 0, "arn colon encoded for sign");
+assert(awsBedrockArnRegion("anthropic.claude-sonnet-4-5-20250929-v1:0") == nil, "model id has no arn region");
+assert(awsBedrockArnRegion("arn:aws:bedrock:us-west-2:060395286242:inference-profile/us.anthropic.x:0") == "us-west-2", "us profile arn region");
+assert(awsBedrockArnRegion("arn:aws:bedrock:us-west-2:060395286242:inference-profile/global.anthropic.x:0") == "us-west-2", "global profile arn region");
+var brClient = BedrockRuntimeClient(AwsConfig("AKIA", "secret", "us-east-1", nil));
+assert(brClient.hostFor("anthropic.x:0") == "bedrock-runtime.us-east-1.amazonaws.com", "host from config");
+assert(brClient.hostFor("arn:aws:bedrock:us-west-2:1:inference-profile/us.x:0") == "bedrock-runtime.us-west-2.amazonaws.com", "host from arn");
 
 var cwXml = "<GetMetricStatisticsResponse><Datapoints>" +
     "<member><Timestamp>2026-01-01T00:00:00Z</Timestamp><Average>10.5</Average></member>" +
