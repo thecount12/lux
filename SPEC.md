@@ -382,7 +382,7 @@ class Dot < Point {
 - Fields are stored on the instance; methods on the class (inherited along the superclass chain)
 - No access modifiers, no `static`, no interfaces
 
-`Res` and `Dict` / `Server` are native classes provided by the host (see §14).
+`Res`, `Dict`, `File`, and `Server` are native classes provided by the host (see §14).
 
 ---
 
@@ -467,6 +467,9 @@ Wrong arity or type usually returns `nil` (math domain errors follow C `math.h`,
 | Name | Result on failure |
 |---|---|
 | `readFile(path)` → string | `nil` |
+| `File(path)` | Instance; `ok` is false if open failed |
+| `file.readLine()` → string | Next line without `\n` / trailing `\r`, or `nil` at EOF / if closed / if open failed / if a line exceeds 32 MiB |
+| `file.close()` → bool | `true` if a handle was closed; also runs if the instance is GC'd |
 | `writeFile(path, content)` → bool | `false` |
 | `appendFile(path, content)` → bool | `false` |
 | `deleteFile(path)` → bool | `false` |

@@ -14,6 +14,7 @@ OFILES=lux.$O\
 	table.$O\
 	dict.$O\
 	dict_native.$O\
+	file_native.$O\
 	template_render.$O\
 	markdown.$O\
 
@@ -29,6 +30,7 @@ HFILES=chunk.h\
 	float64.h\
 	table.h\
 	dict.h\
+	file_native.h\
 	template_render.h\
 	markdown.h\
 

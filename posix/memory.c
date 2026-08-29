@@ -3,6 +3,7 @@
 #include "compiler.h"
 #include "memory.h"
 #include "vm.h"
+#include "file_native.h"
 
 #ifdef DEBUG_LOG_GC
 #include <stdio.h>
@@ -155,6 +156,7 @@ static void freeObject(Obj* object) {
 		}
 		case OBJ_INSTANCE: {
 			ObjInstance* instance = (ObjInstance*)object;
+			fileCloseFromInstance(instance);
 			freeTable(&instance->fields);
 			FREE(ObjInstance, object);
 			break;

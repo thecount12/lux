@@ -80,7 +80,8 @@ static const char* callableCategory(const char* name) {
 	if (strcmp(name, "readFile") == 0 || strcmp(name, "writeFile") == 0 ||
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
-	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0) return "File and Directory";
+	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0 ||
+	    strcmp(name, "File") == 0) return "File and Directory";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||

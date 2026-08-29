@@ -1,0 +1,51 @@
+// Native File.readLine() — streaming line reader
+
+var missing = File("_lux_readline_missing_xyz.dat");
+assert(missing.ok == false, "missing ok");
+assert(missing.readLine() == nil, "missing readline");
+
+assert(writeFile("_lux_readline_nl.txt", "a\nb\n"), "write nl");
+var f1 = File("_lux_readline_nl.txt");
+assert(f1.ok, "opened nl");
+assert(f1.readLine() == "a", "nl first");
+assert(f1.readLine() == "b", "nl second");
+assert(f1.readLine() == nil, "nl eof");
+assert(f1.close(), "nl close");
+assert(deleteFile("_lux_readline_nl.txt"), "nl cleanup");
+
+assert(writeFile("_lux_readline_nonew.txt", "a\nb"), "write nonew");
+var f2 = File("_lux_readline_nonew.txt");
+assert(f2.ok, "opened nonew");
+assert(f2.readLine() == "a", "nonew first");
+assert(f2.readLine() == "b", "nonew second");
+assert(f2.readLine() == nil, "nonew eof");
+assert(f2.close(), "nonew close");
+assert(deleteFile("_lux_readline_nonew.txt"), "nonew cleanup");
+
+assert(writeFile("_lux_readline_crlf.txt", "a\r\n"), "write crlf");
+var f3 = File("_lux_readline_crlf.txt");
+assert(f3.ok, "opened crlf");
+assert(f3.readLine() == "a", "crlf stripped");
+assert(f3.readLine() == nil, "crlf eof");
+assert(f3.close(), "crlf close");
+assert(deleteFile("_lux_readline_crlf.txt"), "crlf cleanup");
+
+assert(writeFile("_lux_readline_empty.txt", "a\n\nb"), "write empty");
+var f4 = File("_lux_readline_empty.txt");
+assert(f4.ok, "opened empty");
+assert(f4.readLine() == "a", "empty first");
+assert(f4.readLine() == "", "empty middle");
+assert(f4.readLine() == "b", "empty last");
+assert(f4.readLine() == nil, "empty eof");
+assert(f4.close(), "empty close");
+assert(deleteFile("_lux_readline_empty.txt"), "empty cleanup");
+
+assert(writeFile("_lux_readline_closed.txt", "x\n"), "write closed");
+var f5 = File("_lux_readline_closed.txt");
+assert(f5.ok, "opened closed");
+assert(f5.close(), "closed close");
+assert(f5.readLine() == nil, "readline after close");
+assert(f5.ok == false, "ok after close");
+assert(deleteFile("_lux_readline_closed.txt"), "closed cleanup");
+
+print "test_file_readline ok";

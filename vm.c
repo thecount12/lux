@@ -20,6 +20,10 @@ Value dictRemoveNative(int argCount, Value* args);
 Value dictSizeNative(int argCount, Value* args);
 Value dictClearNative(int argCount, Value* args);
 Value dictIterNative(int argCount, Value* args);
+Value fileInitNative(int argCount, Value* args);
+Value fileReadLineNative(int argCount, Value* args);
+Value fileCloseNative(int argCount, Value* args);
+void fileSetClass(ObjClass* klass);
 #include <libsec.h>
 
 /* SHA-256 produces 32 bytes */
@@ -49,6 +53,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"sin", "sin(number)", "Return the sine of a number (radians)."},
 	{"cos", "cos(number)", "Return the cosine of a number (radians)."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
+	{"File", "File(path)", "Open a file for line-at-a-time reading. f.ok is false if open failed. f.readLine() returns the next line or nil at EOF. f.close() closes the handle."},
 	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
 	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
 	{"renderMarkdown", "renderMarkdown(path)", "Read a Markdown file and convert it to an HTML fragment."},
@@ -159,6 +164,7 @@ callableCategory(const char* name)
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
 	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0 ||
+	    strcmp(name, "File") == 0 ||
 	    strcmp(name, "renderTemplate") == 0 ||
 	    strcmp(name, "markdownToHtml") == 0 ||
 	    strcmp(name, "renderMarkdown") == 0)
@@ -3140,6 +3146,7 @@ getMimeType(char* path)
 static ObjClass* serverResClass;
 static ObjClass* serverClass;
 static ObjClass* dictClass;
+static ObjClass* fileClass;
 
 static bool call(ObjClosure* closure, int argCount);
 static bool callValue(Value callee, int argCount);
@@ -4870,6 +4877,15 @@ initVM(void)
 	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(dictClass));
 	pop();
 
+	fileClass = newClass(copyString("File", 4));
+	fileSetClass(fileClass);
+	tableSet(&fileClass->methods, vm.initString, OBJ_VAL(newNative(fileInitNative)));
+	tableSet(&fileClass->methods, copyString("readLine", 8), OBJ_VAL(newNative(fileReadLineNative)));
+	tableSet(&fileClass->methods, copyString("close", 5), OBJ_VAL(newNative(fileCloseNative)));
+	push(OBJ_VAL(copyString("File", 4)));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(fileClass));
+	pop();
+
 	defineNative("assert", assertNative);
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
@@ -4935,6 +4951,7 @@ markServerRoots(void)
 	if (serverResClass != nil) markObject((Obj*)serverResClass);
 	if (serverClass != nil) markObject((Obj*)serverClass);
 	if (dictClass != nil) markObject((Obj*)dictClass);
+	if (fileClass != nil) markObject((Obj*)fileClass);
 }
 
 void 
