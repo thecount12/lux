@@ -546,11 +546,13 @@ May be absent in a given build.
 
 **`Server`** — `Server(port)` then:
 
-`.get(path, handler)`, `.post(path, handler)`, `.getHost(host, path, handler)`, `.postHost(host, path, handler)`, `.vhost(host, root)`, `.static(root)`, `.use(middleware)`, `.workers(n)`, `.start()`, `.handle(method, path, [body], [host])`.
+`.get(path, handler, [op])`, `.post(path, handler, [op])`, `.getHost(host, path, handler, [op])`, `.postHost(host, path, handler, [op])`, `.vhost(host, root)`, `.static(root)`, `.use(middleware)`, `.workers(n)`, `.start()`, `.handle(method, path, [body], [host])`.
+
+The optional last argument is an instance stored on the route as `op` (used by `lib/swagger.lux`).
 
 Handlers are `fun (req, res) { … }`. Middleware is `fun (req, res, next) { …; next(); }`.
 
-`server.handle(method, path, [body], [host])` dispatches **one** request without binding a port. Query string on `path` is stripped; `method` is matched case-insensitively. Returns an instance with `statusCode`, `body`, and `contentType`. This is the Mangum-style hook: same routes as `.start()`, usable from AWS Lambda. See `lib/mangum.lux`.
+`server.handle(method, path, [body], [host])` dispatches **one** request without binding a port. Query string on `path` is stripped; `method` is matched case-insensitively. Returns an instance with `statusCode`, `body`, and `contentType`. This is the Mangum-style hook: same routes as `.start()`, usable from AWS Lambda. See `lib/mangum.lux`. OpenAPI / Swagger UI: `lib/swagger.lux`.
 
 **`Res`** (second argument): `.send(text)`, `.html(html)`, `.json(value)`, `.status(code)`.
 

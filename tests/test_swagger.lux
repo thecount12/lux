@@ -1,0 +1,76 @@
+/* OpenAPI / Swagger UI from Server routes. */
+import "../lib/swagger.lux";
+
+fun handleHealth(req, res) {
+    res.json(parseJSON("{\"ok\":true}"));
+}
+
+fun handleEcho(req, res) {
+    var obj = parseJSON("{\"method\":\"\",\"path\":\"\",\"body\":\"\"}");
+    obj.method = req.method;
+    obj.path = req.path;
+    obj.body = req.body;
+    res.json(obj);
+}
+
+fun handlePlain(req, res) {
+    res.send("ok");
+}
+
+print "=== Swagger ===";
+
+var server = Server(0);
+server.swaggerTitle = "Demo API";
+server.swaggerVersion = "0.1.0";
+
+var healthOp = Op("Health check", "ops");
+healthOp.example = parseJSON("{\"ok\":true}");
+server.get("/health", handleHealth, healthOp);
+
+var echoOp = Op("Echo body", "echo");
+echoOp.body = parseJSON("{\"msg\":\"hi\"}");
+echoOp.status = 200;
+server.post("/echo", handleEcho, echoOp);
+server.get("/echo", handleEcho);
+
+server.get("/later", handlePlain);
+assert(swaggerDoc(server, "GET", "/later", Op("Registered later", "misc")) == true, "swaggerDoc");
+
+swagger(server);
+swagger(server);
+
+var routes = server._routes;
+assert(routes.length >= 2, "routes exist");
+assert(getField(routes[0], "op") != nil, "op on first route");
+assert(routes[0].op.summary == "Health check", "op summary field");
+
+var specStr = swaggerSpec(server);
+var spec = parseJSON(specStr);
+assert(spec != nil, "spec parses");
+assert(spec.info.title == "Demo API", "title");
+assert(spec.info.version == "0.1.0", "version");
+assert(strFind(specStr, "\"/health\"") >= 0, "health path");
+assert(strFind(specStr, "Health check") >= 0, "health summary");
+assert(strFind(specStr, "\"ops\"") >= 0, "ops tag");
+assert(strFind(specStr, "\"/echo\"") >= 0, "echo path");
+assert(strFind(specStr, "Echo body") >= 0, "echo summary");
+assert(strFind(specStr, "Registered later") >= 0, "swaggerDoc summary");
+assert(strFind(specStr, "\"/docs\"") < 0, "docs excluded");
+assert(strFind(specStr, "/openapi.json") < 0, "openapi excluded");
+assert(strFind(specStr, "\"msg\"") >= 0, "body example");
+
+var openapi = server.handle("GET", "/openapi.json");
+assert(openapi.statusCode == 200, "openapi status");
+assert(strFind(openapi.contentType, "application/json") >= 0, "openapi json");
+assert(strFind(openapi.body, "Health check") >= 0, "openapi body");
+
+var docs = server.handle("GET", "/docs");
+assert(docs.statusCode == 200, "docs status");
+assert(strFind(docs.contentType, "text/html") >= 0, "docs html");
+assert(strFind(docs.body, "swagger-ui") >= 0, "swagger ui");
+assert(strFind(docs.body, "/openapi.json") >= 0, "ui points at spec");
+
+var health = server.handle("GET", "/health");
+assert(strFind(health.body, "\"ok\":true") >= 0, "health still works");
+
+print "All Swagger tests passed";

@@ -1,0 +1,276 @@
+// OpenAPI 3 + Swagger UI for Server routes (FastAPI-style /docs).
+// Import relative to the process working directory:
+//   import "../lib/swagger.lux";   // from posix/ or tests/
+//   import "lib/swagger.lux";      // from repo root
+//
+// server.get("/health", handleHealth, Op("Health check", "ops"));
+// swagger(server);   // mounts GET /openapi.json and GET /docs
+
+class Op {
+    init(summary, tag) {
+        this.summary = summary;
+        this.tag = tag;
+        this.description = nil;
+        this.body = nil;
+        this.example = nil;
+        this.status = nil;
+    }
+}
+
+fun swaggerEscape(s) {
+    var text = "" + s;
+    var out = "";
+    var i = 0;
+    while (i < len(text)) {
+        var ch = text[i];
+        if (ch == "\"") {
+            out = out + "\\\"";
+        } else if (ch == "\\") {
+            out = out + "\\\\";
+        } else if (ch == "\n") {
+            out = out + "\\n";
+        } else if (ch == "\r") {
+            out = out + "\\r";
+        } else if (ch == "\t") {
+            out = out + "\\t";
+        } else {
+            out = out + ch;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+fun swaggerStr(s) {
+    if (s == nil) {
+        return "null";
+    }
+    return "\"" + swaggerEscape(s) + "\"";
+}
+
+fun swaggerJsonValue(value) {
+    if (value == nil) {
+        return "null";
+    }
+    if (typeof(value) == "string") {
+        var parsed = parseJSON(value);
+        if (parsed != nil) {
+            var encoded = toJSON(parsed);
+            if (encoded != nil) {
+                return encoded;
+            }
+        }
+    }
+    var json = toJSON(value);
+    if (json == nil) {
+        return "null";
+    }
+    return json;
+}
+
+fun swaggerNormMethod(method) {
+    if (method == "get" or method == "GET") {
+        return "GET";
+    }
+    if (method == "post" or method == "POST") {
+        return "POST";
+    }
+    return method;
+}
+
+fun swaggerIsMeta(path) {
+    return path == "/docs" or path == "/openapi.json";
+}
+
+fun swaggerFindPaths(routes) {
+    var paths = [];
+    var i = 0;
+    while (i < routes.length) {
+        var p = routes[i].path;
+        if (!swaggerIsMeta(p) and !arrayContains(paths, p)) {
+            paths[paths.length] = p;
+        }
+        i = i + 1;
+    }
+    return paths;
+}
+
+fun swaggerPickRoute(routes, path, method) {
+    var fallback = nil;
+    var i = 0;
+    while (i < routes.length) {
+        var r = routes[i];
+        if (r.path == path and r.method == method) {
+            if (getField(r, "host") == nil) {
+                return r;
+            }
+            if (fallback == nil) {
+                fallback = r;
+            }
+        }
+        i = i + 1;
+    }
+    return fallback;
+}
+
+fun swaggerOperation(route) {
+    var method = route.method;
+    var path = route.path;
+    var op = getField(route, "op");
+    var summary = method + " " + path;
+    var tag = nil;
+    var description = nil;
+    var body = nil;
+    var example = nil;
+    var status = 200;
+    var host = getField(route, "host");
+
+    if (op != nil) {
+        var s = getField(op, "summary");
+        if (s != nil) {
+            summary = s;
+        }
+        tag = getField(op, "tag");
+        description = getField(op, "description");
+        body = getField(op, "body");
+        example = getField(op, "example");
+        var st = getField(op, "status");
+        if (st != nil) {
+            status = st;
+        }
+    }
+    if (host != nil) {
+        if (description == nil) {
+            description = "Host: " + host;
+        } else {
+            description = description + " (Host: " + host + ")";
+        }
+    }
+
+    var json = "{\"summary\":" + swaggerStr(summary);
+    if (description != nil) {
+        json = json + ",\"description\":" + swaggerStr(description);
+    }
+    if (tag != nil) {
+        json = json + ",\"tags\":[" + swaggerStr(tag) + "]";
+    }
+    if (method == "POST" or body != nil) {
+        json = json + ",\"requestBody\":{\"content\":{\"application/json\":{\"schema\":{\"type\":\"object\"}";
+        if (body != nil) {
+            json = json + ",\"example\":" + swaggerJsonValue(body);
+        }
+        json = json + "}}}";
+    }
+    json = json + ",\"responses\":{\"" + status + "\":{\"description\":\"OK\"";
+    if (example != nil) {
+        json = json + ",\"content\":{\"application/json\":{\"example\":" + swaggerJsonValue(example) + "}}";
+    }
+    json = json + "}}";
+    return json + "}";
+}
+
+fun swaggerSpec(server) {
+    var title = getField(server, "swaggerTitle");
+    if (title == nil) {
+        title = "Lux API";
+    }
+    var version = getField(server, "swaggerVersion");
+    if (version == nil) {
+        version = "1.0.0";
+    }
+    var routes = getField(server, "_routes");
+    if (routes == nil) {
+        routes = [];
+    }
+
+    var paths = swaggerFindPaths(routes);
+    var pathsJson = "{";
+    var p = 0;
+    while (p < paths.length) {
+        if (p > 0) {
+            pathsJson = pathsJson + ",";
+        }
+        var path = paths[p];
+        pathsJson = pathsJson + swaggerStr(path) + ":{";
+        var firstOp = true;
+        var getR = swaggerPickRoute(routes, path, "GET");
+        var postR = swaggerPickRoute(routes, path, "POST");
+        if (getR != nil) {
+            pathsJson = pathsJson + "\"get\":" + swaggerOperation(getR);
+            firstOp = false;
+        }
+        if (postR != nil) {
+            if (!firstOp) {
+                pathsJson = pathsJson + ",";
+            }
+            pathsJson = pathsJson + "\"post\":" + swaggerOperation(postR);
+        }
+        pathsJson = pathsJson + "}";
+        p = p + 1;
+    }
+    pathsJson = pathsJson + "}";
+
+    return "{\"openapi\":\"3.0.3\",\"info\":{\"title\":" + swaggerStr(title) +
+        ",\"version\":" + swaggerStr(version) + "},\"paths\":" + pathsJson + "}";
+}
+
+fun swaggerDoc(server, method, path, op) {
+    var routes = getField(server, "_routes");
+    if (routes == nil) {
+        return false;
+    }
+    method = swaggerNormMethod(method);
+    var found = false;
+    var i = 0;
+    while (i < routes.length) {
+        var r = routes[i];
+        if (r.method == method and r.path == path) {
+            r.op = op;
+            found = true;
+        }
+        i = i + 1;
+    }
+    return found;
+}
+
+fun swaggerPage(title) {
+    if (title == nil) {
+        title = "Lux API";
+    }
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" +
+        title +
+        "</title><link rel=\"stylesheet\" href=\"https://unpkg.com/swagger-ui-dist@5/swagger-ui.css\"></head>" +
+        "<body><div id=\"swagger-ui\"></div>" +
+        "<script src=\"https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js\"></script>" +
+        "<script>window.onload=function(){SwaggerUIBundle({url:\"/openapi.json\",dom_id:\"#swagger-ui\"});};</script>" +
+        "</body></html>";
+}
+
+fun swagger(server) {
+    if (getField(server, "_swagger") != nil) {
+        return;
+    }
+    server._swagger = true;
+
+    fun handleOpenApi(req, res) {
+        var spec = swaggerSpec(server);
+        var obj = parseJSON(spec);
+        if (obj == nil) {
+            res.status(500);
+            res.send("invalid openapi spec");
+            return;
+        }
+        res.json(obj);
+    }
+
+    fun handleDocs(req, res) {
+        var title = getField(server, "swaggerTitle");
+        if (title == nil) {
+            title = "Lux API";
+        }
+        res.html(swaggerPage(title));
+    }
+
+    server.get("/openapi.json", handleOpenApi);
+    server.get("/docs", handleDocs);
+}

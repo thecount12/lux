@@ -3329,6 +3329,27 @@ serverGetRoutes(ObjInstance* server, char* key)
 	return AS_ARRAY(routesVal);
 }
 
+/* Optional last arg: Op instance stored on the route as `op`. */
+static int
+serverRouteOpArg(int argCount, Value* args, int opIndex)
+{
+	if (argCount < opIndex)
+		return 0;
+	if (argCount == opIndex)
+		return 1;
+	if (argCount == opIndex + 1 && (IS_NIL(args[opIndex]) || IS_INSTANCE(args[opIndex])))
+		return 1;
+	return 0;
+}
+
+static void
+serverRouteSetOp(ObjInstance* entry, int argCount, Value* args, int opIndex)
+{
+	if (argCount <= opIndex || IS_NIL(args[opIndex]))
+		return;
+	tableSet(&entry->fields, copyString("op", 2), args[opIndex]);
+}
+
 /* Server.init(port) - returns instance for constructor */
 static Value
 serverInitNative(int argCount, Value* args)
@@ -3341,11 +3362,12 @@ serverInitNative(int argCount, Value* args)
 	return args[0];
 }
 
-/* Server.get(path, handler) — global route (any Host) */
+/* Server.get(path, handler, [op]) — global route (any Host) */
 static Value
 serverGetNative(int argCount, Value* args)
 {
-	if (argCount != 3 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) || !IS_CLOSURE(args[2]))
+	if (!serverRouteOpArg(argCount, args, 3) || !IS_INSTANCE(args[0]) ||
+	    !IS_STRING(args[1]) || !IS_CLOSURE(args[2]))
 		return NIL_VAL;
 	ObjInstance* server = AS_INSTANCE(args[0]);
 	ObjArray* routes = serverGetRoutes(server, "_routes");
@@ -3358,16 +3380,18 @@ serverGetNative(int argCount, Value* args)
 	tableSet(&entry->fields, methodKey, OBJ_VAL(copyString("GET", 3)));
 	tableSet(&entry->fields, pathKey, args[1]);
 	tableSet(&entry->fields, handlerKey, args[2]);
+	serverRouteSetOp(entry, argCount, args, 3);
 	writeArray(routes, OBJ_VAL(entry));
 	pop();
 	return NIL_VAL;
 }
 
-/* Server.post(path, handler) — global route (any Host) */
+/* Server.post(path, handler, [op]) — global route (any Host) */
 static Value
 serverPostNative(int argCount, Value* args)
 {
-	if (argCount != 3 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) || !IS_CLOSURE(args[2]))
+	if (!serverRouteOpArg(argCount, args, 3) || !IS_INSTANCE(args[0]) ||
+	    !IS_STRING(args[1]) || !IS_CLOSURE(args[2]))
 		return NIL_VAL;
 	ObjInstance* server = AS_INSTANCE(args[0]);
 	ObjArray* routes = serverGetRoutes(server, "_routes");
@@ -3380,17 +3404,18 @@ serverPostNative(int argCount, Value* args)
 	tableSet(&entry->fields, methodKey, OBJ_VAL(copyString("POST", 4)));
 	tableSet(&entry->fields, pathKey, args[1]);
 	tableSet(&entry->fields, handlerKey, args[2]);
+	serverRouteSetOp(entry, argCount, args, 3);
 	writeArray(routes, OBJ_VAL(entry));
 	pop();
 	return NIL_VAL;
 }
 
-/* Server.getHost(host, path, handler) */
+/* Server.getHost(host, path, handler, [op]) */
 static Value
 serverGetHostNative(int argCount, Value* args)
 {
-	if (argCount != 4 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) ||
-	    !IS_STRING(args[2]) || !IS_CLOSURE(args[3]))
+	if (!serverRouteOpArg(argCount, args, 4) || !IS_INSTANCE(args[0]) ||
+	    !IS_STRING(args[1]) || !IS_STRING(args[2]) || !IS_CLOSURE(args[3]))
 		return NIL_VAL;
 	ObjInstance* server = AS_INSTANCE(args[0]);
 	ObjArray* routes = serverGetRoutes(server, "_routes");
@@ -3401,17 +3426,18 @@ serverGetHostNative(int argCount, Value* args)
 	tableSet(&entry->fields, copyString("host", 4), args[1]);
 	tableSet(&entry->fields, copyString("path", 4), args[2]);
 	tableSet(&entry->fields, copyString("handler", 7), args[3]);
+	serverRouteSetOp(entry, argCount, args, 4);
 	writeArray(routes, OBJ_VAL(entry));
 	pop();
 	return NIL_VAL;
 }
 
-/* Server.postHost(host, path, handler) */
+/* Server.postHost(host, path, handler, [op]) */
 static Value
 serverPostHostNative(int argCount, Value* args)
 {
-	if (argCount != 4 || !IS_INSTANCE(args[0]) || !IS_STRING(args[1]) ||
-	    !IS_STRING(args[2]) || !IS_CLOSURE(args[3]))
+	if (!serverRouteOpArg(argCount, args, 4) || !IS_INSTANCE(args[0]) ||
+	    !IS_STRING(args[1]) || !IS_STRING(args[2]) || !IS_CLOSURE(args[3]))
 		return NIL_VAL;
 	ObjInstance* server = AS_INSTANCE(args[0]);
 	ObjArray* routes = serverGetRoutes(server, "_routes");
@@ -3422,6 +3448,7 @@ serverPostHostNative(int argCount, Value* args)
 	tableSet(&entry->fields, copyString("host", 4), args[1]);
 	tableSet(&entry->fields, copyString("path", 4), args[2]);
 	tableSet(&entry->fields, copyString("handler", 7), args[3]);
+	serverRouteSetOp(entry, argCount, args, 4);
 	writeArray(routes, OBJ_VAL(entry));
 	pop();
 	return NIL_VAL;

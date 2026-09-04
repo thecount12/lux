@@ -1,0 +1,46 @@
+/* FastAPI-style Swagger UI for a Lux Server.
+ *
+ *   cd posix && ./lux ../examples/swagger_server.lux
+ *   open http://127.0.0.1:8085/docs
+ *
+ * Spec without a browser:
+ *   curl http://127.0.0.1:8085/openapi.json
+ */
+
+import "../lib/swagger.lux";
+
+fun handleHealth(req, res) {
+    res.json(parseJSON("{\"ok\":true}"));
+}
+
+fun handleEcho(req, res) {
+    var obj = parseJSON("{\"method\":\"\",\"path\":\"\",\"body\":\"\"}");
+    obj.method = req.method;
+    obj.path = req.path;
+    obj.body = req.body;
+    res.json(obj);
+}
+
+var server = Server(8085);
+server.swaggerTitle = "Demo API";
+server.swaggerVersion = "1.0.0";
+
+var healthOp = Op("Health check", "ops");
+healthOp.example = parseJSON("{\"ok\":true}");
+server.get("/health", handleHealth, healthOp);
+
+var echoOp = Op("Echo the request", "echo");
+echoOp.description = "Returns method, path, and body.";
+echoOp.body = parseJSON("{\"msg\":\"hi\"}");
+server.get("/echo", handleEcho, Op("Echo GET", "echo"));
+server.post("/echo", handleEcho, echoOp);
+
+swagger(server);
+
+print "Starting Demo API on http://127.0.0.1:8085/";
+print "  GET  /docs           Swagger UI";
+print "  GET  /openapi.json   OpenAPI spec";
+print "  GET  /health         JSON";
+print "  GET  /echo           JSON";
+print "  POST /echo           JSON";
+server.start();
