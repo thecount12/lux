@@ -714,6 +714,27 @@ if (content != nil) {
 }
 ```
 
+#### `File(path)` → instance
+Opens a file for line-at-a-time reading. `init` always returns the instance; check `f.ok` after construction. `readLine()` returns the next line without the newline (trailing `\r` is stripped). An empty line is `""`. `nil` means EOF, a closed handle, an open failure, or a line longer than 32 MiB. `close()` releases the OS handle; the GC also closes the handle if you drop the instance.
+
+```lux
+var f = File("results.ndjson");
+if (!f.ok) {
+    print "cannot open";
+} else {
+    var line = f.readLine();
+    while (line != nil) {
+        var obj = parseJSON(line);
+        line = f.readLine();
+    }
+    f.close();
+}
+```
+
+Use `File` for large files. `readFile` still loads the whole file into one string.
+
+NDJSON (one JSON object per line): stream with `File.readLine()`, or cache `strSplit` once — never re-read inside the loop. See [NDJSON.md](NDJSON.md).
+
 #### `renderTemplate(path, ctx)` → string
 Native HTML template renderer (Plan 9 and POSIX). `ctx` must be an **instance** whose fields supply values (e.g. a small class with `title` / `items`). Expanded `{% include %}` / `{% include_md %}` results are cached for the process lifetime — restart after editing templates or included Markdown.
 

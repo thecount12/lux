@@ -54,6 +54,10 @@ Value dictRemoveNative(int argCount, Value* args);
 Value dictSizeNative(int argCount, Value* args);
 Value dictClearNative(int argCount, Value* args);
 Value dictIterNative(int argCount, Value* args);
+Value fileInitNative(int argCount, Value* args);
+Value fileReadLineNative(int argCount, Value* args);
+Value fileCloseNative(int argCount, Value* args);
+void fileSetClass(ObjClass* klass);
 
 VM vm;
 
@@ -77,6 +81,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"sin", "sin(number)", "Return the sine of a number (radians)."},
 	{"cos", "cos(number)", "Return the cosine of a number (radians)."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
+	{"File", "File(path)", "Open a file for line-at-a-time reading. f.ok is false if open failed. f.readLine() returns the next line or nil at EOF. f.close() closes the handle."},
 	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
 	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
 	{"renderMarkdown", "renderMarkdown(path)", "Read a Markdown file and convert it to an HTML fragment."},
@@ -190,6 +195,7 @@ static const char* callableCategory(const char* name) {
 	    strcmp(name, "appendFile") == 0 || strcmp(name, "deleteFile") == 0 ||
 	    strcmp(name, "fileExists") == 0 || strcmp(name, "createDir") == 0 ||
 	    strcmp(name, "listDir") == 0 || strcmp(name, "run") == 0 ||
+	    strcmp(name, "File") == 0 ||
 	    strcmp(name, "renderTemplate") == 0 ||
 	    strcmp(name, "markdownToHtml") == 0 ||
 	    strcmp(name, "renderMarkdown") == 0) return "File and Directory";
@@ -3453,6 +3459,7 @@ static Value awsSignRequestNative(int argCount, Value* args) {
 static ObjClass* serverResClass;
 static ObjClass* serverClass;
 static ObjClass* dictClass;
+static ObjClass* fileClass;
 
 static bool call(ObjClosure* closure, int argCount);
 static InterpretResult run(void);
@@ -5141,6 +5148,16 @@ void initVM() {
 	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
 	pop();
 	pop();
+	fileClass = newClass(copyString("File", 4));
+	fileSetClass(fileClass);
+	tableSet(&fileClass->methods, vm.initString, OBJ_VAL(newNative(fileInitNative)));
+	tableSet(&fileClass->methods, copyString("readLine", 8), OBJ_VAL(newNative(fileReadLineNative)));
+	tableSet(&fileClass->methods, copyString("close", 5), OBJ_VAL(newNative(fileCloseNative)));
+	push(OBJ_VAL(copyString("File", 4)));
+	push(OBJ_VAL(fileClass));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
+	pop();
+	pop();
 	defineNative("hmacSha256", hmacSha256Native);
 	defineNative("awsSignRequest", awsSignRequestNative);
 	defineNative("getAwsTimestamp", getAwsTimestampNative);
@@ -5158,6 +5175,7 @@ void markServerRoots(void) {
 	if (serverResClass != NULL) markObject((Obj*)serverResClass);
 	if (serverClass != NULL) markObject((Obj*)serverClass);
 	if (dictClass != NULL) markObject((Obj*)dictClass);
+	if (fileClass != NULL) markObject((Obj*)fileClass);
 }
 
 void freeVM() {
