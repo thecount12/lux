@@ -22,6 +22,7 @@ posix/luxfmt
 posix/luxtest
 posix/luxcheck
 posix/luxlint
+posix/ninep_test
 
 # Plan 9 object files
 *.8

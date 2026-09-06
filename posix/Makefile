@@ -69,7 +69,7 @@ FMT_TARGET = luxfmt
 TEST_TARGET = luxtest
 
 # Define the source files
-SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c dict.c dict_native.c file_native.c template_render.c markdown.c
+SRCS = main.c chunk.c memory.c debug.c value.c vm.c compiler.c scanner.c object.c table.c dict.c dict_native.c file_native.c template_render.c markdown.c ninep.c ninep_native.c
 FMT_SRC = luxfmt.c
 TEST_SRC = luxtest.c
 
@@ -79,7 +79,7 @@ FMT_OBJ = $(FMT_SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 
 # Define the header files for dependency tracking
-DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h template_render.h markdown.h
+DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h template_render.h markdown.h ninep.h ninep_native.h
 
 # The default target, which builds the executable
 all: $(TARGET)
@@ -112,7 +112,7 @@ LUXCHECK_TARGET = luxcheck
 LUXCHECK_SRC = luxcheck.c
 LUXCHECK_OBJ = $(LUXCHECK_SRC:.c=.o)
 
-$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o file_native.o template_render.o markdown.o vm.o
+$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o file_native.o template_render.o markdown.o ninep.o ninep_native.o vm.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Build the luxlint utility
@@ -120,13 +120,16 @@ LUXLINT_TARGET = luxlint
 LUXLINT_SRC = luxlint.c
 LUXLINT_OBJ = $(LUXLINT_SRC:.c=.o)
 
-$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o file_native.o template_render.o markdown.o vm.o
+$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o file_native.o template_render.o markdown.o ninep.o ninep_native.o vm.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+ninep_test: ninep_test.o ninep.o
+	$(CC) $(CFLAGS) $^ -o $@
 
 # Phony targets don't create a file of the same name
 .PHONY: all clean $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
 
 # Rule to clean up generated files
 clean:
-	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
+	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) ninep_test.o $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET) ninep_test
 

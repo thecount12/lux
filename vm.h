@@ -19,6 +19,7 @@ void markServerRoots(void);
 InterpretResult interpret(char* source);
 void push(Value value);
 Value pop(void);
+int luxInvokeClosure(ObjClosure* closure, int argCount, Value* args, Value* result);
 
 extern VM vm;
 

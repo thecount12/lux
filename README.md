@@ -29,6 +29,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Math** — abs, ceil, floor, sqrt, pow, log, sin, cos
 - **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts, Lambda via `server.handle` / Mangum)
 - **Network** — `netLookup` (DNS) and `netPing` (TCP-connect RTT), no `run()`
+- **9P** — serve a synthetic 9P2000 tree and connect as a client (`NineP`, unix socket or TCP). See [NINEP.md](NINEP.md).
 - **Templates** — native `renderTemplate` (`{{ }}`, `{% for %}`, `{% include %}`)
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
 - **Cloud** — AWS S3, STS, IAM operations
@@ -230,6 +231,21 @@ if (ip != nil) print ip;            // first resolved address, or nil
 var ms = netPing("example.com", 443);
 if (ms >= 0) print ms;              // TCP-connect round-trip milliseconds
 else print "unreachable";           // -1 on timeout / refused / bad args
+```
+
+### 9P (Plan 9 file protocol)
+POSIX Lux can serve a small 9P tree and connect to Plan 9 (or to another Lux). See [NINEP.md](NINEP.md).
+
+```lux
+var fs = NineP();
+fs.export("/README.md", "README.md");
+fs.listen("/tmp/lux.9p");   // blocks; unix socket or tcp!host!port
+```
+
+```lux
+var c = NineP.connect("unix!/tmp/lux.9p");
+c.get("/README.md", "/tmp/README.copy");
+c.close();
 ```
 
 ### JSON Data
@@ -662,7 +678,7 @@ class Greeter {
 help("Greeter"); // shows class type and known method names
 ```
 
-`help()` groups callables by category (Core, Math, File and Directory, String and Array, Data Formats, Float64, HTTP, Network, Crypto, AWS, Database, and User or Other) so long lists are easier to scan.
+`help()` groups callables by category (Core, Math, File and Directory, String and Array, Data Formats, Float64, HTTP, Network, 9P, Crypto, AWS, Database, and User or Other) so long lists are easier to scan.
 
 `epoch()` returns Unix timestamp seconds in UTC, which is useful for durable event timestamps.
 

@@ -1,0 +1,39 @@
+/* Export a small mutable note over 9P.
+ *
+ *   ./lux examples/ninep_note.lux
+ *   ./lux examples/ninep_client.lux unix!/tmp/lux-note.9p
+ *
+ * From plan9port:
+ *   9p -a unix!/tmp/lux-note.9p read note
+ *   echo remembered | 9p -a unix!/tmp/lux-note.9p write note
+ *   9p -a unix!/tmp/lux-note.9p read note
+ */
+
+var note = "empty\n";
+
+fun readNote() {
+    return note;
+}
+
+fun writeNote(s) {
+    note = s;
+    return true;
+}
+
+fun readHelp() {
+    return "read/write /note — last write is the next read\n";
+}
+
+var addr = "/tmp/lux-note.9p";
+if (args().length > 0) {
+    addr = args()[0];
+}
+
+var fs = NineP();
+fs.file("/note", readNote, writeNote);
+fs.file("/help", readHelp, nil);
+print "note fs on " + addr;
+if (!fs.listen(addr)) {
+    print "listen failed";
+    exit(1);
+}

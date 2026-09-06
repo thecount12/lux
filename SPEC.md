@@ -382,7 +382,7 @@ class Dot < Point {
 - Fields are stored on the instance; methods on the class (inherited along the superclass chain)
 - No access modifiers, no `static`, no interfaces
 
-`Res`, `Dict`, `File`, and `Server` are native classes provided by the host (see §14).
+`Res`, `Dict`, `File`, `Server`, `NineP`, and `NinePConn` are native classes provided by the host (see §14).
 
 ---
 
@@ -528,19 +528,29 @@ There is **no** `{ "k": v }` literal. Build objects with classes / `Dict`, or pa
 
 Client calls return a **body string**, not a response object (no `.statusCode`).
 
-### 14.9 Crypto and AWS
+### 14.9 9P
+
+`NineP` serves a synthetic 9P2000 tree. `NineP.connect(addr)` returns a `NinePConn` or `nil`. Addresses are unix paths, `unix!path`, `tcp!host!port`, or `:port`. See [NINEP.md](NINEP.md).
+
+**`NineP`** — `NineP()` then `.file(path, readFn, writeFn)`, `.export(path, localFile)`, `.listen(addr)`, `.post(name)`. `readFn` is `fun () { return string; }` or `nil`. `writeFn` is `fun (s) { return true; }` or `nil`. Paths are one level under `/`. `.export` backs a 9P name with a disk file (read and write, 8 MiB). `.listen` / `.post` block.
+
+**`NinePConn`** — `.ls(path)`, `.read(path)`, `.write(path, data)`, `.get(remote, local)`, `.put(local, remote)`, `.stat(path)`, `.close()`. Failures are `nil` / `false`; `err` is the last 9P error string.
+
+No auth, create, remove, or wstat. The synthetic server is at most 32 files.
+
+### 14.10 Crypto and AWS
 
 `sha256`, `hmacSha256`, `awsSignRequest`, `getAwsTimestamp`,  
 `s3ListObjects`, `s3GetObject`, `s3PutObject`.
 
 See [AWS_API_GUIDE.md](AWS_API_GUIDE.md) for parameter lists.
 
-### 14.10 Database (POSIX, opt-in)
+### 14.11 Database (POSIX, opt-in)
 
 `dbConnect(driver, connection)`, `dbQuery(conn, sql)`, `dbClose(conn)`.  
 May be absent in a given build.
 
-### 14.11 Native classes
+### 14.12 Native classes
 
 **`Dict`** — string → string map in native storage.
 
@@ -558,6 +568,10 @@ Handlers are `fun (req, res) { … }`. Middleware is `fun (req, res, next) { …
 **`Res`** (second argument): `.send(text)`, `.html(html)`, `.json(value)`, `.status(code)`.
 
 `req` fields include at least `method`, `path`, `body`, `host` (port stripped). `server.workers(n)` preforks 1…32 processes (default 4). Memory is not shared across workers after fork.
+
+**`File`** — `File(path)` then `.readLine()`, `.close()`. Check `.ok` after construction.
+
+**`NineP` / `NinePConn`** — see §14.9 and [NINEP.md](NINEP.md).
 
 ---
 

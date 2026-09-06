@@ -208,6 +208,9 @@ cd posix
 make luxtest
 ./luxtest ../tests/
 
+make ninep_test
+./ninep_test              # 9P server + client protocol (no Lux)
+
 # Plan 9
 6c luxtest_plan9.c && 6l -o luxtest luxtest_plan9.6
 ./luxtest tests/

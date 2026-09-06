@@ -1,0 +1,43 @@
+/* Synthetic 9P server. Blocking listen.
+ *
+ * POSIX — terminal 1:
+ *   ./lux examples/ninep_status.lux
+ *
+ * POSIX — terminal 2 (plan9port 9p, or Lux):
+ *   9p -a unix!/tmp/lux.9p ls /
+ *   9p -a unix!/tmp/lux.9p read status
+ *   echo start | 9p -a unix!/tmp/lux.9p write ctl
+ *   ./lux examples/ninep_client.lux unix!/tmp/lux.9p
+ *
+ * TCP instead of a unix socket:
+ *   ./lux examples/ninep_status.lux tcp!127.0.0.1!5640
+ *
+ * Plan 9:
+ *   8.out examples/ninep_status.lux lux
+ *   mount -c /srv/lux /n/lux
+ *   cat /n/lux/status
+ */
+
+fun readStatus() {
+    return "ok\n";
+}
+
+fun writeCtl(s) {
+    print "ctl: " + s;
+    return true;
+}
+
+var addr = "/tmp/lux.9p";
+if (args().length > 0) {
+    addr = args()[0];
+}
+
+var fs = NineP();
+fs.file("/status", readStatus, nil);
+fs.file("/ctl", nil, writeCtl);
+print "9P server ready";
+print "listen " + addr;
+if (!fs.listen(addr)) {
+    print "listen failed";
+    exit(1);
+}

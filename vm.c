@@ -24,6 +24,20 @@ Value fileInitNative(int argCount, Value* args);
 Value fileReadLineNative(int argCount, Value* args);
 Value fileCloseNative(int argCount, Value* args);
 void fileSetClass(ObjClass* klass);
+Value ninepInitNative(int argCount, Value* args);
+Value ninepFileNative(int argCount, Value* args);
+Value ninepExportNative(int argCount, Value* args);
+Value ninepListenNative(int argCount, Value* args);
+Value ninepPostNative(int argCount, Value* args);
+Value ninepConnectNative(int argCount, Value* args);
+Value ninepReadNative(int argCount, Value* args);
+Value ninepWriteNative(int argCount, Value* args);
+Value ninepGetNative(int argCount, Value* args);
+Value ninepPutNative(int argCount, Value* args);
+Value ninepLsNative(int argCount, Value* args);
+Value ninepStatNative(int argCount, Value* args);
+Value ninepCloseNative(int argCount, Value* args);
+void ninepSetClasses(ObjClass* server, ObjClass* conn);
 #include <libsec.h>
 
 /* SHA-256 produces 32 bytes */
@@ -103,6 +117,8 @@ static const NativeDoc kNativeDocs[] = {
 	{"httpPostForm", "httpPostForm(url, parts, [headers])", "POST multipart/form-data from a parts array or Form instance."},
 	{"httpServer", "httpServer(port, handler)", "Start a simple HTTP server."},
 	{"Server", "Server(port)", "HTTP server with routing, static files, and .handle() for Lambda."},
+	{"NineP", "NineP()", "Create a synthetic 9P file server, or NineP.connect(addr) for a client."},
+	{"NinePConn", "NineP.connect(addr)", "9P client: ls, read, write, stat, close. Failed ops set .err."},
 	{"sha256", "sha256(text)", "Compute SHA-256 hash."},
 	{"hmacSha256", "hmacSha256(key, text)", "Compute HMAC-SHA256."},
 	{"typeof", "typeof(value)", "Return the runtime type name or class name for objects."},
@@ -171,6 +187,8 @@ callableCategory(const char* name)
 		return "File and Directory";
 	if (strcmp(name, "netLookup") == 0 || strcmp(name, "netPing") == 0)
 		return "Network";
+	if (strcmp(name, "NineP") == 0 || strcmp(name, "NinePConn") == 0)
+		return "9P";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
@@ -384,6 +402,7 @@ helpNative(int argCount, Value* args)
 		"Float64",
 		"HTTP",
 		"Network",
+		"9P",
 		"Crypto",
 		"AWS",
 		"Database",
@@ -3147,6 +3166,8 @@ static ObjClass* serverResClass;
 static ObjClass* serverClass;
 static ObjClass* dictClass;
 static ObjClass* fileClass;
+static ObjClass* ninepClass;
+static ObjClass* ninepConnClass;
 
 static bool call(ObjClosure* closure, int argCount);
 static bool callValue(Value callee, int argCount);
@@ -4886,6 +4907,30 @@ initVM(void)
 	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(fileClass));
 	pop();
 
+	ninepClass = newClass(copyString("NineP", 5));
+	tableSet(&ninepClass->methods, vm.initString, OBJ_VAL(newNative(ninepInitNative)));
+	tableSet(&ninepClass->methods, copyString("file", 4), OBJ_VAL(newNative(ninepFileNative)));
+	tableSet(&ninepClass->methods, copyString("export", 6), OBJ_VAL(newNative(ninepExportNative)));
+	tableSet(&ninepClass->methods, copyString("listen", 6), OBJ_VAL(newNative(ninepListenNative)));
+	tableSet(&ninepClass->methods, copyString("post", 4), OBJ_VAL(newNative(ninepPostNative)));
+	tableSet(&ninepClass->methods, copyString("connect", 7), OBJ_VAL(newNative(ninepConnectNative)));
+	push(OBJ_VAL(copyString("NineP", 5)));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(ninepClass));
+	pop();
+
+	ninepConnClass = newClass(copyString("NinePConn", 9));
+	tableSet(&ninepConnClass->methods, copyString("read", 4), OBJ_VAL(newNative(ninepReadNative)));
+	tableSet(&ninepConnClass->methods, copyString("write", 5), OBJ_VAL(newNative(ninepWriteNative)));
+	tableSet(&ninepConnClass->methods, copyString("get", 3), OBJ_VAL(newNative(ninepGetNative)));
+	tableSet(&ninepConnClass->methods, copyString("put", 3), OBJ_VAL(newNative(ninepPutNative)));
+	tableSet(&ninepConnClass->methods, copyString("ls", 2), OBJ_VAL(newNative(ninepLsNative)));
+	tableSet(&ninepConnClass->methods, copyString("stat", 4), OBJ_VAL(newNative(ninepStatNative)));
+	tableSet(&ninepConnClass->methods, copyString("close", 5), OBJ_VAL(newNative(ninepCloseNative)));
+	ninepSetClasses(ninepClass, ninepConnClass);
+	push(OBJ_VAL(copyString("NinePConn", 9)));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), OBJ_VAL(ninepConnClass));
+	pop();
+
 	defineNative("assert", assertNative);
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
@@ -4952,6 +4997,8 @@ markServerRoots(void)
 	if (serverClass != nil) markObject((Obj*)serverClass);
 	if (dictClass != nil) markObject((Obj*)dictClass);
 	if (fileClass != nil) markObject((Obj*)fileClass);
+	if (ninepClass != nil) markObject((Obj*)ninepClass);
+	if (ninepConnClass != nil) markObject((Obj*)ninepConnClass);
 }
 
 void 
@@ -5001,6 +5048,34 @@ call(ObjClosure* closure, int argCount)
 	frame->ip = closure->function->chunk.code;
 	frame->slots = vm.stackTop - argCount -1;
 	return true;
+}
+
+int
+luxInvokeClosure(ObjClosure* closure, int argCount, Value* args, Value* result)
+{
+	int i;
+	Value* savedTop;
+
+	if (closure == nil || result == nil)
+		return 0;
+	savedTop = vm.stackTop;
+	push(OBJ_VAL(closure));
+	for (i = 0; i < argCount; i++)
+		push(args[i]);
+	if (!call(closure, argCount)) {
+		vm.stackTop = savedTop;
+		return 0;
+	}
+	if (run() != INTERPRET_OK) {
+		vm.stackTop = savedTop;
+		return 0;
+	}
+	if (vm.stackTop > savedTop)
+		*result = pop();
+	else
+		*result = NIL_VAL;
+	vm.stackTop = savedTop;
+	return 1;
 }
 
 static bool callValue(Value callee, int argCount) {

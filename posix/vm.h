@@ -55,5 +55,6 @@ void markServerRoots(void);
 InterpretResult interpret(const char* source);
 void push(Value value);
 Value pop();
+int luxInvokeClosure(ObjClosure* closure, int argCount, Value* args, Value* result);
 
 #endif

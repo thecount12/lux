@@ -8,6 +8,7 @@
 #include "object.h"
 #include "table.h"
 #include "file_native.h"
+#include "ninep_native.h"
 
 #ifdef DEBUG_LOG_GC
 #include "debug.h"
@@ -220,6 +221,7 @@ freeObject(Obj* object)
 		case OBJ_INSTANCE: {
 			ObjInstance* instance = (ObjInstance*)object;
 			fileCloseFromInstance(instance);
+			ninepCloseFromInstance(instance);
 			freeTable(&instance->fields);
 			//FREE(ObjInstance, object);
 			reallocate(object, sizeof(ObjInstance), 0);

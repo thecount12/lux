@@ -1,0 +1,33 @@
+// NineP API without a live listen (listen blocks).
+
+assert(typeof(NineP) == "class", "NineP is a class");
+assert(typeof(NinePConn) == "class", "NinePConn is a class");
+
+var fs = NineP();
+assert(typeof(fs) == "NineP", "NineP() instance");
+
+fun r() {
+    return "ok\n";
+}
+
+fun w(s) {
+    return true;
+}
+
+assert(fs.file("/status", r, nil) == true, "register read file");
+assert(fs.file("/ctl", nil, w) == true, "register write file");
+assert(fs.file("/both", r, w) == true, "register read/write file");
+assert(fs.file("/a/b", r, nil) == false, "nested path rejected");
+assert(fs.file("/", r, nil) == false, "root name rejected");
+assert(fs.file("/status", "not-a-fn", nil) == false, "read must be closure or nil");
+assert(fs.export("/Makefile", "Makefile") == true, "export a local file");
+assert(fs.export("/a/b", "Makefile") == false, "export nested path rejected");
+assert(fs.export("/x", "") == false, "export empty local path rejected");
+
+var missing = NineP.connect("/tmp/lux-ninep-does-not-exist.9p");
+assert(missing == nil, "connect to missing socket is nil");
+
+var bad = NineP.connect("");
+assert(bad == nil, "empty address is nil");
+
+print "test_ninep: all assertions passed";
