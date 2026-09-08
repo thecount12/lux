@@ -28,17 +28,51 @@ LDFLAGS = -lcurl -lcrypto -lm $(DB_LDFLAGS)
 
 ifeq ($(USE_SQLITE),1)
     DB_FLAGS += -DDB_SQLITE
-    DB_LDFLAGS += -lsqlite3
+    SQLITE_CFLAGS := $(shell pkg-config --cflags sqlite3 2>/dev/null)
+    SQLITE_LIBS := $(shell pkg-config --libs sqlite3 2>/dev/null)
+    ifneq ($(SQLITE_CFLAGS),)
+        DB_FLAGS += $(SQLITE_CFLAGS)
+    endif
+    ifneq ($(SQLITE_LIBS),)
+        DB_LDFLAGS += $(SQLITE_LIBS)
+    else
+        DB_LDFLAGS += -lsqlite3
+    endif
 endif
 
 ifeq ($(USE_POSTGRES),1)
     DB_FLAGS += -DDB_POSTGRES
-    DB_LDFLAGS += -lpq
+    # Debian/Ubuntu install libpq-fe.h under /usr/include/postgresql, not /usr/include.
+    PG_CFLAGS := $(shell pkg-config --cflags libpq 2>/dev/null)
+    PG_LIBS := $(shell pkg-config --libs libpq 2>/dev/null)
+    ifneq ($(PG_CFLAGS),)
+        DB_FLAGS += $(PG_CFLAGS)
+    else ifneq ($(wildcard /usr/include/postgresql/libpq-fe.h),)
+        DB_FLAGS += -I/usr/include/postgresql
+    endif
+    ifneq ($(PG_LIBS),)
+        DB_LDFLAGS += $(PG_LIBS)
+    else
+        DB_LDFLAGS += -lpq
+    endif
 endif
 
 ifeq ($(USE_MYSQL),1)
     DB_FLAGS += -DDB_MYSQL
-    DB_LDFLAGS += -lmysqlclient
+    MYSQL_CFLAGS := $(shell mysql_config --cflags 2>/dev/null)
+    MYSQL_LIBS := $(shell mysql_config --libs 2>/dev/null)
+    ifeq ($(MYSQL_CFLAGS),)
+        MYSQL_CFLAGS := $(shell pkg-config --cflags mysqlclient 2>/dev/null)
+        MYSQL_LIBS := $(shell pkg-config --libs mysqlclient 2>/dev/null)
+    endif
+    ifneq ($(MYSQL_CFLAGS),)
+        DB_FLAGS += $(MYSQL_CFLAGS)
+    endif
+    ifneq ($(MYSQL_LIBS),)
+        DB_LDFLAGS += $(MYSQL_LIBS)
+    else
+        DB_LDFLAGS += -lmysqlclient
+    endif
 endif
 
 ifeq ($(USE_ORACLE),1)

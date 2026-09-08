@@ -10,13 +10,18 @@ Install the required development libraries:
 ```bash
 sudo apt-get update
 sudo apt-get install build-essential libcurl4-openssl-dev libssl-dev
+# Optional database drivers (match USE_* flags in Makefile):
+sudo apt-get install libsqlite3-dev libpq-dev libmysqlclient-dev
 ```
 
-### Fedora/RHEL/CentOS:
+### Fedora/RHEL/CentOS/Amazon Linux:
 ```bash
 sudo dnf install gcc make libcurl-devel openssl-devel
+# Optional database drivers:
+sudo dnf install sqlite-devel libpq-devel mysql-devel
 # Or on older systems:
 sudo yum install gcc make libcurl-devel openssl-devel
+sudo yum install sqlite-devel postgresql-devel mysql-devel
 ```
 
 ### Arch Linux:

@@ -10,24 +10,30 @@ By default, **no database support is compiled in**. This keeps the Lux binary mi
 
 ### 1. Install Database Libraries (as needed)
 
-**SQLite** (macOS with Homebrew):
+Install only the client **headers and libs** for the backends you enable. Enabling `USE_POSTGRES=1` without `libpq` headers fails with `libpq-fe.h: No such file or directory`.
+
+**Ubuntu/Debian** (`apt`):
 ```bash
-brew install sqlite3
+sudo apt-get update
+sudo apt-get install libsqlite3-dev libpq-dev libmysqlclient-dev
 ```
 
-**PostgreSQL** (macOS with Homebrew):
+**Amazon Linux / Fedora / RHEL** (`dnf` / `yum`):
 ```bash
-brew install postgresql
+sudo dnf install sqlite-devel libpq-devel mysql-devel
+# Older Amazon Linux 2:
+# sudo yum install sqlite-devel postgresql-devel mysql-devel
 ```
 
-**MySQL** (macOS with Homebrew):
+**macOS** (Homebrew):
 ```bash
-brew install mysql
+brew install sqlite3 postgresql mysql
 ```
 
-**Oracle** (requires Oracle Instant Client):
-- Download from: https://www.oracle.com/database/technologies/instant-client.html
-- Install to `/opt/oracle/instantclient_21_1` (or adjust `ORACLE_HOME` in Makefile)
+**Oracle** (requires Oracle Instant Client, not a distro `-dev` package):
+- Download Basic + SDK from: https://www.oracle.com/database/technologies/instant-client.html
+- Install to `/opt/oracle/instantclient_21_1` (or set `ORACLE_HOME` when you run `make`)
+- Confirm the SDK header exists: `ls $ORACLE_HOME/sdk/include/oci.h`
 
 ### 2. Enable Databases in Makefile
 
@@ -205,6 +211,17 @@ Database connections are **not thread-safe**. Create separate connections per th
    - Oracle: Enterprise applications with existing Oracle infrastructure
 
 ## Troubleshooting
+
+### `libpq-fe.h: No such file or directory` (header is installed)
+
+Debian/Ubuntu install the header at `/usr/include/postgresql/libpq-fe.h`, not `/usr/include/libpq-fe.h`. Confirm:
+
+```bash
+ls /usr/include/postgresql/libpq-fe.h
+pkg-config --cflags libpq
+```
+
+The POSIX `Makefile` adds that include path via `pkg-config` (or `-I/usr/include/postgresql`). Rebuild after updating `posix/Makefile`.
 
 ### "Failed to connect" error
 
