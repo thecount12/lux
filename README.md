@@ -35,6 +35,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Databases** — SQLite, PostgreSQL, MySQL (opt-in)
 - **Code formatting** — `luxfmt` (gofmt-style)
 - **Testing** — `luxtest` with timeouts and reporting
+- **Web checks** — `lib/webtest.lux` (POSIX): curl status/body, k6 load, Playwright (shells out; no VM change)
 - **Assertions** — `assert(condition, message)` for test-driven development
 - **Syntax** — `luxcheck` fast lightweight syntax checker
 - **Linting** — `luxlint` static checks: unused vars, unreachable code, duplicate functions, shadowed globals
@@ -541,6 +542,7 @@ print(multiply(4, 7));   // 28
 // - All definitions go into global scope
 // - Circular imports are prevented automatically
 // - Import paths are relative to where you run the program
+// - Each import is its own compiler chunk (helps the 256 identifier-slot limit; see below)
 
 // Example directory structure:
 // project/
@@ -627,7 +629,29 @@ posix/lux examples/lambda_web.lux --once  # One request via server.handle, no li
 8.out tests/closure.lux                 # Closure examples
 ```
 
-**Note**: Lux has a limit of 256 constants per source file. Very large files with many string literals may hit this limit.
+### Compiler limit: 256 identifier slots per chunk
+
+Compile error:
+
+```
+[line N] Error at 'name': Too many unique identifiers in one chunk.
+```
+
+This is **not** a file line-count limit. Each compiled function is a **chunk** (top-level script, each `fun`, each method, each `import`). Identifier opcodes (`assert`, `.status`, globals, …) can only point at constant-pool slots `0..255`. String literals share that same pool (they can use `OP_CONSTANT_LONG` for later slots, but they still take indices). Names are **not interned**: every `assert(...)` at top level burns another slot.
+
+A test file with lots of `assert` + string literals hits this while a 400-line `lib/` file is fine, because methods each get their own chunk.
+
+**Fix:** wrap the busy top-level code in a function (see `tests/test_webtest.lux`):
+
+```lux
+fun run() {
+    assert(len("hi") == 2, "len");
+    // more asserts ...
+}
+run();
+```
+
+Or split files / `import`. Full table: [SPEC.md](SPEC.md) §13.
 
 ## String and Array Concatenation
 
@@ -1293,6 +1317,36 @@ writeFile("friends.dot", g.toDot());
 ```
 
 See `examples/dataframe_prototype.lux` and `examples/graph_demo.lux`.
+
+#### Web tests (`lib/webtest.lux`, POSIX)
+
+Library-only wrappers around `curl`, `k6`, and Playwright. They write a temp script, `run()` it, and parse files — no VM changes. Plan 9 can still generate scripts; live `.run()` needs those binaries.
+
+```lux
+import "../lib/webtest.lux";
+
+var r = HttpCheck().get("https://example.com/health");
+assert(r.status == 200, "health status");
+assert(strFind(r.body, "ok") >= 0, "health body");
+
+var k = K6();
+k.get("https://example.com/api/items");
+k.vus(10);
+k.duration("30s");
+var s = k.run();   // needs k6 on PATH
+assert(s.failed < 0.01, "error rate");
+assert(s.p95 < 500, "p95");
+
+var p = Playwright();
+p.goto("https://example.com/login");
+p.fill("#user", "admin");
+p.click("button[type=submit]");
+p.text("h1");
+var out = p.run();   // needs node + npx playwright
+assert(out.ok == true, "playwright");
+```
+
+`HttpCheck` uses curl (`-K` config) so you get `status` / `headers` / `body` (`ok` is 2xx). Headers are a `Dict` or an array of `"Name: value"` strings. `K6.parseSummary` maps `p(95)` via `getField`. Playwright queues `goto` / `fill` / `click` / `waitFor` / `text` / `screenshot` then launches one browser. See `examples/webtest_demo.lux`.
 
 ### HTTP Operations
 

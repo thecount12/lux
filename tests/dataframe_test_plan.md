@@ -26,7 +26,7 @@ Test categories
 
 Status
 - Parser tests: `tests/test_dataframe.lux`
-- API tests: `tests/test_dataframe_api.lux` (split to stay under 256 constants per chunk)
+- API tests: `tests/test_dataframe_api.lux` (split / wrap in `fun` to stay under 256 identifier slots per chunk; see SPEC.md §13)
 - Native CSV: `parseCSV` on POSIX and Plan 9; `read_csv_text` uses it and falls back to `parseCSVQuoted`.
 
 Out of scope

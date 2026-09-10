@@ -1,0 +1,80 @@
+// lib/webtest.lux — script generation (k6/playwright not required).
+// Body is inside runWebtest(): top-level scripts share one 256-slot
+// identifier pool with string literals (SPEC.md §13).
+import "../lib/webtest.lux";
+
+fun runWebtest() {
+    assert(_webJsEscape("a\"b") == "a\\\"b", "js quote");
+    assert(_webJsEscape("a\\b") == "a\\\\b", "js slash");
+    assert(_webJsEscape("a\nb") == "a\\nb", "js nl");
+    assert(_webCurlQuote("x") == "\"x\"", "curl wrap");
+    assert(_webCurlQuote("a\"b") == "\"a\\\"b\"", "curl inner");
+
+    var url = "https://example.com/health";
+    var h = HttpCheck();
+    var cfg = h.curlConfig("GET", url, nil, nil);
+    assert(strFind(cfg, url) >= 0, "curl url");
+    assert(strFind(cfg, "location") >= 0, "follow");
+    assert(strFind(cfg, "request =") < 0, "GET no request");
+
+    var hdrs = Dict();
+    hdrs.put("Accept", "application/json");
+    var bodyIn = h.dir + "/body-in";
+    var cfgPost = h.curlConfig("POST", url, bodyIn, hdrs);
+    assert(strFind(cfgPost, "request = \"POST\"") >= 0, "POST");
+    assert(strFind(cfgPost, "data = \"@" + bodyIn + "\"") >= 0, "body file");
+    assert(strFind(cfgPost, "Accept: application/json") >= 0, "dict hdr");
+
+    var cfgPut = h.curlConfig("PUT", url, nil, ["X-Trace: 1"]);
+    assert(strFind(cfgPut, "request = \"PUT\"") >= 0, "PUT");
+    assert(strFind(cfgPut, "X-Trace: 1") >= 0, "arr hdr");
+
+    var api = "https://example.com/api";
+    var k = K6();
+    k.get(api);
+    k.post(api, "{\"n\":1}");
+    k.vus(10);
+    k.duration("30s");
+    var ks = k.script();
+    assert(strFind(ks, "vus: 10") >= 0, "vus");
+    assert(strFind(ks, "duration: '30s'") >= 0, "dur");
+    assert(strFind(ks, "http.get(\"" + api + "\")") >= 0, "k6 get");
+    assert(strFind(ks, "http.post(\"" + api + "\"") >= 0, "k6 post");
+
+    var fixture = "{\"metrics\":{\"http_req_failed\":{\"values\":{\"rate\":0.01}},\"http_req_duration\":{\"values\":{\"avg\":12.5,\"p(95)\":40}},\"http_reqs\":{\"values\":{\"count\":100}}}}";
+    var kr = k.parseSummary(fixture, 0);
+    assert(kr.ok == true, "sum ok");
+    assert(kr.failed == 0.01, "rate");
+    assert(kr.p95 == 40, "p95");
+    assert(kr.avg == 12.5, "avg");
+    assert(kr.count == 100, "count");
+
+    var login = "https://example.com/login";
+    var p = Playwright();
+    p.goto(login);
+    p.fill("#user", "admin");
+    p.fill("#pass", "se\"cret");
+    p.click("button[type=submit]");
+    p.waitFor("h1");
+    p.text("h1");
+    var ps = p.script();
+    assert(strFind(ps, "page.goto(\"" + login + "\"") >= 0, "goto");
+    assert(strFind(ps, "page.fill(\"#user\", \"admin\")") >= 0, "fill");
+    assert(strFind(ps, "se\\\"cret") >= 0, "esc");
+    assert(strFind(ps, "page.click(\"button[type=submit]\")") >= 0, "click");
+    assert(strFind(ps, "waitForSelector(\"h1\"") >= 0, "wait");
+    assert(strFind(ps, "textContent(\"h1\")") >= 0, "text");
+    assert(strFind(ps, "headless: true") >= 0, "headless");
+    p.headed();
+    assert(strFind(p.script(), "headless: false") >= 0, "headed");
+
+    if (_webHasCmd("curl")) {
+        var r = HttpCheck().get("https://example.com");
+        assert(r.status == 200, "live 200");
+        assert(r.ok == true, "live ok");
+        assert(strFind(r.body, "Example Domain") >= 0, "live body");
+    }
+}
+
+runWebtest();
+print "test_webtest: all assertions passed";
