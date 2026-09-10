@@ -12,10 +12,8 @@ USE_POSTGRES ?= 0
 USE_MYSQL ?= 0
 USE_ORACLE ?= 0
 
-# Oracle Instant Client paths (adjust as needed)
+# Oracle Instant Client paths (override with ORACLE_HOME=/path/to/instantclient)
 ORACLE_HOME ?= /opt/oracle/instantclient_21_1
-ORACLE_INC := $(ORACLE_HOME)/sdk/include
-ORACLE_LIB := $(ORACLE_HOME)
 
 # Database flags
 DB_FLAGS =
@@ -76,8 +74,28 @@ ifeq ($(USE_MYSQL),1)
 endif
 
 ifeq ($(USE_ORACLE),1)
+    # Zip Instant Client: $ORACLE_HOME/sdk/include/oci.h
+    # Some layouts: $ORACLE_HOME/include/oci.h
+    # RPM/deb: /usr/include/oracle/<ver>/client64/oci.h
+    ifneq ($(wildcard $(ORACLE_HOME)/sdk/include/oci.h),)
+        ORACLE_INC := $(ORACLE_HOME)/sdk/include
+        ORACLE_LIB := $(ORACLE_HOME)
+    else ifneq ($(wildcard $(ORACLE_HOME)/include/oci.h),)
+        ORACLE_INC := $(ORACLE_HOME)/include
+        ifneq ($(wildcard $(ORACLE_HOME)/lib/libclntsh.so*),)
+            ORACLE_LIB := $(ORACLE_HOME)/lib
+        else
+            ORACLE_LIB := $(ORACLE_HOME)
+        endif
+    else
+        ORACLE_INC := $(firstword $(wildcard /usr/include/oracle/*/client64 /usr/include/oracle/*/client))
+        ORACLE_LIB := $(firstword $(wildcard /usr/lib/oracle/*/client64/lib /usr/lib/oracle/*/client/lib))
+    endif
+    ifeq ($(wildcard $(ORACLE_INC)/oci.h),)
+        $(error Oracle Instant Client SDK not found (oci.h). Install Basic+SDK, or set ORACLE_HOME. Search: find /usr /opt $(HOME) -name oci.h 2>/dev/null)
+    endif
     DB_FLAGS += -DDB_ORACLE -I$(ORACLE_INC)
-    DB_LDFLAGS += -L$(ORACLE_LIB) -lclntsh
+    DB_LDFLAGS += -L$(ORACLE_LIB) -lclntsh -Wl,-rpath,$(ORACLE_LIB)
 endif
 
 # OS-specific flags

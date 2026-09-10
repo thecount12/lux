@@ -31,9 +31,30 @@ brew install sqlite3 postgresql mysql
 ```
 
 **Oracle** (requires Oracle Instant Client, not a distro `-dev` package):
-- Download Basic + SDK from: https://www.oracle.com/database/technologies/instant-client.html
-- Install to `/opt/oracle/instantclient_21_1` (or set `ORACLE_HOME` when you run `make`)
-- Confirm the SDK header exists: `ls $ORACLE_HOME/sdk/include/oci.h`
+
+`oci.h` is **not** in apt as `libpq-dev` is. You need Instant Client **Basic + SDK**.
+
+1. See if it is already on the machine:
+```bash
+find /usr /opt "$HOME" -name oci.h 2>/dev/null
+find /usr /opt "$HOME" -name 'libclntsh.so*' 2>/dev/null
+```
+2. If you find it, pass that tree into `make`:
+```bash
+# Zip layout (oci.h under sdk/include):
+make USE_ORACLE=1 ORACLE_HOME=/path/to/instantclient_21_15
+# RPM/deb layout is auto-detected under /usr/include/oracle/*/client64
+```
+3. If it is missing, unzip Basic + SDK from
+   https://www.oracle.com/database/technologies/instant-client.html
+```bash
+sudo mkdir -p /opt/oracle
+sudo unzip instantclient-basic-linux.x64-*.zip -d /opt/oracle
+sudo unzip instantclient-sdk-linux.x64-*.zip -d /opt/oracle
+ls /opt/oracle/instantclient_*/sdk/include/oci.h
+make USE_ORACLE=1 ORACLE_HOME=/opt/oracle/instantclient_21_15   # match the unzipped dir
+```
+Without the SDK, omit Oracle: `make USE_SQLITE=1 USE_POSTGRES=1 USE_MYSQL=1`
 
 ### 2. Enable Databases in Makefile
 
@@ -222,6 +243,16 @@ pkg-config --cflags libpq
 ```
 
 The POSIX `Makefile` adds that include path via `pkg-config` (or `-I/usr/include/postgresql`). Rebuild after updating `posix/Makefile`.
+
+### `oci.h: No such file or directory`
+
+The default path `/opt/oracle/instantclient_21_1/sdk/include/oci.h` is not present. Instant Client is not an apt package. Search first:
+
+```bash
+find /usr /opt "$HOME" -name oci.h 2>/dev/null
+```
+
+If found, rebuild with `ORACLE_HOME` pointing at the Instant Client directory (the parent of `sdk/` or `libclntsh.so`). If not found, either install Basic+SDK or drop `USE_ORACLE=1`.
 
 ### "Failed to connect" error
 
