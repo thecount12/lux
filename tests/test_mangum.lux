@@ -32,6 +32,9 @@ var miss = parseJSON("{\"httpMethod\":\"GET\",\"path\":\"/missing\"}");
 var jm = mangumHandle(app, miss);
 assert(strFind(jm, "\"statusCode\":404") >= 0, "404 via mangum");
 
+var authEv = parseJSON("{\"httpMethod\":\"GET\",\"path\":\"/\",\"headers\":{\"Authorization\":\"Bearer abc\"}}");
+assert(mangumAuthorization(authEv) == "Bearer abc", "auth header");
+
 var bad = mangumHandle(app, nil);
 assert(strFind(bad, "\"statusCode\":400") >= 0, "nil event");
 

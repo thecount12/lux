@@ -623,6 +623,8 @@ posix/lux tests/test_http.lux    # HTTP/HTTPS examples (POSIX)
 8.out tests/test_http_server.lux        # HTTP server (both Plan 9 and POSIX)
 posix/lux examples/lambda_web.lux       # Local HTTP server (Mangum if Lambda event file)
 posix/lux examples/lambda_web.lux --once  # One request via server.handle, no listen
+posix/lux examples/swagger_server.lux     # OpenAPI /docs (port 8085)
+posix/lux examples/oauth_server.lux       # OAuth2 client-credentials (port 8086)
 8.out examples/dataframe_prototype.lux  # DataFrame / CSV demo
 8.out examples/graph_demo.lux           # Graph + Graphviz DOT
 8.out tests/c29-inherit.lux             # Inheritance examples
@@ -1281,7 +1283,7 @@ while (idx + 64 <= 10000) {
 
 ### DataFrame, CSV, and graphs
 
-Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`). Multipart HTTP lives in `lib/http.lux` (`Form`). OpenAPI / Swagger UI lives in `lib/swagger.lux` (`Op`, `swagger`).
+Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`). Multipart HTTP lives in `lib/http.lux` (`Form`). OpenAPI / Swagger UI lives in `lib/swagger.lux` (`Op`, `swagger`). OAuth 2.0 client-credentials lives in `lib/oauth.lux` (`OAuth`).
 
 #### CSV and DataFrame (`lib/dataframe.lux`)
 
@@ -1562,7 +1564,7 @@ curl -H 'Host: williamgunnells.com' http://127.0.0.1:8080/api/hello
 - `res.json("{\"a\":1}")` returns a JSON **string** (`"{\"a\":1}"`), not an object.
 - `Dict` data lives in native storage; `res.json(aDict)` only sees internal fields (e.g. `_ptr`). Use `parseJSON`/`toJSON`, `dict.iter()`, or `res.send` with a string you build. See `tests/test_dict.lux`.
 
-**AWS Lambda (Mangum-style):** Use the same `Server` routes without `start()`. `server.handle(method, path, [body], [host])` runs one request and returns `{statusCode, body, contentType}`. `lib/mangum.lux` maps API Gateway REST (v1), HTTP API / Function URL (v2) events onto that, and writes a Lambda proxy response. The custom runtime in `lambda/bootstrap` still feeds `/tmp/lambda_event.json` and posts `/tmp/lambda_response.json`.
+**AWS Lambda (Mangum-style):** Use the same `Server` routes without `start()`. `server.handle(method, path, [body], [host], [authorization])` runs one request and returns `{statusCode, body, contentType}`. `lib/mangum.lux` maps API Gateway REST (v1), HTTP API / Function URL (v2) events onto that (including `Authorization`), and writes a Lambda proxy response. The custom runtime in `lambda/bootstrap` still feeds `/tmp/lambda_event.json` and posts `/tmp/lambda_response.json`.
 
 ```lux
 import "../lib/mangum.lux";   /* or "lib/mangum.lux" when cwd is the repo / Lambda task root */
@@ -1650,6 +1652,41 @@ server.start();
 ```
 
 `Op(summary, tag)` also accepts `description`, `body` (example request), `example` (example response), and `status` (response code, default 200). Without an `Op`, the spec still lists the path so Try it out works. `/docs` and `/openapi.json` are omitted from the spec. `server.swaggerVersion` defaults to `"1.0.0"`. Swagger UI loads from a CDN; `GET /openapi.json` works offline.
+
+**OAuth 2.0 (`lib/oauth.lux`):** Client-credentials grant for a Lux API. HMAC-SHA256 access tokens (not JWT). `oa.mount(server)` adds `POST /oauth/token` and Bearer middleware. Token requests and paths in `oa.skip` (default `/oauth/token`, `/docs`, `/openapi.json`) stay public. Live HTTP and `server.handle` expose `req.authorization`; a valid token sets `req.clientId`. See `examples/oauth_server.lux` and `tests/test_oauth.lux`.
+
+```lux
+import "../lib/oauth.lux";
+import "../lib/swagger.lux";
+
+fun handleHealth(req, res) {
+    res.json(parseJSON("{\"ok\":true}"));
+}
+fun handleSecret(req, res) {
+    var obj = parseJSON("{\"ok\":true,\"client\":\"\"}");
+    obj.client = req.clientId;
+    res.json(obj);
+}
+
+var server = Server(8086);
+var oa = OAuth("change-me");
+oa.addClient("demo", "demo-secret");
+oa.skip[oa.skip.length] = "/health";
+oa.mount(server);
+
+server.get("/health", handleHealth);
+server.get("/secret", handleSecret);
+swagger(server);   /* Authorize in /docs uses client credentials */
+server.start();
+```
+
+```sh
+curl -s -X POST http://127.0.0.1:8086/oauth/token \
+  -d '{"grant_type":"client_credentials","client_id":"demo","client_secret":"demo-secret"}'
+curl -s -H 'Authorization: Bearer <access_token>' http://127.0.0.1:8086/secret
+```
+
+JSON or `application/x-www-form-urlencoded` bodies work on the token endpoint. Tokens are `clientId.exp.hmac` signed with `oa.secret`; `oa.expiresIn` defaults to 3600 seconds. `client_id` must not contain `.`. This is machine-to-machine auth, not browser login (no authorization-code redirect). If `oauth.mount` runs before `swagger()`, `/docs` advertises the OAuth2 scheme.
 
 **Test from another machine:**
 ```sh
