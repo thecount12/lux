@@ -1,0 +1,402 @@
+// POSIX website checks via curl, k6, and Playwright.
+// No VM changes: write files, run(1), parse output.
+// Import has no network side effects:
+//   import "../lib/webtest.lux";   // from posix/ or tests/
+//
+// HttpCheck needs curl. K6 needs k6. Playwright needs node + npx/playwright.
+// Plan 9: script generation still works; .run() will fail without those tools.
+
+var _webSeq = 0;
+
+fun _webAppend(arr, val) {
+    arr[arr.length] = val;
+    return arr;
+}
+
+fun _webTmp(prefix) {
+    _webSeq = _webSeq + 1;
+    return "/tmp/" + prefix + "-" + epoch() + "-" + _webSeq;
+}
+
+fun _webHasCmd(name) {
+    var out = run("command -v " + name);
+    if (out == nil) return false;
+    return strTrim(out) != "";
+}
+
+fun _webReadNum(path) {
+    var t = readFile(path);
+    if (t == nil) return nil;
+    return parseJSON(strTrim(t));
+}
+
+fun _webJsEscape(s) {
+    if (s == nil) return "";
+    s = "" + s;
+    var out = "";
+    var i = 0;
+    while (i < len(s)) {
+        var ch = s[i];
+        if (ch == "\\") out = out + "\\\\";
+        else if (ch == "\"") out = out + "\\\"";
+        else if (ch == "\n") out = out + "\\n";
+        else if (ch == "\r") out = out + "\\r";
+        else if (ch == "\t") out = out + "\\t";
+        else out = out + ch;
+        i = i + 1;
+    }
+    return out;
+}
+
+fun _webCurlQuote(s) {
+    if (s == nil) s = "";
+    s = "" + s;
+    var out = "\"";
+    var i = 0;
+    while (i < len(s)) {
+        var ch = s[i];
+        if (ch == "\\" or ch == "\"") out = out + "\\";
+        out = out + ch;
+        i = i + 1;
+    }
+    return out + "\"";
+}
+
+fun _webHeaderLines(headers) {
+    var lines = [];
+    if (headers == nil) return lines;
+    if (typeof(headers) == "array") {
+        var i = 0;
+        while (i < headers.length) {
+            _webAppend(lines, "" + headers[i]);
+            i = i + 1;
+        }
+        return lines;
+    }
+    if (typeof(headers) == "Dict") {
+        var entries = headers.iter();
+        var j = 0;
+        while (j < entries.length) {
+            var e = entries[j];
+            _webAppend(lines, "" + e.key + ": " + e.value);
+            j = j + 1;
+        }
+    }
+    return lines;
+}
+
+fun _webK6Metric(summary, name, key) {
+    if (summary == nil) return nil;
+    var metrics = getField(summary, "metrics");
+    if (metrics == nil) return nil;
+    var m = getField(metrics, name);
+    if (m == nil) return nil;
+    var values = getField(m, "values");
+    if (values == nil) return nil;
+    return getField(values, key);
+}
+
+class HttpResponse {
+    init(status, body, headers, ok, error) {
+        this.status = status;
+        this.body = body;
+        this.headers = headers;
+        this.ok = ok;
+        this.error = error;
+    }
+}
+
+class K6Result {
+    init(ok, failed, p95, avg, count, error, summary) {
+        this.ok = ok;
+        this.failed = failed;
+        this.p95 = p95;
+        this.avg = avg;
+        this.count = count;
+        this.error = error;
+        this.summary = summary;
+    }
+}
+
+class PlaywrightResult {
+    init(ok, text, texts, error) {
+        this.ok = ok;
+        this.text = text;
+        this.texts = texts;
+        this.error = error;
+    }
+}
+
+class HttpCheck {
+    init() {
+        this.timeout = 30;
+        this.follow = true;
+        this.dir = _webTmp("lux-http");
+    }
+
+    curlConfig(method, url, bodyFile, headers) {
+        var cfg = "silent\nshow-error\n";
+        if (this.follow) cfg = cfg + "location\n";
+        cfg = cfg + "max-time = " + this.timeout + "\n";
+        cfg = cfg + "user-agent = \"lux-webtest/1.0\"\n";
+        cfg = cfg + "url = " + _webCurlQuote(url) + "\n";
+        cfg = cfg + "output = " + _webCurlQuote(this.dir + "/body") + "\n";
+        cfg = cfg + "dump-header = " + _webCurlQuote(this.dir + "/headers") + "\n";
+        cfg = cfg + "write-out = \"%{http_code}\"\n";
+        if (method != nil and method != "GET")
+            cfg = cfg + "request = " + _webCurlQuote(method) + "\n";
+        if (bodyFile != nil)
+            cfg = cfg + "data = " + _webCurlQuote("@" + bodyFile) + "\n";
+        var lines = _webHeaderLines(headers);
+        var i = 0;
+        while (i < lines.length) {
+            cfg = cfg + "header = " + _webCurlQuote(lines[i]) + "\n";
+            i = i + 1;
+        }
+        return cfg;
+    }
+
+    get(url) {
+        return this.request("GET", url, nil, nil);
+    }
+
+    post(url, body, headers) {
+        return this.request("POST", url, body, headers);
+    }
+
+    request(method, url, body, headers) {
+        if (typeof(url) != "string" or url == "")
+            return HttpResponse(nil, nil, nil, false, "url required");
+        createDir(this.dir);
+        var bodyFile = nil;
+        if (body != nil) {
+            bodyFile = this.dir + "/body-in";
+            writeFile(bodyFile, "" + body);
+        }
+        writeFile(this.dir + "/curl.cfg", this.curlConfig(method, url, bodyFile, headers));
+        var sh = "curl -K " + _webCurlQuote(this.dir + "/curl.cfg");
+        sh = sh + " > " + _webCurlQuote(this.dir + "/status.txt") + "\n";
+        sh = sh + "echo $? > " + _webCurlQuote(this.dir + "/exit.txt") + "\n";
+        writeFile(this.dir + "/run.sh", sh);
+        run("sh " + this.dir + "/run.sh");
+        var exitCode = _webReadNum(this.dir + "/exit.txt");
+        var status = _webReadNum(this.dir + "/status.txt");
+        var respBody = readFile(this.dir + "/body");
+        var hdr = readFile(this.dir + "/headers");
+        if (respBody == nil) respBody = "";
+        if (hdr == nil) hdr = "";
+        if (exitCode == nil) {
+            return HttpResponse(nil, respBody, hdr, false, "curl did not run");
+        }
+        if (exitCode != 0 and status == nil) {
+            var err = readFile(this.dir + "/status.txt");
+            if (err == nil) err = "curl exit " + exitCode;
+            return HttpResponse(nil, respBody, hdr, false, strTrim(err));
+        }
+        if (status == nil) status = 0;
+        var ok = status >= 200 and status < 300;
+        return HttpResponse(status, respBody, hdr, ok, nil);
+    }
+}
+
+class K6 {
+    init() {
+        this.reqs = [];
+        this.nVus = 1;
+        this.forDuration = "10s";
+        this.pause = 0;
+        this.bin = "k6";
+        this.dir = _webTmp("lux-k6");
+    }
+
+    vus(n) {
+        this.nVus = n;
+        return this;
+    }
+
+    duration(s) {
+        this.forDuration = s;
+        return this;
+    }
+
+    get(url) {
+        _webAppend(this.reqs, ["GET", url, nil]);
+        return this;
+    }
+
+    post(url, body) {
+        _webAppend(this.reqs, ["POST", url, body]);
+        return this;
+    }
+
+    script() {
+        var js = "import http from 'k6/http';\n";
+        js = js + "import { check, sleep } from 'k6';\n\n";
+        js = js + "export const options = { vus: " + this.nVus;
+        js = js + ", duration: '" + _webJsEscape(this.forDuration) + "' };\n\n";
+        js = js + "export default function () {\n";
+        var i = 0;
+        while (i < this.reqs.length) {
+            var r = this.reqs[i];
+            var method = r[0];
+            var url = _webJsEscape(r[1]);
+            if (method == "POST") {
+                var body = _webJsEscape(r[2]);
+                js = js + "  let res" + i + " = http.post(\"" + url + "\", \"" + body + "\"";
+                js = js + ", { headers: { 'Content-Type': 'application/json' } });\n";
+            } else {
+                js = js + "  let res" + i + " = http.get(\"" + url + "\");\n";
+            }
+            js = js + "  check(res" + i + ", { 'status 200': (r) => r.status === 200 });\n";
+            i = i + 1;
+        }
+        if (this.pause > 0)
+            js = js + "  sleep(" + this.pause + ");\n";
+        js = js + "}\n";
+        return js;
+    }
+
+    parseSummary(text, exitCode) {
+        var summary = nil;
+        if (text != nil) summary = parseJSON(text);
+        var ok = exitCode == 0;
+        if (summary == nil) {
+            return K6Result(ok, nil, nil, nil, nil, "no summary", nil);
+        }
+        var failed = _webK6Metric(summary, "http_req_failed", "rate");
+        var p95 = _webK6Metric(summary, "http_req_duration", "p(95)");
+        var avg = _webK6Metric(summary, "http_req_duration", "avg");
+        var count = _webK6Metric(summary, "http_reqs", "count");
+        return K6Result(ok, failed, p95, avg, count, nil, summary);
+    }
+
+    run() {
+        if (this.reqs.length == 0)
+            return K6Result(false, nil, nil, nil, nil, "no requests", nil);
+        createDir(this.dir);
+        writeFile(this.dir + "/script.js", this.script());
+        var sh = this.bin + " run --quiet --summary-export=";
+        sh = sh + _webCurlQuote(this.dir + "/summary.json") + " ";
+        sh = sh + _webCurlQuote(this.dir + "/script.js") + "\n";
+        sh = sh + "echo $? > " + _webCurlQuote(this.dir + "/exit.txt") + "\n";
+        writeFile(this.dir + "/run.sh", sh);
+        run("sh " + this.dir + "/run.sh");
+        var exitCode = _webReadNum(this.dir + "/exit.txt");
+        if (exitCode == nil)
+            return K6Result(false, nil, nil, nil, nil, "k6 did not run", nil);
+        return this.parseSummary(readFile(this.dir + "/summary.json"), exitCode);
+    }
+}
+
+class Playwright {
+    init() {
+        this.actions = [];
+        this.headless = true;
+        this.channel = nil;
+        this.timeout = 30000;
+        this.runner = "npx --yes -p playwright node";
+        this.dir = _webTmp("lux-pw");
+    }
+
+    headed() {
+        this.headless = false;
+        return this;
+    }
+
+    goto(url) {
+        _webAppend(this.actions, ["goto", url, nil]);
+        return this;
+    }
+
+    fill(sel, value) {
+        _webAppend(this.actions, ["fill", sel, value]);
+        return this;
+    }
+
+    click(sel) {
+        _webAppend(this.actions, ["click", sel, nil]);
+        return this;
+    }
+
+    waitFor(sel) {
+        _webAppend(this.actions, ["waitFor", sel, nil]);
+        return this;
+    }
+
+    text(sel) {
+        _webAppend(this.actions, ["text", sel, nil]);
+        return this;
+    }
+
+    screenshot(path) {
+        _webAppend(this.actions, ["screenshot", path, nil]);
+        return this;
+    }
+
+    script() {
+        var js = "const { chromium } = require(\"playwright\");\n";
+        js = js + "const fs = require(\"fs\");\n";
+        js = js + "(async () => {\n";
+        js = js + "  const outPath = process.env.LUX_PW_OUT || \"result.json\";\n";
+        js = js + "  let text = null;\n";
+        js = js + "  const texts = [];\n";
+        js = js + "  const opts = { headless: " + toJSON(this.headless) + ", timeout: " + this.timeout + " };\n";
+        if (this.channel != nil)
+            js = js + "  opts.channel = \"" + _webJsEscape(this.channel) + "\";\n";
+        js = js + "  const browser = await chromium.launch(opts);\n";
+        js = js + "  const page = await browser.newPage();\n";
+        js = js + "  try {\n";
+        var i = 0;
+        while (i < this.actions.length) {
+            var a = this.actions[i];
+            var op = a[0];
+            var x = _webJsEscape(a[1]);
+            if (op == "goto") {
+                js = js + "    await page.goto(\"" + x + "\", { waitUntil: \"domcontentloaded\", timeout: ";
+                js = js + this.timeout + " });\n";
+            } else if (op == "fill") {
+                js = js + "    await page.fill(\"" + x + "\", \"" + _webJsEscape(a[2]) + "\");\n";
+            } else if (op == "click") {
+                js = js + "    await page.click(\"" + x + "\");\n";
+            } else if (op == "waitFor") {
+                js = js + "    await page.waitForSelector(\"" + x + "\", { timeout: " + this.timeout + " });\n";
+            } else if (op == "text") {
+                js = js + "    { const t = await page.textContent(\"" + x + "\"); texts.push(t); text = t; }\n";
+            } else if (op == "screenshot") {
+                js = js + "    await page.screenshot({ path: \"" + x + "\" });\n";
+            }
+            i = i + 1;
+        }
+        js = js + "    fs.writeFileSync(outPath, JSON.stringify({ ok: true, text: text, texts: texts }));\n";
+        js = js + "  } catch (e) {\n";
+        js = js + "    fs.writeFileSync(outPath, JSON.stringify({ ok: false, text: text, texts: texts, error: String(e && e.message ? e.message : e) }));\n";
+        js = js + "  } finally {\n";
+        js = js + "    await browser.close();\n";
+        js = js + "  }\n";
+        js = js + "})();\n";
+        return js;
+    }
+
+    run() {
+        if (this.actions.length == 0)
+            return PlaywrightResult(false, nil, [], "no actions");
+        createDir(this.dir);
+        writeFile(this.dir + "/script.js", this.script());
+        var sh = "export LUX_PW_OUT=" + _webCurlQuote(this.dir + "/result.json") + "\n";
+        sh = sh + this.runner + " " + _webCurlQuote(this.dir + "/script.js") + "\n";
+        sh = sh + "echo $? > " + _webCurlQuote(this.dir + "/exit.txt") + "\n";
+        writeFile(this.dir + "/run.sh", sh);
+        run("sh " + this.dir + "/run.sh");
+        var raw = readFile(this.dir + "/result.json");
+        if (raw == nil)
+            return PlaywrightResult(false, nil, [], "playwright did not run");
+        var obj = parseJSON(raw);
+        if (obj == nil)
+            return PlaywrightResult(false, nil, [], "bad playwright json");
+        var texts = getField(obj, "texts");
+        if (texts == nil) texts = [];
+        var ok = obj.ok == true;
+        var err = getField(obj, "error");
+        return PlaywrightResult(ok, obj.text, texts, err);
+    }
+}

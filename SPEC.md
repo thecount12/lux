@@ -423,7 +423,7 @@ These are part of the current language as implemented:
 
 | Limit | Value |
 |---|---|
-| Unique identifiers per chunk (globals / property names / `super` names) | 256 (`OP_*` operand is one byte) |
+| Identifier operand (globals, fields, method names, `super`) | index must be `< 256` (one-byte `OP_*`) |
 | Array literal elements | 255 |
 | Call arguments | 255 |
 | Function parameters | 255 |
@@ -434,7 +434,21 @@ These are part of the current language as implemented:
 | `break` patch list per loop | 256 |
 | Constant pool | 24-bit (`OP_CONSTANT_LONG`); not limited to 256 |
 
-Older docs said “256 constants per file.” That applied to identifier operands, not the constant pool. Large files can still fail on **too many unique names**.
+The error is `[line N] Error at 'name': Too many unique identifiers in one chunk.`
+
+That is **not** a line-count limit and **not** “256 unique names per file.” A **chunk** is one compiled function: the top-level script, each `fun` body, each method, and each `import` (the imported file is its own script chunk). Identifier opcodes can only address pool slots `0..255`. String literals in the same chunk use `OP_CONSTANT_LONG` past 256, but they still **occupy** pool slots, and each identifier **use** appends another slot (names are not interned). A long top-level test with many `assert(...)` calls and string literals will trip this even when the set of names is small.
+
+Workaround: put the busy code in a `fun` so it gets a fresh chunk.
+
+```lux
+fun run() {
+    assert(1 + 1 == 2, "math");
+    // more asserts / strings ...
+}
+run();
+```
+
+`import "lib/foo.lux"` also splits the pool: library methods do not count against the caller’s chunk. Older docs said “256 constants per file”; that was the identifier operand, not the pool. See `tests/test_webtest.lux`.
 
 ---
 

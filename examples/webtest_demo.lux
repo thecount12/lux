@@ -1,0 +1,34 @@
+// POSIX website checks (curl / k6 / Playwright). Run from posix/:
+//   ./lux ../examples/webtest_demo.lux
+import "../lib/webtest.lux";
+
+print "=== generated k6 ===";
+var k = K6();
+k.get("https://example.com/");
+k.vus(2);
+k.duration("5s");
+print k.script();
+
+print "=== generated playwright ===";
+var p = Playwright();
+p.goto("https://example.com/");
+p.waitFor("h1");
+p.text("h1");
+print p.script();
+
+if (_webHasCmd("curl")) {
+    print "=== HttpCheck GET https://example.com ===";
+    var r = HttpCheck().get("https://example.com");
+    print "status=" + r.status + " ok=" + r.ok;
+    print "body bytes=" + len(r.body);
+} else {
+    print "curl not on PATH; skip live GET";
+}
+
+if (_webHasCmd("k6")) {
+    print "k6 is on PATH; run k.run() against your own URL when you want a load test.";
+} else {
+    print "k6 not on PATH; skip load run";
+}
+
+print "Playwright: p.run() needs node + npx playwright (not run here).";
