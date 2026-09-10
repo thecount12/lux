@@ -5,7 +5,7 @@
  *     -d '{"grant_type":"client_credentials","client_id":"demo","client_secret":"demo-secret"}'
  *   curl -s -H 'Authorization: Bearer <access_token>' http://127.0.0.1:8086/secret
  *
- * Swagger UI: http://127.0.0.1:8086/docs  (Authorize → client credentials)
+ * Swagger UI: http://127.0.0.1:8086/docs  (Authorize → Bearer token)
  */
 
 import "../lib/oauth.lux";
@@ -40,8 +40,8 @@ server.get("/secret", handleSecret, secretOp);
 swagger(server);
 
 print "Starting OAuth API on http://127.0.0.1:8086/";
-print "  POST /oauth/token   client_id=demo client_secret=demo-secret";
+print "  POST /oauth/token   issues {access_token, token_type: Bearer}";
 print "  GET  /health        public";
-print "  GET  /secret        Bearer token";
+print "  GET  /secret        Authorization: Bearer <access_token>";
 print "  GET  /docs          Swagger UI";
 server.start();

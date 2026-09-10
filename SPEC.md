@@ -586,7 +586,7 @@ Not natives. Import by path from the working directory:
 - `lib/aws.lux` — AWS helpers
 - `lib/mangum.lux` — AWS Lambda adapter: `mangumHandle(server, event)` → API Gateway proxy JSON; `Mangum(server)` reads `/tmp/lambda_event.json` and writes `/tmp/lambda_response.json`
 - `lib/swagger.lux` — OpenAPI 3 + Swagger UI (`swagger(server)`)
-- `lib/oauth.lux` — OAuth 2.0 client-credentials (`OAuth`, `oa.mount(server)`)
+- `lib/oauth.lux` — OAuth 2.0 client-credentials; `oa.grant` / `oa.bearer` mint `token_type: Bearer`
 
 These are ordinary Lux source. They are not keywords.
 

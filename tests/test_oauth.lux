@@ -17,6 +17,15 @@ fun runOauth() {
     assert(oa.verify("nope") == nil, "bogus token");
     assert(oa.issue("demo", "wrong") == nil, "bad secret");
 
+    var g = oa.grant("demo", "demo-secret");
+    assert(g.token_type == "Bearer", "grant type");
+    assert(oa.verify(g.access_token) == "demo", "grant token");
+
+    var hdr = oa.bearer("demo", "demo-secret");
+    assert(strStartsWithAt(hdr, "Bearer ", 0), "bearer prefix");
+    assert(oa.verify(strSlice(hdr, 7, len(hdr))) == "demo", "bearer value");
+    assert(oa.bearer("demo", "wrong") == nil, "bearer bad secret");
+
     var parts = strSplit(tok, ".");
     var tampered = parts[0] + "." + parts[1] + "." + "00";
     assert(oa.verify(tampered) == nil, "bad sig");
@@ -63,8 +72,7 @@ fun runOauth() {
     assert(payload.token_type == "Bearer", "token type");
     assert(payload.access_token != nil, "access_token");
 
-    var hdr = "Bearer " + payload.access_token;
-    var ok = server.handle("GET", "/secret", "", "", hdr);
+    var ok = server.handle("GET", "/secret", "", "", oa.bearer("demo", "demo-secret"));
     assert(ok.statusCode == 200, "bearer ok");
     assert(strFind(ok.body, "\"client\":\"demo\"") >= 0, "clientId");
 
@@ -81,6 +89,8 @@ fun runOauth() {
 
     var spec = swaggerSpec(server);
     assert(strFind(spec, "oauth2") >= 0, "openapi oauth2");
+    assert(strFind(spec, "bearerAuth") >= 0, "openapi bearer");
+    assert(strFind(spec, "\"scheme\":\"bearer\"") >= 0, "http bearer");
     assert(strFind(spec, "/oauth/token") >= 0, "token url");
     assert(strFind(spec, "clientCredentials") >= 0, "client credentials flow");
 

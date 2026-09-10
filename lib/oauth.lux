@@ -125,6 +125,27 @@ class OAuth {
         return msg + "." + hmacSha256(this.secret, msg);
     }
 
+    /* RFC 6749 token payload: access_token + token_type Bearer. */
+    grant(id, secret) {
+        var access = this.issue(id, secret);
+        if (access == nil) {
+            return nil;
+        }
+        var out = parseJSON("{\"access_token\":\"\",\"token_type\":\"Bearer\",\"expires_in\":0}");
+        out.access_token = access;
+        out.expires_in = this.expiresIn;
+        return out;
+    }
+
+    /* Value for the Authorization header: "Bearer <access_token>". */
+    bearer(id, secret) {
+        var access = this.issue(id, secret);
+        if (access == nil) {
+            return nil;
+        }
+        return "Bearer " + access;
+    }
+
     verify(token) {
         if (token == nil or typeof(token) != "string") {
             return nil;
@@ -171,15 +192,12 @@ class OAuth {
         }
         var id = getField(creds, "client_id");
         var secret = getField(creds, "client_secret");
-        var access = this.issue(id, secret);
-        if (access == nil) {
+        var out = this.grant(id, secret);
+        if (out == nil) {
             res.status(401);
             res.json(parseJSON("{\"error\":\"invalid_client\"}"));
             return;
         }
-        var out = parseJSON("{\"access_token\":\"\",\"token_type\":\"Bearer\",\"expires_in\":0}");
-        out.access_token = access;
-        out.expires_in = this.expiresIn;
         res.json(out);
     }
 

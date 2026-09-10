@@ -1653,7 +1653,7 @@ server.start();
 
 `Op(summary, tag)` also accepts `description`, `body` (example request), `example` (example response), and `status` (response code, default 200). Without an `Op`, the spec still lists the path so Try it out works. `/docs` and `/openapi.json` are omitted from the spec. `server.swaggerVersion` defaults to `"1.0.0"`. Swagger UI loads from a CDN; `GET /openapi.json` works offline.
 
-**OAuth 2.0 (`lib/oauth.lux`):** Client-credentials grant for a Lux API. HMAC-SHA256 access tokens (not JWT). `oa.mount(server)` adds `POST /oauth/token` and Bearer middleware. Token requests and paths in `oa.skip` (default `/oauth/token`, `/docs`, `/openapi.json`) stay public. Live HTTP and `server.handle` expose `req.authorization`; a valid token sets `req.clientId`. See `examples/oauth_server.lux` and `tests/test_oauth.lux`.
+**OAuth 2.0 (`lib/oauth.lux`):** Client-credentials grant that **issues a Bearer token**. `oa.mount(server)` adds `POST /oauth/token` and checks `Authorization: Bearer …` on other routes. Token requests and paths in `oa.skip` (default `/oauth/token`, `/docs`, `/openapi.json`) stay public. A valid token sets `req.clientId`. See `examples/oauth_server.lux` and `tests/test_oauth.lux`.
 
 ```lux
 import "../lib/oauth.lux";
@@ -1676,17 +1676,31 @@ oa.mount(server);
 
 server.get("/health", handleHealth);
 server.get("/secret", handleSecret);
-swagger(server);   /* Authorize in /docs uses client credentials */
+swagger(server);   /* /docs Authorize: paste Bearer token, or client credentials */
 server.start();
+```
+
+Mint a token, then send it as Bearer:
+
+```lux
+var g = oa.grant("demo", "demo-secret");
+print g.token_type;        /* Bearer */
+print g.access_token;
+
+var headers = parseJSON("{}");
+headers.Authorization = oa.bearer("demo", "demo-secret");   /* "Bearer <token>" */
+var resp = httpRequest("GET", "http://127.0.0.1:8086/secret", nil, headers);
 ```
 
 ```sh
 curl -s -X POST http://127.0.0.1:8086/oauth/token \
   -d '{"grant_type":"client_credentials","client_id":"demo","client_secret":"demo-secret"}'
+# {"access_token":"demo.<exp>.<hmac>","token_type":"Bearer","expires_in":3600}
+
 curl -s -H 'Authorization: Bearer <access_token>' http://127.0.0.1:8086/secret
 ```
 
-JSON or `application/x-www-form-urlencoded` bodies work on the token endpoint. Tokens are `clientId.exp.hmac` signed with `oa.secret`; `oa.expiresIn` defaults to 3600 seconds. `client_id` must not contain `.`. This is machine-to-machine auth, not browser login (no authorization-code redirect). If `oauth.mount` runs before `swagger()`, `/docs` advertises the OAuth2 scheme.
+JSON or `application/x-www-form-urlencoded` bodies work on the token endpoint. Tokens are `clientId.exp.hmac` signed with `oa.secret`; `oa.expiresIn` defaults to 3600 seconds. `client_id` must not contain `.`. This is machine-to-machine auth, not browser login (no authorization-code redirect). If `oa.mount` runs before `swagger()`, `/docs` advertises HTTP Bearer plus the token URL.
 
 **Test from another machine:**
 ```sh
