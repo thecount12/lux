@@ -2949,6 +2949,7 @@ typedef struct {
 	char method[16];
 	char path[1024];
 	char host[256];
+	char authorization[512];
 	char body[4096];
 	int bodyLen;
 } HttpRequest;
@@ -2992,6 +2993,26 @@ httpHeaderNameIs(char* line, char* name)
 	return line[i] == ':';
 }
 
+static void
+httpCopyHeaderValue(char* line, char* lineEnd, int nameLen, char* dst, int dstSz)
+{
+	char* v;
+	int n;
+
+	if (dstSz <= 0)
+		return;
+	dst[0] = '\0';
+	v = line + nameLen + 1;
+	while (v < lineEnd && (*v == ' ' || *v == '\t'))
+		v++;
+	n = lineEnd - v;
+	if (n >= dstSz) n = dstSz - 1;
+	if (n < 0) n = 0;
+	if (n > 0)
+		memcpy(dst, v, n);
+	dst[n] = '\0';
+}
+
 static int
 parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 {
@@ -3001,6 +3022,7 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 	char* endHeaders;
 	
 	req->host[0] = '\0';
+	req->authorization[0] = '\0';
 
 	/* Parse method (GET, POST, etc.) */
 	char* methodEnd = strchr(p, ' ');
@@ -3031,7 +3053,7 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 			bodyStart = nil;
 	}
 
-	/* Parse Host header */
+	/* Parse Host and Authorization headers */
 	endHeaders = bodyStart != nil ? bodyStart : buffer + bufLen;
 	line = strchr(buffer, '\n');
 	if (line != nil) line++;
@@ -3041,18 +3063,11 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 		if (lineEnd > line && lineEnd[-1] == '\r')
 			lineEnd--;
 		if (httpHeaderNameIs(line, "host")) {
-			char* v = line + 5;
-			int hostLen;
-			while (v < lineEnd && (*v == ' ' || *v == '\t'))
-				v++;
-			hostLen = lineEnd - v;
-			if (hostLen >= 256) hostLen = 255;
-			if (hostLen > 0) {
-				strncpy(req->host, v, hostLen);
-				req->host[hostLen] = '\0';
-				httpStripHostPort(req->host);
-			}
-			break;
+			httpCopyHeaderValue(line, lineEnd, 4, req->host, (int)sizeof(req->host));
+			httpStripHostPort(req->host);
+		} else if (httpHeaderNameIs(line, "authorization")) {
+			httpCopyHeaderValue(line, lineEnd, 13, req->authorization,
+				(int)sizeof(req->authorization));
 		}
 		if (next == nil) break;
 		line = next + 1;
@@ -3608,7 +3623,7 @@ serverTryStatic(ObjInstance* server, ObjInstance* res, char* method, char* path,
 }
 
 static void
-serverDispatch(ObjInstance* server, char* method, char* path, char* host, char* body, ObjInstance* resObj)
+serverDispatch(ObjInstance* server, char* method, char* path, char* host, char* body, char* authorization, ObjInstance* resObj)
 {
 	ObjInstance* reqObj;
 	Value reqVal, resVal, mwVal, routesVal, nextFn;
@@ -3622,6 +3637,7 @@ serverDispatch(ObjInstance* server, char* method, char* path, char* host, char* 
 	if (path == nil || path[0] == '\0') path = "/";
 	if (host == nil) host = "";
 	if (body == nil) body = "";
+	if (authorization == nil) authorization = "";
 
 	middlewares = nil;
 	routes = nil;
@@ -3631,6 +3647,8 @@ serverDispatch(ObjInstance* server, char* method, char* path, char* host, char* 
 	tableSet(&reqObj->fields, copyString("path", 4), OBJ_VAL(copyString(path, (int)strlen(path))));
 	tableSet(&reqObj->fields, copyString("host", 4), OBJ_VAL(copyString(host, (int)strlen(host))));
 	tableSet(&reqObj->fields, copyString("body", 4), OBJ_VAL(copyString(body, (int)strlen(body))));
+	tableSet(&reqObj->fields, copyString("authorization", 13),
+		OBJ_VAL(copyString(authorization, (int)strlen(authorization))));
 
 	if (tableGet(&server->fields, copyString("_middleware", 11), &mwVal) && IS_ARRAY(mwVal))
 		middlewares = AS_ARRAY(mwVal);
@@ -3796,7 +3814,7 @@ serverHandleClient(ObjInstance* server, int dfd, ObjArray* routes, char* default
 	push(OBJ_VAL(resObj));
 	tableSet(&resObj->fields, copyString("_fd", 3), NUMBER_VAL((double)dfd));
 	tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
-	serverDispatch(server, req.method, req.path, req.host, req.body, resObj);
+	serverDispatch(server, req.method, req.path, req.host, req.body, req.authorization, resObj);
 	pop(); /* res */
 }
 
@@ -3844,7 +3862,7 @@ httpPathWithoutQuery(char* dst, int dstSz, char* src)
 	}
 }
 
-/* Server.handle(method, path, [body], [host]) — one request, no socket. */
+/* Server.handle(method, path, [body], [host], [authorization]) — one request, no socket. */
 static Value
 serverHandleNative(int argCount, Value* args)
 {
@@ -3855,6 +3873,7 @@ serverHandleNative(int argCount, Value* args)
 	char* pathSrc;
 	char* bodySrc;
 	char* hostSrc;
+	char* authSrc;
 	char methodBuf[16];
 	char pathBuf[1024];
 	char hostBuf[256];
@@ -3863,17 +3882,22 @@ serverHandleNative(int argCount, Value* args)
 
 	bodySrc = "";
 	hostSrc = "";
+	authSrc = "";
 	statusCode = 200;
-	if (argCount < 3 || argCount > 5 || !IS_INSTANCE(args[0]) ||
+	if (argCount < 3 || argCount > 6 || !IS_INSTANCE(args[0]) ||
 	    !IS_STRING(args[1]) || !IS_STRING(args[2]))
 		return NIL_VAL;
 	if (argCount >= 4) {
 		if (IS_STRING(args[3])) bodySrc = AS_CSTRING(args[3]);
 		else if (!IS_NIL(args[3])) return NIL_VAL;
 	}
-	if (argCount == 5) {
+	if (argCount >= 5) {
 		if (IS_STRING(args[4])) hostSrc = AS_CSTRING(args[4]);
 		else if (!IS_NIL(args[4])) return NIL_VAL;
+	}
+	if (argCount == 6) {
+		if (IS_STRING(args[5])) authSrc = AS_CSTRING(args[5]);
+		else if (!IS_NIL(args[5])) return NIL_VAL;
 	}
 
 	server = AS_INSTANCE(args[0]);
@@ -3890,7 +3914,7 @@ serverHandleNative(int argCount, Value* args)
 	tableSet(&resObj->fields, copyString("_body", 5), OBJ_VAL(copyString("", 0)));
 	tableSet(&resObj->fields, copyString("_contentType", 12),
 		OBJ_VAL(copyString("text/plain", 10)));
-	serverDispatch(server, methodBuf, pathBuf, hostBuf, bodySrc, resObj);
+	serverDispatch(server, methodBuf, pathBuf, hostBuf, bodySrc, authSrc, resObj);
 
 	out = newInstance(nil);
 	push(OBJ_VAL(out));

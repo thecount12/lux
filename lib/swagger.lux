@@ -113,7 +113,7 @@ fun swaggerPickRoute(routes, path, method) {
     return fallback;
 }
 
-fun swaggerOperation(route) {
+fun swaggerOperation(route, oauthPath) {
     var method = route.method;
     var path = route.path;
     var op = getField(route, "op");
@@ -166,6 +166,13 @@ fun swaggerOperation(route) {
         json = json + ",\"content\":{\"application/json\":{\"example\":" + swaggerJsonValue(example) + "}}";
     }
     json = json + "}}";
+    if (oauthPath != nil) {
+        if (path == oauthPath) {
+            json = json + ",\"security\":[]";
+        } else {
+            json = json + ",\"security\":[{\"bearerAuth\":[]}]";
+        }
+    }
     return json + "}";
 }
 
@@ -183,6 +190,7 @@ fun swaggerSpec(server) {
         routes = [];
     }
 
+    var oauthPath = getField(server, "_oauth");
     var paths = swaggerFindPaths(routes);
     var pathsJson = "{";
     var p = 0;
@@ -196,22 +204,30 @@ fun swaggerSpec(server) {
         var getR = swaggerPickRoute(routes, path, "GET");
         var postR = swaggerPickRoute(routes, path, "POST");
         if (getR != nil) {
-            pathsJson = pathsJson + "\"get\":" + swaggerOperation(getR);
+            pathsJson = pathsJson + "\"get\":" + swaggerOperation(getR, oauthPath);
             firstOp = false;
         }
         if (postR != nil) {
             if (!firstOp) {
                 pathsJson = pathsJson + ",";
             }
-            pathsJson = pathsJson + "\"post\":" + swaggerOperation(postR);
+            pathsJson = pathsJson + "\"post\":" + swaggerOperation(postR, oauthPath);
         }
         pathsJson = pathsJson + "}";
         p = p + 1;
     }
     pathsJson = pathsJson + "}";
 
+    var extra = "";
+    if (oauthPath != nil) {
+        extra = ",\"components\":{\"securitySchemes\":{" +
+            "\"bearerAuth\":{\"type\":\"http\",\"scheme\":\"bearer\"}," +
+            "\"oauth2\":{\"type\":\"oauth2\",\"flows\":{\"clientCredentials\":{\"tokenUrl\":" +
+            swaggerStr(oauthPath) + ",\"scopes\":{}}}}}" +
+            "},\"security\":[{\"bearerAuth\":[]}]";
+    }
     return "{\"openapi\":\"3.0.3\",\"info\":{\"title\":" + swaggerStr(title) +
-        ",\"version\":" + swaggerStr(version) + "},\"paths\":" + pathsJson + "}";
+        ",\"version\":" + swaggerStr(version) + "},\"paths\":" + pathsJson + extra + "}";
 }
 
 fun swaggerDoc(server, method, path, op) {

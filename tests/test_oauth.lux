@@ -1,0 +1,100 @@
+/* OAuth 2.0 client-credentials + Bearer tokens for Server.
+ * HMAC-signed access tokens; POST /oauth/token; middleware on other routes.
+ */
+import "../lib/oauth.lux";
+import "../lib/swagger.lux";
+
+fun runOauth() {
+    print "=== OAuth ===";
+
+    var oa = OAuth("test-signing-secret");
+    assert(oa.addClient("demo", "demo-secret") == true, "addClient");
+    assert(oa.addClient("bad.id", "x") == false, "dot id rejected");
+
+    var tok = oa.issue("demo", "demo-secret");
+    assert(tok != nil, "issue");
+    assert(oa.verify(tok) == "demo", "verify");
+    assert(oa.verify("nope") == nil, "bogus token");
+    assert(oa.issue("demo", "wrong") == nil, "bad secret");
+
+    var g = oa.grant("demo", "demo-secret");
+    assert(g.token_type == "Bearer", "grant type");
+    assert(oa.verify(g.access_token) == "demo", "grant token");
+
+    var hdr = oa.bearer("demo", "demo-secret");
+    assert(strStartsWithAt(hdr, "Bearer ", 0), "bearer prefix");
+    assert(oa.verify(strSlice(hdr, 7, len(hdr))) == "demo", "bearer value");
+    assert(oa.bearer("demo", "wrong") == nil, "bearer bad secret");
+
+    var parts = strSplit(tok, ".");
+    var tampered = parts[0] + "." + parts[1] + "." + "00";
+    assert(oa.verify(tampered) == nil, "bad sig");
+
+    var shortLived = OAuth("test-signing-secret");
+    shortLived.expiresIn = -1;
+    shortLived.addClient("demo", "demo-secret");
+    var old = shortLived.issue("demo", "demo-secret");
+    assert(shortLived.verify(old) == nil, "expired");
+
+    var form = oauthCreds("grant_type=client_credentials&client_id=demo&client_secret=demo-secret");
+    assert(form.client_id == "demo", "form id");
+    assert(form.client_secret == "demo-secret", "form secret");
+
+    fun handleHealth(req, res) {
+        res.json(parseJSON("{\"ok\":true}"));
+    }
+    fun handleSecret(req, res) {
+        var obj = parseJSON("{\"ok\":true,\"client\":\"\"}");
+        obj.client = req.clientId;
+        res.json(obj);
+    }
+
+    var server = Server(0);
+    oa.skip[oa.skip.length] = "/health";
+    oa.mount(server);
+    server.get("/health", handleHealth);
+    server.get("/secret", handleSecret);
+    swagger(server);
+
+    var health = server.handle("GET", "/health");
+    assert(health.statusCode == 200, "health public");
+    assert(strFind(health.body, "\"ok\":true") >= 0, "health body");
+
+    var denied = server.handle("GET", "/secret");
+    assert(denied.statusCode == 401, "no token");
+    assert(strFind(denied.body, "invalid_token") >= 0, "invalid_token");
+
+    var jsonBody = "{\"grant_type\":\"client_credentials\",\"client_id\":\"demo\",\"client_secret\":\"demo-secret\"}";
+    var issued = server.handle("POST", "/oauth/token", jsonBody);
+    assert(issued.statusCode == 200, "token status");
+    var payload = parseJSON(issued.body);
+    assert(payload != nil, "token json");
+    assert(payload.token_type == "Bearer", "token type");
+    assert(payload.access_token != nil, "access_token");
+
+    var ok = server.handle("GET", "/secret", "", "", oa.bearer("demo", "demo-secret"));
+    assert(ok.statusCode == 200, "bearer ok");
+    assert(strFind(ok.body, "\"client\":\"demo\"") >= 0, "clientId");
+
+    var formIssued = server.handle("POST", "/oauth/token",
+        "grant_type=client_credentials&client_id=demo&client_secret=demo-secret");
+    assert(formIssued.statusCode == 200, "form token");
+
+    var badClient = server.handle("POST", "/oauth/token",
+        "{\"grant_type\":\"client_credentials\",\"client_id\":\"demo\",\"client_secret\":\"nope\"}");
+    assert(badClient.statusCode == 401, "invalid_client");
+
+    var docs = server.handle("GET", "/docs");
+    assert(docs.statusCode == 200, "docs public");
+
+    var spec = swaggerSpec(server);
+    assert(strFind(spec, "oauth2") >= 0, "openapi oauth2");
+    assert(strFind(spec, "bearerAuth") >= 0, "openapi bearer");
+    assert(strFind(spec, "\"scheme\":\"bearer\"") >= 0, "http bearer");
+    assert(strFind(spec, "/oauth/token") >= 0, "token url");
+    assert(strFind(spec, "clientCredentials") >= 0, "client credentials flow");
+
+    print "All OAuth tests passed";
+}
+
+runOauth();

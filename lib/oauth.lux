@@ -1,0 +1,251 @@
+// Lightweight OAuth 2.0 client-credentials for Server (RFC 6749 §4.4).
+// HMAC-SHA256 access tokens. No redirects, no refresh tokens, no JWT.
+// Import relative to the process working directory:
+//   import "../lib/oauth.lux";   // from posix/ or tests/
+//   import "lib/oauth.lux";      // from repo root
+//
+// var oa = OAuth("signing-secret");
+// oa.addClient("demo", "demo-secret");
+// oa.mount(server);   // POST /oauth/token + Bearer middleware
+
+fun oauthFormGet(body, key) {
+    var needle = key + "=";
+    var start = 0;
+    var n = len(body);
+    while (start < n) {
+        var i = strFind(body, needle, start);
+        if (i < 0) {
+            return nil;
+        }
+        if (i == 0 or strSlice(body, i - 1, i) == "&") {
+            var vstart = i + len(needle);
+            var vend = strFind(body, "&", vstart);
+            if (vend < 0) {
+                vend = n;
+            }
+            return strTrim(strSlice(body, vstart, vend));
+        }
+        start = i + 1;
+    }
+    return nil;
+}
+
+fun oauthCreds(body) {
+    if (body == nil) {
+        return nil;
+    }
+    var text = "" + body;
+    var obj = parseJSON(text);
+    if (obj != nil) {
+        return obj;
+    }
+    var id = oauthFormGet(text, "client_id");
+    var secret = oauthFormGet(text, "client_secret");
+    var grant = oauthFormGet(text, "grant_type");
+    if (id == nil and secret == nil and grant == nil) {
+        return nil;
+    }
+    var out = parseJSON("{\"grant_type\":\"\",\"client_id\":\"\",\"client_secret\":\"\"}");
+    if (grant != nil) {
+        out.grant_type = grant;
+    }
+    if (id != nil) {
+        out.client_id = id;
+    }
+    if (secret != nil) {
+        out.client_secret = secret;
+    }
+    return out;
+}
+
+fun oauthBearer(req) {
+    var h = getField(req, "authorization");
+    if (h == nil) {
+        return nil;
+    }
+    h = strTrim("" + h);
+    if (h == "") {
+        return nil;
+    }
+    if (strStartsWithAt(h, "Bearer ", 0) or strStartsWithAt(h, "bearer ", 0)) {
+        return strTrim(strSlice(h, 7, len(h)));
+    }
+    return h;
+}
+
+fun oauthIdOk(id) {
+    if (id == nil or typeof(id) != "string" or id == "") {
+        return false;
+    }
+    if (strFind(id, ".") >= 0 or strFind(id, " ") >= 0) {
+        return false;
+    }
+    return true;
+}
+
+class OAuth {
+    init(secret) {
+        this.secret = "" + secret;
+        this.expiresIn = 3600;
+        this.path = "/oauth/token";
+        this.clients = [];
+        this.skip = ["/oauth/token", "/docs", "/openapi.json"];
+    }
+
+    addClient(id, secret) {
+        if (!oauthIdOk(id) or secret == nil) {
+            return false;
+        }
+        var c = parseJSON("{\"id\":\"\",\"secret\":\"\"}");
+        c.id = "" + id;
+        c.secret = "" + secret;
+        this.clients[this.clients.length] = c;
+        return true;
+    }
+
+    findClient(id) {
+        var i = 0;
+        while (i < this.clients.length) {
+            var c = this.clients[i];
+            if (c.id == id) {
+                return c;
+            }
+            i = i + 1;
+        }
+        return nil;
+    }
+
+    issue(id, secret) {
+        var c = this.findClient(id);
+        if (c == nil or c.secret != secret) {
+            return nil;
+        }
+        var exp = floor(epoch() + this.expiresIn);
+        var msg = id + "." + exp;
+        return msg + "." + hmacSha256(this.secret, msg);
+    }
+
+    /* RFC 6749 token payload: access_token + token_type Bearer. */
+    grant(id, secret) {
+        var access = this.issue(id, secret);
+        if (access == nil) {
+            return nil;
+        }
+        var out = parseJSON("{\"access_token\":\"\",\"token_type\":\"Bearer\",\"expires_in\":0}");
+        out.access_token = access;
+        out.expires_in = this.expiresIn;
+        return out;
+    }
+
+    /* Value for the Authorization header: "Bearer <access_token>". */
+    bearer(id, secret) {
+        var access = this.issue(id, secret);
+        if (access == nil) {
+            return nil;
+        }
+        return "Bearer " + access;
+    }
+
+    verify(token) {
+        if (token == nil or typeof(token) != "string") {
+            return nil;
+        }
+        var parts = strSplit(token, ".");
+        if (parts.length != 3) {
+            return nil;
+        }
+        var id = parts[0];
+        var expStr = parts[1];
+        var sig = parts[2];
+        if (!oauthIdOk(id) or sig == "") {
+            return nil;
+        }
+        var msg = id + "." + expStr;
+        if (hmacSha256(this.secret, msg) != sig) {
+            return nil;
+        }
+        var exp = parseJSON(expStr);
+        if (typeof(exp) != "number") {
+            return nil;
+        }
+        if (epoch() >= exp) {
+            return nil;
+        }
+        if (this.findClient(id) == nil) {
+            return nil;
+        }
+        return id;
+    }
+
+    token(req, res) {
+        var creds = oauthCreds(req.body);
+        if (creds == nil) {
+            res.status(400);
+            res.json(parseJSON("{\"error\":\"invalid_request\"}"));
+            return;
+        }
+        var grant = getField(creds, "grant_type");
+        if (grant != nil and grant != "client_credentials") {
+            res.status(400);
+            res.json(parseJSON("{\"error\":\"unsupported_grant_type\"}"));
+            return;
+        }
+        var id = getField(creds, "client_id");
+        var secret = getField(creds, "client_secret");
+        var out = this.grant(id, secret);
+        if (out == nil) {
+            res.status(401);
+            res.json(parseJSON("{\"error\":\"invalid_client\"}"));
+            return;
+        }
+        res.json(out);
+    }
+
+    denied(res) {
+        res.status(401);
+        res.json(parseJSON("{\"error\":\"invalid_token\"}"));
+    }
+
+    isPublic(path) {
+        if (path == this.path) {
+            return true;
+        }
+        var i = 0;
+        while (i < this.skip.length) {
+            if (path == this.skip[i]) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    guard(req, res, next) {
+        if (this.isPublic(req.path)) {
+            next();
+            return;
+        }
+        var token = oauthBearer(req);
+        var id = this.verify(token);
+        if (id == nil) {
+            this.denied(res);
+            return;
+        }
+        req.clientId = id;
+        next();
+    }
+
+    mount(server) {
+        var oa = this;
+        fun handleToken(req, res) {
+            oa.token(req, res);
+        }
+        fun protect(req, res, next) {
+            oa.guard(req, res, next);
+        }
+        server.post(this.path, handleToken);
+        server.use(protect);
+        server._oauth = this.path;
+        return this;
+    }
+}
