@@ -103,7 +103,7 @@ Exit codes: 0 = no issues, 1 = warnings, 65 = compile error, 64 = usage error.
 ## Detailed Build Instructions
 
 See [BUILD.md](BUILD.md) for comprehensive platform-specific build guides:
-- **macOS** — Homebrew setup, x86_64 compilation
+- **macOS** — Homebrew setup, native arch (arm64 or x86_64)
 - **Linux** — Debian, Ubuntu, Fedora, CentOS
 - **OpenBSD** — GNU Make, port package paths
 - **Plan 9** — mk tool, compiler selection

@@ -12,6 +12,9 @@ Put API Gateway (REST or HTTP API) or a Function URL in **proxy** mode in front 
 | `lambda/handler.lux` | Routes + `Mangum(server)` (staged to `/tmp/luxapp`) |
 | `lib/mangum.lux` | Event → `server.handle()` → Lambda proxy JSON |
 | `../Dockerfile.lambda` | Amazon Linux build + `provided.al2023` image |
+| `../Dockerfile-linux-oracle` | Same runtime + Instant Client; handler in `lambda-oracle/` |
+| `../Dockerfile-linux-postgres` | `USE_POSTGRES=1`; same SQL handler |
+| `../Dockerfile-linux-mysql` | `USE_MYSQL=1`; same SQL handler |
 | `../examples/lambda_web.lux` | Same routes as a local HTTP server |
 | `../examples/lambda_raw.lux` | Original handler: event file in, proxy JSON out, no Mangum |
 

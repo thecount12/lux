@@ -1,0 +1,82 @@
+// SQL Lambda: POST /query with {"sql":"..."}.
+// Env: DB_DRIVER (oracle|postgres|mysql), DB_URL, optional DB_HEALTH_SQL.
+// Staged under /tmp/luxapp like lambda/handler.lux.
+
+import "lib/mangum.lux";
+
+fun envOr(name, fallback) {
+    var v = getenv(name);
+    if (v == nil) {
+        return fallback;
+    }
+    return v;
+}
+
+fun jsonErr(res, code, msg) {
+    res.status(code);
+    var obj = parseJSON("{\"error\":\"\"}");
+    obj.error = msg;
+    res.json(obj);
+}
+
+fun openDb() {
+    return dbConnect(envOr("DB_DRIVER", "oracle"), envOr("DB_URL", ""));
+}
+
+fun handleHealth(req, res) {
+    var conn = openDb();
+    if (conn == nil) {
+        jsonErr(res, 500, "connect failed");
+        return;
+    }
+    var rows = dbQuery(conn, envOr("DB_HEALTH_SQL", "SELECT 1"));
+    dbClose(conn);
+    if (rows == nil) {
+        jsonErr(res, 500, "health query failed");
+        return;
+    }
+    var ok = parseJSON("{\"ok\":true}");
+    res.json(ok);
+}
+
+fun queryBody(raw) {
+    if (raw == nil || raw == "") {
+        return nil;
+    }
+    var sql = getField(raw, "sql");
+    if (sql != nil) {
+        return raw;
+    }
+    return parseJSON(raw);
+}
+
+fun handleQuery(req, res) {
+    var body = queryBody(req.body);
+    if (body == nil) {
+        jsonErr(res, 400, "missing JSON body");
+        return;
+    }
+    var sql = getField(body, "sql");
+    if (sql == nil || sql == "") {
+        jsonErr(res, 400, "missing sql");
+        return;
+    }
+    var conn = openDb();
+    if (conn == nil) {
+        jsonErr(res, 500, "connect failed");
+        return;
+    }
+    var rows = dbQuery(conn, sql);
+    dbClose(conn);
+    if (rows == nil) {
+        jsonErr(res, 500, "query failed");
+        return;
+    }
+    res.json(rows);
+}
+
+var server = Server(0);
+server.get("/health", handleHealth);
+server.post("/query", handleQuery);
+
+Mangum(server);
