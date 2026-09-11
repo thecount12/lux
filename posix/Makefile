@@ -1,5 +1,7 @@
-# Auto-detect OS
+# Auto-detect OS and CPU (override with ARCH=arm64 or ARCH=x86_64)
 UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+ARCH ?= $(UNAME_M)
 
 # Define compiler and flags
 CC ?= cc
@@ -49,6 +51,8 @@ ifeq ($(USE_POSTGRES),1)
         DB_FLAGS += $(PG_CFLAGS)
     else ifneq ($(wildcard /usr/include/postgresql/libpq-fe.h),)
         DB_FLAGS += -I/usr/include/postgresql
+    else ifneq ($(wildcard /usr/include/pgsql/libpq-fe.h),)
+        DB_FLAGS += -I/usr/include/pgsql
     endif
     ifneq ($(PG_LIBS),)
         DB_LDFLAGS += $(PG_LIBS)
@@ -61,6 +65,10 @@ ifeq ($(USE_MYSQL),1)
     DB_FLAGS += -DDB_MYSQL
     MYSQL_CFLAGS := $(shell mysql_config --cflags 2>/dev/null)
     MYSQL_LIBS := $(shell mysql_config --libs 2>/dev/null)
+    ifeq ($(MYSQL_CFLAGS),)
+        MYSQL_CFLAGS := $(shell mariadb_config --cflags 2>/dev/null)
+        MYSQL_LIBS := $(shell mariadb_config --libs 2>/dev/null)
+    endif
     ifeq ($(MYSQL_CFLAGS),)
         MYSQL_CFLAGS := $(shell pkg-config --cflags mysqlclient 2>/dev/null)
         MYSQL_LIBS := $(shell pkg-config --libs mysqlclient 2>/dev/null)
@@ -108,6 +116,12 @@ ifeq ($(USE_ORACLE),1)
         ifeq ($(wildcard $(ORACLE_LIB)/libclntsh.dylib)$(wildcard $(ORACLE_LIB)/libclntsh.dylib.*),)
             $(error Oracle Instant Client Basic not found (libclntsh.dylib) in $(ORACLE_LIB). The SDK package is headers only. Install Basic for the same CPU arch as lux, unzip/copy next to sdk/, then: make USE_ORACLE=1 ORACLE_HOME=$(ORACLE_HOME))
         endif
+        ORACLE_DYLIB_ARCH := $(shell lipo -archs $(ORACLE_LIB)/libclntsh.dylib 2>/dev/null)
+        ifneq ($(ORACLE_DYLIB_ARCH),)
+            ifeq ($(filter $(ARCH),$(ORACLE_DYLIB_ARCH)),)
+                $(error Oracle Instant Client at $(ORACLE_LIB) is '$(ORACLE_DYLIB_ARCH)' but lux is building for $(ARCH). Install Instant Client for $(ARCH), or rebuild with ARCH=$(firstword $(ORACLE_DYLIB_ARCH)) USE_ORACLE=1)
+            endif
+        endif
     else
         ifeq ($(wildcard $(ORACLE_LIB)/libclntsh.so)$(wildcard $(ORACLE_LIB)/libclntsh.so.*),)
             $(error Oracle Instant Client Basic not found (libclntsh.so) in $(ORACLE_LIB). The SDK package is headers only. Install Basic+SDK and set ORACLE_HOME to the Instant Client root.)
@@ -124,9 +138,17 @@ ifeq ($(UNAME_S),Linux)
     LDFLAGS = -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),Darwin)
-    # macOS: Use Homebrew OpenSSL, compile for x86_64
-    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch x86_64 -I/usr/local/opt/openssl@3/include $(DB_FLAGS)
-    LDFLAGS = -arch x86_64 -L/usr/local/opt/openssl@3/lib -lcurl -lcrypto -lm $(DB_LDFLAGS)
+    # Native arch (arm64 or x86_64). Override with ARCH=...
+    ifeq ($(ARCH),arm64)
+        OPENSSL_PREFIX ?= $(firstword $(wildcard /opt/homebrew/opt/openssl@3 /usr/local/opt/openssl@3))
+    else
+        OPENSSL_PREFIX ?= $(firstword $(wildcard /usr/local/opt/openssl@3 /opt/homebrew/opt/openssl@3))
+    endif
+    ifeq ($(OPENSSL_PREFIX),)
+        OPENSSL_PREFIX := /usr/local/opt/openssl@3
+    endif
+    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch $(ARCH) -I$(OPENSSL_PREFIX)/include $(DB_FLAGS)
+    LDFLAGS = -arch $(ARCH) -L$(OPENSSL_PREFIX)/lib -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),OpenBSD)
     # OpenBSD: use ports-installed curl and OpenSSL under /usr/local.

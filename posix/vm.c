@@ -30,7 +30,17 @@
 #include <libpq-fe.h>
 #endif
 #ifdef DB_MYSQL
+#if defined(__has_include)
+#  if __has_include(<mysql/mysql.h>)
+#    include <mysql/mysql.h>
+#  elif __has_include(<mysql.h>)
+#    include <mysql.h>
+#  else
+#    include <mysql/mysql.h>
+#  endif
+#else
 #include <mysql/mysql.h>
+#endif
 #endif
 #ifdef DB_ORACLE
 #include <oci.h>
@@ -72,6 +82,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"epoch", "epoch()", "Return Unix epoch time in seconds (UTC)."},
 	{"exit", "exit([code])", "Exit the Lux process with an optional numeric status (default 0)."},
 	{"args", "args()", "Return command-line arguments passed after the script path."},
+	{"getenv", "getenv(name)", "Return the value of an environment variable, or nil if unset."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
 	{"abs", "abs(number)", "Return the absolute value of a number."},
 	{"ceil", "ceil(number)", "Return smallest integer greater than or equal to number."},
@@ -187,7 +198,7 @@ static const char* callableTypeName(Value v) {
 }
 
 static const char* callableCategory(const char* name) {
-	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0 || strcmp(name, "typeof") == 0 || strcmp(name, "exit") == 0 || strcmp(name, "args") == 0) return "Core";
+	if (strcmp(name, "help") == 0 || strcmp(name, "clock") == 0 || strcmp(name, "epoch") == 0 || strcmp(name, "typeof") == 0 || strcmp(name, "exit") == 0 || strcmp(name, "args") == 0 || strcmp(name, "getenv") == 0) return "Core";
 	if (strcmp(name, "floor") == 0 || strcmp(name, "abs") == 0 || strcmp(name, "ceil") == 0 ||
 	    strcmp(name, "sqrt") == 0 || strcmp(name, "pow") == 0 || strcmp(name, "log") == 0 ||
 	    strcmp(name, "sin") == 0 || strcmp(name, "cos") == 0) return "Math";
@@ -476,6 +487,17 @@ static Value clockNative(int argCount __attribute__((unused)), Value* args __att
 
 static Value epochNative(int argCount __attribute__((unused)), Value* args __attribute__((unused))) {
 	return NUMBER_VAL((double)time(NULL));
+}
+
+static Value getenvNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0])) {
+		return NIL_VAL;
+	}
+	const char* value = getenv(AS_CSTRING(args[0]));
+	if (value == NULL) {
+		return NIL_VAL;
+	}
+	return OBJ_VAL(copyString(value, (int)strlen(value)));
 }
 
 static Value floorNative(int argCount, Value* args) {
@@ -5217,6 +5239,7 @@ void initVM() {
 	defineNative("help", helpNative);
 	defineNative("exit", exitNative);
 	defineNative("args", argsNative);
+	defineNative("getenv", getenvNative);
 	defineNative("readFile", readFileNative);
 	defineNative("renderTemplate", renderTemplateNative);
 	defineNative("markdownToHtml", markdownToHtmlNative);

@@ -56,9 +56,7 @@ make USE_ORACLE=1 ORACLE_HOME=/opt/oracle/instantclient_21_15   # match the unzi
 ```
 Without the SDK, omit Oracle: `make USE_SQLITE=1 USE_POSTGRES=1 USE_MYSQL=1`
 
-**macOS:** Instant Client **Basic and SDK** must match the CPU arch of `lux`. The SDK dmg is headers only (`oci.h`); without Basic there is no `libclntsh.dylib` and `USE_ORACLE=1` cannot link.
-
-The Darwin Makefile currently forces **x86_64** (`-arch x86_64`, Rosetta). If you installed `instantclient-*-macos.arm64-*.dmg`, either keep `lux` x86_64 and install **Intel** Basic+SDK (`macos.x64`), or build `lux` native arm64 and install **arm64** Basic next to the SDK.
+**macOS:** Instant Client **Basic and SDK** must match the CPU arch of `lux` (`uname -m`, or `ARCH=arm64` / `ARCH=x86_64`). The SDK dmg is headers only (`oci.h`); without Basic there is no `libclntsh.dylib` and `USE_ORACLE=1` cannot link. `make` builds for the host arch (Apple Silicon Homebrew OpenSSL is `/opt/homebrew/opt/openssl@3`, Intel is `/usr/local/opt/openssl@3`).
 
 Put both packages in the same Instant Client root so you have `sdk/include/oci.h` **and** `libclntsh.dylib`. Oracle Database Free in Docker uses PDB service `FREEPDB1`:
 
