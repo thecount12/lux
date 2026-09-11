@@ -4501,73 +4501,166 @@ static DbConnection* dbConnectMySQL(const char* connString) {
 #endif
 
 #ifdef DB_ORACLE
+static int ociOk(sword status) {
+	return status == OCI_SUCCESS || status == OCI_SUCCESS_WITH_INFO;
+}
+
+static void ociPrintError(OCIError* errhp, const char* what) {
+	text errbuf[512];
+	sb4 errcode = 0;
+
+	memset(errbuf, 0, sizeof(errbuf));
+	if (errhp != NULL) {
+		OCIErrorGet(errhp, 1, NULL, &errcode, errbuf, (ub4)sizeof(errbuf), OCI_HTYPE_ERROR);
+	}
+	if (errbuf[0] != '\0') {
+		fprintf(stderr, "oracle: %s: %s\n", what, (char*)errbuf);
+	} else {
+		fprintf(stderr, "oracle: %s\n", what);
+	}
+}
+
+/* Build a TNS connect descriptor from host[:port]/service (Easy Connect). */
+static int oracleBuildConnect(const char* rest, char* out, size_t outSz) {
+	char host[256];
+	char port[16];
+	char service[256];
+	const char* colon;
+	const char* slash;
+	size_t hostLen;
+	size_t portLen;
+
+	if (rest == NULL || rest[0] == '\0') {
+		return 0;
+	}
+
+	/* Caller already has a full TNS descriptor. */
+	if (rest[0] == '(') {
+		if (strlen(rest) >= outSz) {
+			return 0;
+		}
+		strcpy(out, rest);
+		return 1;
+	}
+
+	if (rest[0] == '/' && rest[1] == '/') {
+		rest += 2;
+	}
+
+	slash = strchr(rest, '/');
+	if (slash == NULL || slash == rest || slash[1] == '\0') {
+		return 0;
+	}
+
+	colon = strchr(rest, ':');
+	if (colon != NULL && colon < slash) {
+		hostLen = (size_t)(colon - rest);
+		portLen = (size_t)(slash - colon - 1);
+		if (hostLen == 0 || hostLen >= sizeof(host) || portLen == 0 || portLen >= sizeof(port)) {
+			return 0;
+		}
+		memcpy(host, rest, hostLen);
+		host[hostLen] = '\0';
+		memcpy(port, colon + 1, portLen);
+		port[portLen] = '\0';
+	} else {
+		hostLen = (size_t)(slash - rest);
+		if (hostLen == 0 || hostLen >= sizeof(host)) {
+			return 0;
+		}
+		memcpy(host, rest, hostLen);
+		host[hostLen] = '\0';
+		strcpy(port, "1521");
+	}
+
+	if (strlen(slash + 1) >= sizeof(service)) {
+		return 0;
+	}
+	strcpy(service, slash + 1);
+
+	if ((size_t)snprintf(out, outSz,
+			"(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=%s)(PORT=%s))"
+			"(CONNECT_DATA=(SERVICE_NAME=%s)))",
+			host, port, service) >= outSz) {
+		return 0;
+	}
+	return 1;
+}
+
 /* Oracle dbConnect: dbConnect("oracle", "user/pass@host:port/service") */
 static DbConnection* dbConnectOracle(const char* connString) {
 	OCIEnv* envhp = NULL;
 	OCIError* errhp = NULL;
 	OCISvcCtx* svchp = NULL;
-	OCIServer* srvhp = NULL;
-	OCISession* authp = NULL;
-	
+	DbConnection* dbConn = NULL;
+	char user[256];
+	char pass[256];
+	char connStr[1024];
+	const char* atSign;
+	const char* slash;
+	int userLen;
+	int passLen;
+	sword status;
+
 	/* Parse connection string: user/pass@host:port/service */
-	char user[256], pass[256], connStr[512];
-	const char* atSign = strchr(connString, '@');
-	const char* slash = strchr(connString, '/');
-	
+	atSign = strchr(connString, '@');
+	slash = strchr(connString, '/');
+
 	if (!slash || !atSign || slash > atSign) {
+		fprintf(stderr,
+			"oracle: connection string must be user/pass@host:port/service "
+			"(Oracle Free PDB is usually FREEPDB1, not FREE)\n");
 		return NULL;
 	}
-	
-	int userLen = slash - connString;
-	int passLen = atSign - slash - 1;
-	strncpy(user, connString, userLen);
+
+	userLen = (int)(slash - connString);
+	passLen = (int)(atSign - slash - 1);
+	if (userLen <= 0 || userLen >= (int)sizeof(user) ||
+	    passLen <= 0 || passLen >= (int)sizeof(pass)) {
+		fprintf(stderr, "oracle: username or password is empty or too long\n");
+		return NULL;
+	}
+
+	memcpy(user, connString, (size_t)userLen);
 	user[userLen] = '\0';
-	strncpy(pass, slash + 1, passLen);
+	memcpy(pass, slash + 1, (size_t)passLen);
 	pass[passLen] = '\0';
-	strcpy(connStr, atSign + 1);
-	
-	/* Initialize OCI environment */
-	if (OCIEnvCreate(&envhp, OCI_DEFAULT, NULL, NULL, NULL, NULL, 0, NULL) != OCI_SUCCESS) {
+
+	if (!oracleBuildConnect(atSign + 1, connStr, sizeof(connStr))) {
+		fprintf(stderr, "oracle: could not parse host:port/service in '%s'\n", atSign + 1);
 		return NULL;
 	}
-	
-	/* Allocate error handle */
-	if (OCIHandleAlloc(envhp, (void**)&errhp, OCI_HTYPE_ERROR, 0, NULL) != OCI_SUCCESS) {
+
+	status = OCIEnvCreate(&envhp, OCI_DEFAULT, NULL, NULL, NULL, NULL, 0, NULL);
+	if (!ociOk(status) || envhp == NULL) {
+		fprintf(stderr, "oracle: OCIEnvCreate failed (status %d)\n", (int)status);
+		return NULL;
+	}
+
+	if (!ociOk(OCIHandleAlloc(envhp, (void**)&errhp, OCI_HTYPE_ERROR, 0, NULL))) {
+		fprintf(stderr, "oracle: could not allocate error handle\n");
 		OCIHandleFree(envhp, OCI_HTYPE_ENV);
 		return NULL;
 	}
-	
-	/* Allocate server and service context handles */
-	OCIHandleAlloc(envhp, (void**)&srvhp, OCI_HTYPE_SERVER, 0, NULL);
-	OCIHandleAlloc(envhp, (void**)&svchp, OCI_HTYPE_SVCCTX, 0, NULL);
-	
-	/* Attach to server */
-	if (OCIServerAttach(srvhp, errhp, (text*)connStr, strlen(connStr), OCI_DEFAULT) != OCI_SUCCESS) {
+
+	status = OCILogon(envhp, errhp, &svchp,
+		(text*)user, (ub4)strlen(user),
+		(text*)pass, (ub4)strlen(pass),
+		(text*)connStr, (ub4)strlen(connStr));
+	if (!ociOk(status) || svchp == NULL) {
+		ociPrintError(errhp, "logon failed");
 		OCIHandleFree(errhp, OCI_HTYPE_ERROR);
 		OCIHandleFree(envhp, OCI_HTYPE_ENV);
 		return NULL;
 	}
-	
-	/* Set server in service context */
-	OCIAttrSet(svchp, OCI_HTYPE_SVCCTX, srvhp, 0, OCI_ATTR_SERVER, errhp);
-	
-	/* Allocate and initialize session */
-	OCIHandleAlloc(envhp, (void**)&authp, OCI_HTYPE_SESSION, 0, NULL);
-	OCIAttrSet(authp, OCI_HTYPE_SESSION, user, strlen(user), OCI_ATTR_USERNAME, errhp);
-	OCIAttrSet(authp, OCI_HTYPE_SESSION, pass, strlen(pass), OCI_ATTR_PASSWORD, errhp);
-	
-	/* Begin session */
-	if (OCISessionBegin(svchp, errhp, authp, OCI_CRED_RDBMS, OCI_DEFAULT) != OCI_SUCCESS) {
-		OCIServerDetach(srvhp, errhp, OCI_DEFAULT);
+
+	dbConn = malloc(sizeof(DbConnection));
+	if (dbConn == NULL) {
+		OCILogoff(svchp, errhp);
 		OCIHandleFree(errhp, OCI_HTYPE_ERROR);
 		OCIHandleFree(envhp, OCI_HTYPE_ENV);
 		return NULL;
 	}
-	
-	/* Set session in service context */
-	OCIAttrSet(svchp, OCI_HTYPE_SVCCTX, authp, 0, OCI_ATTR_SESSION, errhp);
-	
-	DbConnection* dbConn = malloc(sizeof(DbConnection));
 	dbConn->type = DB_TYPE_ORACLE;
 	dbConn->handle = envhp;
 	dbConn->conn = svchp;
@@ -4613,6 +4706,25 @@ static Value dbConnectNative(int argCount, Value* args) {
 	#endif
 	
 	if (conn == NULL) {
+		if (strcmp(driver, "oracle") == 0) {
+#ifndef DB_ORACLE
+			fprintf(stderr, "dbConnect: Oracle support is not compiled in (rebuild with make USE_ORACLE=1)\n");
+#endif
+		} else if (strcmp(driver, "sqlite") == 0) {
+#ifndef DB_SQLITE
+			fprintf(stderr, "dbConnect: SQLite support is not compiled in (rebuild with make USE_SQLITE=1)\n");
+#endif
+		} else if (strcmp(driver, "postgres") == 0 || strcmp(driver, "postgresql") == 0) {
+#ifndef DB_POSTGRES
+			fprintf(stderr, "dbConnect: PostgreSQL support is not compiled in (rebuild with make USE_POSTGRES=1)\n");
+#endif
+		} else if (strcmp(driver, "mysql") == 0) {
+#ifndef DB_MYSQL
+			fprintf(stderr, "dbConnect: MySQL support is not compiled in (rebuild with make USE_MYSQL=1)\n");
+#endif
+		} else {
+			fprintf(stderr, "dbConnect: unknown driver '%s'\n", driver);
+		}
 		return NIL_VAL;
 	}
 	
@@ -4805,81 +4917,126 @@ static Value dbQueryOracle(DbConnection* dbConn, const char* sql) {
 	OCISvcCtx* svchp = (OCISvcCtx*)dbConn->conn;
 	OCIError* errhp = (OCIError*)dbConn->err;
 	OCIStmt* stmthp = NULL;
-	
-	/* Allocate statement handle */
-	if (OCIHandleAlloc(envhp, (void**)&stmthp, OCI_HTYPE_STMT, 0, NULL) != OCI_SUCCESS) {
-		return NIL_VAL;
-	}
-	
-	/* Prepare statement */
-	if (OCIStmtPrepare(stmthp, errhp, (text*)sql, strlen(sql), 
-	                   OCI_NTV_SYNTAX, OCI_DEFAULT) != OCI_SUCCESS) {
-		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-		return NIL_VAL;
-	}
-	
-	/* Execute statement */
-	if (OCIStmtExecute(svchp, stmthp, errhp, 0, 0, NULL, NULL, OCI_DEFAULT) != OCI_SUCCESS) {
-		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-		return NIL_VAL;
-	}
-	
-	/* Get column count */
+	ub2 stmtType = 0;
+	ub4 iters;
 	ub4 colCount = 0;
+	char** colNames = NULL;
+	char** colData = NULL;
+	ub2* colSizes = NULL;
+	OCIDefine** defnpp = NULL;
+	ObjArray* resultArray;
+	sword rc;
+	ub4 i;
+
+	if (!ociOk(OCIHandleAlloc(envhp, (void**)&stmthp, OCI_HTYPE_STMT, 0, NULL))) {
+		ociPrintError(errhp, "could not allocate statement handle");
+		return NIL_VAL;
+	}
+
+	if (!ociOk(OCIStmtPrepare(stmthp, errhp, (text*)sql, (ub4)strlen(sql),
+	                          OCI_NTV_SYNTAX, OCI_DEFAULT))) {
+		ociPrintError(errhp, "prepare failed");
+		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		return NIL_VAL;
+	}
+
+	OCIAttrGet(stmthp, OCI_HTYPE_STMT, &stmtType, 0, OCI_ATTR_STMT_TYPE, errhp);
+	/* SELECT uses 0 (describe only); DML/DDL must execute at least once. */
+	iters = (stmtType == OCI_STMT_SELECT) ? 0 : 1;
+
+	if (!ociOk(OCIStmtExecute(svchp, stmthp, errhp, iters, 0, NULL, NULL, OCI_DEFAULT))) {
+		ociPrintError(errhp, "execute failed");
+		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		return NIL_VAL;
+	}
+
+	if (stmtType != OCI_STMT_SELECT) {
+		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		return OBJ_VAL(newArray());
+	}
+
 	OCIAttrGet(stmthp, OCI_HTYPE_STMT, &colCount, 0, OCI_ATTR_PARAM_COUNT, errhp);
-	
-	/* Define output buffers dynamically */
-	char** colNames = malloc(colCount * sizeof(char*));
-	char** colData = malloc(colCount * sizeof(char*));
-	ub2* colSizes = malloc(colCount * sizeof(ub2));
-	OCIDefine** defnpp = malloc(colCount * sizeof(OCIDefine*));
-	
-	for (ub4 i = 1; i <= colCount; i++) {
+	if (colCount == 0) {
+		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		return OBJ_VAL(newArray());
+	}
+
+	colNames = calloc(colCount, sizeof(char*));
+	colData = calloc(colCount, sizeof(char*));
+	colSizes = calloc(colCount, sizeof(ub2));
+	defnpp = calloc(colCount, sizeof(OCIDefine*));
+	if (colNames == NULL || colData == NULL || colSizes == NULL || defnpp == NULL) {
+		free(colNames);
+		free(colData);
+		free(colSizes);
+		free(defnpp);
+		OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+		return NIL_VAL;
+	}
+
+	for (i = 1; i <= colCount; i++) {
 		OCIParam* colParam = NULL;
 		text* colName = NULL;
 		ub4 colNameLen = 0;
-		
+
 		OCIParamGet(stmthp, OCI_HTYPE_STMT, errhp, (void**)&colParam, i);
 		OCIAttrGet(colParam, OCI_DTYPE_PARAM, &colName, &colNameLen, OCI_ATTR_NAME, errhp);
-		
-		colNames[i-1] = malloc(colNameLen + 1);
-		strncpy(colNames[i-1], (char*)colName, colNameLen);
-		colNames[i-1][colNameLen] = '\0';
-		
-		colData[i-1] = malloc(4096);  /* Max column size */
-		colSizes[i-1] = 4096;
-		
-		OCIDefineByPos(stmthp, &defnpp[i-1], errhp, i, colData[i-1], 
-		               colSizes[i-1], SQLT_STR, NULL, NULL, NULL, OCI_DEFAULT);
+
+		colNames[i - 1] = malloc(colNameLen + 1);
+		colData[i - 1] = malloc(4096);
+		if (colNames[i - 1] == NULL || colData[i - 1] == NULL) {
+			for (ub4 j = 0; j < colCount; j++) {
+				free(colNames[j]);
+				free(colData[j]);
+			}
+			free(colNames);
+			free(colData);
+			free(colSizes);
+			free(defnpp);
+			OCIHandleFree(stmthp, OCI_HTYPE_STMT);
+			return NIL_VAL;
+		}
+		memcpy(colNames[i - 1], colName, colNameLen);
+		colNames[i - 1][colNameLen] = '\0';
+		colData[i - 1][0] = '\0';
+		colSizes[i - 1] = 4096;
+
+		OCIDefineByPos(stmthp, &defnpp[i - 1], errhp, i, colData[i - 1],
+		               colSizes[i - 1], SQLT_STR, NULL, NULL, NULL, OCI_DEFAULT);
 	}
-	
-	/* Build result array */
-	ObjArray* resultArray = newArray();
-	push(OBJ_VAL(resultArray));  /* Protect from GC */
-	
-	/* Fetch rows */
-	sword rc;
-	while ((rc = OCIStmtFetch2(stmthp, errhp, 1, OCI_FETCH_NEXT, 0, OCI_DEFAULT)) == OCI_SUCCESS) {
+
+	resultArray = newArray();
+	push(OBJ_VAL(resultArray));
+
+	while ((rc = OCIStmtFetch2(stmthp, errhp, 1, OCI_FETCH_NEXT, 0, OCI_DEFAULT)), ociOk(rc)) {
 		ObjInstance* row = newInstance(NULL);
-		push(OBJ_VAL(row));  /* Protect from GC */
-		
-		for (ub4 i = 0; i < colCount; i++) {
-			ObjString* key = copyString(colNames[i], strlen(colNames[i]));
-			Value val = OBJ_VAL(copyString(colData[i], strlen(colData[i])));
+		push(OBJ_VAL(row));
+
+		for (i = 0; i < colCount; i++) {
+			ObjString* key = copyString(colNames[i], (int)strlen(colNames[i]));
+			Value val = OBJ_VAL(copyString(colData[i], (int)strlen(colData[i])));
 			tableSet(&row->fields, key, val);
 		}
-		
-	writeArray(resultArray, OBJ_VAL(row));
+
+		writeArray(resultArray, OBJ_VAL(row));
+		pop();
+	}
+
+	if (rc != OCI_NO_DATA && !ociOk(rc)) {
+		ociPrintError(errhp, "fetch failed");
+	}
+
+	for (i = 0; i < colCount; i++) {
+		free(colNames[i]);
 		free(colData[i]);
 	}
 	free(colNames);
 	free(colData);
 	free(colSizes);
 	free(defnpp);
-	
+
 	OCIHandleFree(stmthp, OCI_HTYPE_STMT);
-	Value result = pop();  /* Pop resultArray - returns the value */
-	return result;
+	return pop();
 }
 #endif
 
@@ -4967,15 +5124,17 @@ static Value dbCloseNative(int argCount, Value* args) {
 		OCIEnv* envhp = (OCIEnv*)conn->handle;
 		OCISvcCtx* svchp = (OCISvcCtx*)conn->conn;
 		OCIError* errhp = (OCIError*)conn->err;
-		
-		/* End session and detach from server */
-		OCISessionEnd(svchp, errhp, NULL, OCI_DEFAULT);
-		OCIServerDetach(NULL, errhp, OCI_DEFAULT);
-		
-		/* Free handles */
-		OCIHandleFree(errhp, OCI_HTYPE_ERROR);
-		OCIHandleFree(envhp, OCI_HTYPE_ENV);
-		
+
+		if (svchp != NULL && errhp != NULL) {
+			OCILogoff(svchp, errhp);
+		}
+		if (errhp != NULL) {
+			OCIHandleFree(errhp, OCI_HTYPE_ERROR);
+		}
+		if (envhp != NULL) {
+			OCIHandleFree(envhp, OCI_HTYPE_ENV);
+		}
+
 		free(conn);
 		return BOOL_VAL(true);
 	}

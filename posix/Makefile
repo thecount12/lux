@@ -12,8 +12,10 @@ USE_POSTGRES ?= 0
 USE_MYSQL ?= 0
 USE_ORACLE ?= 0
 
-# Oracle Instant Client paths (override with ORACLE_HOME=/path/to/instantclient)
-ORACLE_HOME ?= /opt/oracle/instantclient_21_1
+# Oracle Instant Client root: parent of sdk/ and libclntsh, not the sdk/ subdirectory.
+# Override with ORACLE_HOME=/path/to/instantclient
+#ORACLE_HOME ?= /opt/oracle/instantclient_21_1
+ORACLE_HOME ?= /usr/local/opt/oracle
 
 # Database flags
 DB_FLAGS =
@@ -84,6 +86,14 @@ ifeq ($(USE_ORACLE),1)
         ORACLE_INC := $(ORACLE_HOME)/include
         ifneq ($(wildcard $(ORACLE_HOME)/lib/libclntsh.so*),)
             ORACLE_LIB := $(ORACLE_HOME)/lib
+        else ifneq ($(wildcard $(ORACLE_HOME)/lib/libclntsh.dylib),)
+            ORACLE_LIB := $(ORACLE_HOME)/lib
+        else ifneq ($(wildcard $(ORACLE_HOME)/libclntsh.dylib),)
+            ORACLE_LIB := $(ORACLE_HOME)
+        else ifneq ($(wildcard $(ORACLE_HOME)/../libclntsh.dylib),)
+            ORACLE_LIB := $(ORACLE_HOME)/..
+        else ifneq ($(wildcard $(ORACLE_HOME)/libclntsh.so*),)
+            ORACLE_LIB := $(ORACLE_HOME)
         else
             ORACLE_LIB := $(ORACLE_HOME)
         endif
@@ -93,6 +103,15 @@ ifeq ($(USE_ORACLE),1)
     endif
     ifeq ($(wildcard $(ORACLE_INC)/oci.h),)
         $(error Oracle Instant Client SDK not found (oci.h). Install Basic+SDK, or set ORACLE_HOME. Search: find /usr /opt $(HOME) -name oci.h 2>/dev/null)
+    endif
+    ifeq ($(UNAME_S),Darwin)
+        ifeq ($(wildcard $(ORACLE_LIB)/libclntsh.dylib)$(wildcard $(ORACLE_LIB)/libclntsh.dylib.*),)
+            $(error Oracle Instant Client Basic not found (libclntsh.dylib) in $(ORACLE_LIB). The SDK package is headers only. Install Basic for the same CPU arch as lux, unzip/copy next to sdk/, then: make USE_ORACLE=1 ORACLE_HOME=$(ORACLE_HOME))
+        endif
+    else
+        ifeq ($(wildcard $(ORACLE_LIB)/libclntsh.so)$(wildcard $(ORACLE_LIB)/libclntsh.so.*),)
+            $(error Oracle Instant Client Basic not found (libclntsh.so) in $(ORACLE_LIB). The SDK package is headers only. Install Basic+SDK and set ORACLE_HOME to the Instant Client root.)
+        endif
     endif
     DB_FLAGS += -DDB_ORACLE -I$(ORACLE_INC)
     DB_LDFLAGS += -L$(ORACLE_LIB) -lclntsh -Wl,-rpath,$(ORACLE_LIB)

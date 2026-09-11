@@ -56,6 +56,22 @@ make USE_ORACLE=1 ORACLE_HOME=/opt/oracle/instantclient_21_15   # match the unzi
 ```
 Without the SDK, omit Oracle: `make USE_SQLITE=1 USE_POSTGRES=1 USE_MYSQL=1`
 
+**macOS:** Instant Client **Basic and SDK** must match the CPU arch of `lux`. The SDK dmg is headers only (`oci.h`); without Basic there is no `libclntsh.dylib` and `USE_ORACLE=1` cannot link.
+
+The Darwin Makefile currently forces **x86_64** (`-arch x86_64`, Rosetta). If you installed `instantclient-*-macos.arm64-*.dmg`, either keep `lux` x86_64 and install **Intel** Basic+SDK (`macos.x64`), or build `lux` native arm64 and install **arm64** Basic next to the SDK.
+
+Put both packages in the same Instant Client root so you have `sdk/include/oci.h` **and** `libclntsh.dylib`. Oracle Database Free in Docker uses PDB service `FREEPDB1`:
+
+```lux
+var conn = dbConnect("oracle", "system/mypass123@127.0.0.1:1521/FREEPDB1");
+```
+
+```bash
+cd posix
+make clean
+make USE_ORACLE=1 ORACLE_HOME=/usr/local/opt/oracle
+```
+
 ### 2. Enable Databases in Makefile
 
 Open `posix/Makefile` and set the databases you want to use:
@@ -93,7 +109,8 @@ var conn = dbConnect("postgres", "host=localhost dbname=mydb user=myuser passwor
 var conn = dbConnect("mysql", "host=localhost;user=root;password=root;database=mydb");
 
 // Oracle - user/pass@host:port/service format
-var conn = dbConnect("oracle", "myuser/mypass@localhost:1521/XEPDB1");
+// Oracle Database Free (docker): use FREEPDB1 (PDB), not FREE (CDB)
+var conn = dbConnect("oracle", "system/mypass123@localhost:1521/FREEPDB1");
 ```
 
 ### Execute Queries
@@ -259,7 +276,9 @@ If found, rebuild with `ORACLE_HOME` pointing at the Instant Client directory (t
 - Verify the database server is running
 - Check connection credentials
 - Confirm network/firewall settings
-- For Oracle: Ensure `ORACLE_HOME` is set correctly
+- For Oracle: rebuild with `make USE_ORACLE=1` (`USE_ORACLE` defaults to 0; otherwise `dbConnect("oracle", ...)` returns nil)
+- For Oracle: `ORACLE_HOME` must be the Instant Client **root** (parent of `sdk/` and `libclntsh`), not `.../sdk`
+- For Oracle Database Free (docker): connect to `FREEPDB1`, e.g. `system/mypass123@host:1521/FREEPDB1`. `FREE` is the CDB service.
 
 ### Linker errors during compilation
 
