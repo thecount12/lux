@@ -151,7 +151,8 @@ fun oracleExample() {
     
     // Connect to Oracle database
     // Format: "username/password@host:port/service"
-    var conn = dbConnect("oracle", "myuser/mypass@localhost:1521/XEPDB1");
+    // Oracle Database Free (docker): CDB service is FREE, app PDB is FREEPDB1
+    var conn = dbConnect("oracle", "system/mypass123@10.0.0.22:1521/FREEPDB1");
     
     if (conn == nil) {
         print("Failed to connect to Oracle");

@@ -1,0 +1,77 @@
+# Lux custom-runtime Lambda with Oracle (OCI / Instant Client).
+# From repo root:
+#   docker build -f Dockerfile-linux-oracle -t lux-lambda-oracle .
+#   docker run --rm -p 9000:8080 -e DB_URL='system/pass@host:1521/FREEPDB1' lux-lambda-oracle
+#
+# Default is x86_64 Lambda. For arm64, pass LAMBDA_PLATFORM and Instant Client URLs:
+#   docker build --build-arg LAMBDA_PLATFORM=linux/arm64 \
+#     --build-arg ORACLE_BASICLITE_URL=https://download.oracle.com/otn_software/linux/instantclient/23263000/instantclient-basiclite-linux.arm64-23.26.3.0.0.zip \
+#     --build-arg ORACLE_SDK_URL=https://download.oracle.com/otn_software/linux/instantclient/23263000/instantclient-sdk-linux.arm64-23.26.3.0.0.zip \
+#     -f Dockerfile-linux-oracle -t lux-lambda-oracle .
+
+ARG LAMBDA_PLATFORM=linux/amd64
+
+FROM --platform=$LAMBDA_PLATFORM amazonlinux:2023 AS build
+
+RUN dnf -y update \
+    && dnf -y install gcc make curl-devel openssl-devel libaio unzip \
+    && dnf clean all
+
+# Instant Client Basic Light + SDK (headers). Override ARGs for newer versions or arm64.
+ARG ORACLE_BASICLITE_URL=https://download.oracle.com/otn_software/linux/instantclient/23263000/instantclient-basiclite-linux.x64-23.26.3.0.0.zip
+ARG ORACLE_SDK_URL=https://download.oracle.com/otn_software/linux/instantclient/23263000/instantclient-sdk-linux.x64-23.26.3.0.0.zip
+
+RUN mkdir -p /opt/oracle && cd /opt/oracle \
+    && curl -fsSL -o basiclite.zip "$ORACLE_BASICLITE_URL" \
+    && curl -fsSL -o sdk.zip "$ORACLE_SDK_URL" \
+    && unzip -q basiclite.zip \
+    && unzip -q sdk.zip \
+    && rm -f basiclite.zip sdk.zip \
+    && ln -sfn "$(ls -d /opt/oracle/instantclient_*)" /opt/oracle/instantclient \
+    && cd /opt/oracle/instantclient \
+    && if [ ! -e libclntsh.so ]; then ln -s "$(ls libclntsh.so.[0-9]* | head -1)" libclntsh.so; fi
+
+WORKDIR /src
+COPY posix/ ./posix/
+RUN make -C posix clean \
+    && make -C posix USE_ORACLE=1 ORACLE_HOME=/opt/oracle/instantclient
+
+RUN mkdir -p /src/lux-libs \
+    && LD_LIBRARY_PATH=/opt/oracle/instantclient ldd /src/posix/lux | awk '/=> \// { print $3 }' | while read -r lib; do \
+         case "$lib" in \
+           */ld-linux*|*/libc.so*|*/libm.so*|*/libpthread.so*|*/libdl.so*|*/librt.so*|*/libresolv.so*) \
+             continue ;; \
+         esac; \
+         cp -a "$lib" /src/lux-libs/; \
+       done
+
+ARG LAMBDA_PLATFORM=linux/amd64
+FROM --platform=$LAMBDA_PLATFORM public.ecr.aws/lambda/provided:al2023
+
+WORKDIR /var/task
+
+COPY --from=build /src/posix/lux /var/task/lux
+COPY --from=build /src/lux-libs /var/task/lib64
+COPY --from=build /opt/oracle/instantclient /opt/oracle/instantclient
+ENV LD_LIBRARY_PATH=/opt/oracle/instantclient:/var/task/lib64
+ENV ORACLE_HOME=/opt/oracle/instantclient
+ENV DB_DRIVER=oracle
+ENV DB_HEALTH_SQL=SELECT 1 FROM DUAL
+
+RUN rm -rf /var/runtime/bootstrap
+COPY lambda/bootstrap /var/runtime/bootstrap
+RUN chmod 755 /var/runtime/bootstrap \
+    && ln -sf /var/runtime/bootstrap /var/task/bootstrap \
+    && chmod 755 /var/task/lux
+
+COPY lambda-oracle/handler.lux /var/task/handler.lux
+COPY lambda-oracle/handler.lux /var/runtime/handler.lux
+COPY lib/mangum.lux /var/task/lib/mangum.lux
+COPY lib/mangum.lux /var/runtime/lib/mangum.lux
+RUN chmod a+rX /var/task /var/runtime \
+    && chmod a+r /var/task/handler.lux /var/runtime/handler.lux \
+       /var/task/lib/mangum.lux /var/runtime/lib/mangum.lux \
+    && chmod a+rx /var/task/lux \
+    && test -f /var/task/handler.lux && test -f /var/task/lib/mangum.lux && test -x /var/task/lux
+
+CMD ["/var/runtime/bootstrap"]

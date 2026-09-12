@@ -1,0 +1,56 @@
+# Lux custom-runtime Lambda with PostgreSQL (libpq).
+# From repo root:
+#   docker build -f Dockerfile-linux-postgres -t lux-lambda-postgres .
+#   docker run --rm -p 9000:8080 \
+#     -e DB_URL='host=host.docker.internal dbname=app user=app password=secret' \
+#     lux-lambda-postgres
+
+ARG LAMBDA_PLATFORM=linux/amd64
+
+FROM --platform=$LAMBDA_PLATFORM amazonlinux:2023 AS build
+
+RUN dnf -y update \
+    && dnf -y install gcc make curl-devel openssl-devel libpq postgresql15-devel \
+    && dnf clean all
+
+WORKDIR /src
+COPY posix/ ./posix/
+RUN make -C posix clean && make -C posix USE_POSTGRES=1
+
+RUN mkdir -p /src/lux-libs \
+    && ldd /src/posix/lux | awk '/=> \// { print $3 }' | while read -r lib; do \
+         case "$lib" in \
+           */ld-linux*|*/libc.so*|*/libm.so*|*/libpthread.so*|*/libdl.so*|*/librt.so*|*/libresolv.so*) \
+             continue ;; \
+         esac; \
+         cp -a "$lib" /src/lux-libs/; \
+       done
+
+ARG LAMBDA_PLATFORM=linux/amd64
+FROM --platform=$LAMBDA_PLATFORM public.ecr.aws/lambda/provided:al2023
+
+WORKDIR /var/task
+
+COPY --from=build /src/posix/lux /var/task/lux
+COPY --from=build /src/lux-libs /var/task/lib64
+ENV LD_LIBRARY_PATH=/var/task/lib64
+ENV DB_DRIVER=postgres
+ENV DB_HEALTH_SQL=SELECT 1
+
+RUN rm -rf /var/runtime/bootstrap
+COPY lambda/bootstrap /var/runtime/bootstrap
+RUN chmod 755 /var/runtime/bootstrap \
+    && ln -sf /var/runtime/bootstrap /var/task/bootstrap \
+    && chmod 755 /var/task/lux
+
+COPY lambda-oracle/handler.lux /var/task/handler.lux
+COPY lambda-oracle/handler.lux /var/runtime/handler.lux
+COPY lib/mangum.lux /var/task/lib/mangum.lux
+COPY lib/mangum.lux /var/runtime/lib/mangum.lux
+RUN chmod a+rX /var/task /var/runtime \
+    && chmod a+r /var/task/handler.lux /var/runtime/handler.lux \
+       /var/task/lib/mangum.lux /var/runtime/lib/mangum.lux \
+    && chmod a+rx /var/task/lux \
+    && test -f /var/task/handler.lux && test -f /var/task/lib/mangum.lux && test -x /var/task/lux
+
+CMD ["/var/runtime/bootstrap"]

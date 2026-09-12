@@ -10,24 +10,65 @@ By default, **no database support is compiled in**. This keeps the Lux binary mi
 
 ### 1. Install Database Libraries (as needed)
 
-**SQLite** (macOS with Homebrew):
+Install only the client **headers and libs** for the backends you enable. Enabling `USE_POSTGRES=1` without `libpq` headers fails with `libpq-fe.h: No such file or directory`.
+
+**Ubuntu/Debian** (`apt`):
 ```bash
-brew install sqlite3
+sudo apt-get update
+sudo apt-get install libsqlite3-dev libpq-dev libmysqlclient-dev
 ```
 
-**PostgreSQL** (macOS with Homebrew):
+**Amazon Linux / Fedora / RHEL** (`dnf` / `yum`):
 ```bash
-brew install postgresql
+sudo dnf install sqlite-devel libpq-devel mysql-devel
+# Older Amazon Linux 2:
+# sudo yum install sqlite-devel postgresql-devel mysql-devel
 ```
 
-**MySQL** (macOS with Homebrew):
+**macOS** (Homebrew):
 ```bash
-brew install mysql
+brew install sqlite3 postgresql mysql
 ```
 
-**Oracle** (requires Oracle Instant Client):
-- Download from: https://www.oracle.com/database/technologies/instant-client.html
-- Install to `/opt/oracle/instantclient_21_1` (or adjust `ORACLE_HOME` in Makefile)
+**Oracle** (requires Oracle Instant Client, not a distro `-dev` package):
+
+`oci.h` is **not** in apt as `libpq-dev` is. You need Instant Client **Basic + SDK**.
+
+1. See if it is already on the machine:
+```bash
+find /usr /opt "$HOME" -name oci.h 2>/dev/null
+find /usr /opt "$HOME" -name 'libclntsh.so*' 2>/dev/null
+```
+2. If you find it, pass that tree into `make`:
+```bash
+# Zip layout (oci.h under sdk/include):
+make USE_ORACLE=1 ORACLE_HOME=/path/to/instantclient_21_15
+# RPM/deb layout is auto-detected under /usr/include/oracle/*/client64
+```
+3. If it is missing, unzip Basic + SDK from
+   https://www.oracle.com/database/technologies/instant-client.html
+```bash
+sudo mkdir -p /opt/oracle
+sudo unzip instantclient-basic-linux.x64-*.zip -d /opt/oracle
+sudo unzip instantclient-sdk-linux.x64-*.zip -d /opt/oracle
+ls /opt/oracle/instantclient_*/sdk/include/oci.h
+make USE_ORACLE=1 ORACLE_HOME=/opt/oracle/instantclient_21_15   # match the unzipped dir
+```
+Without the SDK, omit Oracle: `make USE_SQLITE=1 USE_POSTGRES=1 USE_MYSQL=1`
+
+**macOS:** Instant Client **Basic and SDK** must match the CPU arch of `lux` (`uname -m`, or `ARCH=arm64` / `ARCH=x86_64`). The SDK dmg is headers only (`oci.h`); without Basic there is no `libclntsh.dylib` and `USE_ORACLE=1` cannot link. `make` builds for the host arch (Apple Silicon Homebrew OpenSSL is `/opt/homebrew/opt/openssl@3`, Intel is `/usr/local/opt/openssl@3`).
+
+Put both packages in the same Instant Client root so you have `sdk/include/oci.h` **and** `libclntsh.dylib`. Oracle Database Free in Docker uses PDB service `FREEPDB1`:
+
+```lux
+var conn = dbConnect("oracle", "system/mypass123@127.0.0.1:1521/FREEPDB1");
+```
+
+```bash
+cd posix
+make clean
+make USE_ORACLE=1 ORACLE_HOME=/usr/local/opt/oracle
+```
 
 ### 2. Enable Databases in Makefile
 
@@ -66,7 +107,8 @@ var conn = dbConnect("postgres", "host=localhost dbname=mydb user=myuser passwor
 var conn = dbConnect("mysql", "host=localhost;user=root;password=root;database=mydb");
 
 // Oracle - user/pass@host:port/service format
-var conn = dbConnect("oracle", "myuser/mypass@localhost:1521/XEPDB1");
+// Oracle Database Free (docker): use FREEPDB1 (PDB), not FREE (CDB)
+var conn = dbConnect("oracle", "system/mypass123@localhost:1521/FREEPDB1");
 ```
 
 ### Execute Queries
@@ -206,12 +248,35 @@ Database connections are **not thread-safe**. Create separate connections per th
 
 ## Troubleshooting
 
+### `libpq-fe.h: No such file or directory` (header is installed)
+
+Debian/Ubuntu install the header at `/usr/include/postgresql/libpq-fe.h`, not `/usr/include/libpq-fe.h`. Confirm:
+
+```bash
+ls /usr/include/postgresql/libpq-fe.h
+pkg-config --cflags libpq
+```
+
+The POSIX `Makefile` adds that include path via `pkg-config` (or `-I/usr/include/postgresql`). Rebuild after updating `posix/Makefile`.
+
+### `oci.h: No such file or directory`
+
+The default path `/opt/oracle/instantclient_21_1/sdk/include/oci.h` is not present. Instant Client is not an apt package. Search first:
+
+```bash
+find /usr /opt "$HOME" -name oci.h 2>/dev/null
+```
+
+If found, rebuild with `ORACLE_HOME` pointing at the Instant Client directory (the parent of `sdk/` or `libclntsh.so`). If not found, either install Basic+SDK or drop `USE_ORACLE=1`.
+
 ### "Failed to connect" error
 
 - Verify the database server is running
 - Check connection credentials
 - Confirm network/firewall settings
-- For Oracle: Ensure `ORACLE_HOME` is set correctly
+- For Oracle: rebuild with `make USE_ORACLE=1` (`USE_ORACLE` defaults to 0; otherwise `dbConnect("oracle", ...)` returns nil)
+- For Oracle: `ORACLE_HOME` must be the Instant Client **root** (parent of `sdk/` and `libclntsh`), not `.../sdk`
+- For Oracle Database Free (docker): connect to `FREEPDB1`, e.g. `system/mypass123@host:1521/FREEPDB1`. `FREE` is the CDB service.
 
 ### Linker errors during compilation
 

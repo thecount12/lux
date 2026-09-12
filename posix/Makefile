@@ -1,5 +1,7 @@
-# Auto-detect OS
+# Auto-detect OS and CPU (override with ARCH=arm64 or ARCH=x86_64)
 UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+ARCH ?= $(UNAME_M)
 
 # Define compiler and flags
 CC ?= cc
@@ -12,10 +14,10 @@ USE_POSTGRES ?= 0
 USE_MYSQL ?= 0
 USE_ORACLE ?= 0
 
-# Oracle Instant Client paths (adjust as needed)
-ORACLE_HOME ?= /opt/oracle/instantclient_21_1
-ORACLE_INC := $(ORACLE_HOME)/sdk/include
-ORACLE_LIB := $(ORACLE_HOME)
+# Oracle Instant Client root: parent of sdk/ and libclntsh, not the sdk/ subdirectory.
+# Override with ORACLE_HOME=/path/to/instantclient
+#ORACLE_HOME ?= /opt/oracle/instantclient_21_1
+ORACLE_HOME ?= /usr/local/opt/oracle
 
 # Database flags
 DB_FLAGS =
@@ -28,22 +30,105 @@ LDFLAGS = -lcurl -lcrypto -lm $(DB_LDFLAGS)
 
 ifeq ($(USE_SQLITE),1)
     DB_FLAGS += -DDB_SQLITE
-    DB_LDFLAGS += -lsqlite3
+    SQLITE_CFLAGS := $(shell pkg-config --cflags sqlite3 2>/dev/null)
+    SQLITE_LIBS := $(shell pkg-config --libs sqlite3 2>/dev/null)
+    ifneq ($(SQLITE_CFLAGS),)
+        DB_FLAGS += $(SQLITE_CFLAGS)
+    endif
+    ifneq ($(SQLITE_LIBS),)
+        DB_LDFLAGS += $(SQLITE_LIBS)
+    else
+        DB_LDFLAGS += -lsqlite3
+    endif
 endif
 
 ifeq ($(USE_POSTGRES),1)
     DB_FLAGS += -DDB_POSTGRES
-    DB_LDFLAGS += -lpq
+    # Debian/Ubuntu install libpq-fe.h under /usr/include/postgresql, not /usr/include.
+    PG_CFLAGS := $(shell pkg-config --cflags libpq 2>/dev/null)
+    PG_LIBS := $(shell pkg-config --libs libpq 2>/dev/null)
+    ifneq ($(PG_CFLAGS),)
+        DB_FLAGS += $(PG_CFLAGS)
+    else ifneq ($(wildcard /usr/include/postgresql/libpq-fe.h),)
+        DB_FLAGS += -I/usr/include/postgresql
+    else ifneq ($(wildcard /usr/include/pgsql/libpq-fe.h),)
+        DB_FLAGS += -I/usr/include/pgsql
+    endif
+    ifneq ($(PG_LIBS),)
+        DB_LDFLAGS += $(PG_LIBS)
+    else
+        DB_LDFLAGS += -lpq
+    endif
 endif
 
 ifeq ($(USE_MYSQL),1)
     DB_FLAGS += -DDB_MYSQL
-    DB_LDFLAGS += -lmysqlclient
+    MYSQL_CFLAGS := $(shell mysql_config --cflags 2>/dev/null)
+    MYSQL_LIBS := $(shell mysql_config --libs 2>/dev/null)
+    ifeq ($(MYSQL_CFLAGS),)
+        MYSQL_CFLAGS := $(shell mariadb_config --cflags 2>/dev/null)
+        MYSQL_LIBS := $(shell mariadb_config --libs 2>/dev/null)
+    endif
+    ifeq ($(MYSQL_CFLAGS),)
+        MYSQL_CFLAGS := $(shell pkg-config --cflags mysqlclient 2>/dev/null)
+        MYSQL_LIBS := $(shell pkg-config --libs mysqlclient 2>/dev/null)
+    endif
+    ifneq ($(MYSQL_CFLAGS),)
+        DB_FLAGS += $(MYSQL_CFLAGS)
+    endif
+    ifneq ($(MYSQL_LIBS),)
+        DB_LDFLAGS += $(MYSQL_LIBS)
+    else
+        DB_LDFLAGS += -lmysqlclient
+    endif
 endif
 
 ifeq ($(USE_ORACLE),1)
+    # Zip Instant Client: $ORACLE_HOME/sdk/include/oci.h
+    # Some layouts: $ORACLE_HOME/include/oci.h
+    # RPM/deb: /usr/include/oracle/<ver>/client64/oci.h
+    ifneq ($(wildcard $(ORACLE_HOME)/sdk/include/oci.h),)
+        ORACLE_INC := $(ORACLE_HOME)/sdk/include
+        ORACLE_LIB := $(ORACLE_HOME)
+    else ifneq ($(wildcard $(ORACLE_HOME)/include/oci.h),)
+        ORACLE_INC := $(ORACLE_HOME)/include
+        ifneq ($(wildcard $(ORACLE_HOME)/lib/libclntsh.so*),)
+            ORACLE_LIB := $(ORACLE_HOME)/lib
+        else ifneq ($(wildcard $(ORACLE_HOME)/lib/libclntsh.dylib),)
+            ORACLE_LIB := $(ORACLE_HOME)/lib
+        else ifneq ($(wildcard $(ORACLE_HOME)/libclntsh.dylib),)
+            ORACLE_LIB := $(ORACLE_HOME)
+        else ifneq ($(wildcard $(ORACLE_HOME)/../libclntsh.dylib),)
+            ORACLE_LIB := $(ORACLE_HOME)/..
+        else ifneq ($(wildcard $(ORACLE_HOME)/libclntsh.so*),)
+            ORACLE_LIB := $(ORACLE_HOME)
+        else
+            ORACLE_LIB := $(ORACLE_HOME)
+        endif
+    else
+        ORACLE_INC := $(firstword $(wildcard /usr/include/oracle/*/client64 /usr/include/oracle/*/client))
+        ORACLE_LIB := $(firstword $(wildcard /usr/lib/oracle/*/client64/lib /usr/lib/oracle/*/client/lib))
+    endif
+    ifeq ($(wildcard $(ORACLE_INC)/oci.h),)
+        $(error Oracle Instant Client SDK not found (oci.h). Install Basic+SDK, or set ORACLE_HOME. Search: find /usr /opt $(HOME) -name oci.h 2>/dev/null)
+    endif
+    ifeq ($(UNAME_S),Darwin)
+        ifeq ($(wildcard $(ORACLE_LIB)/libclntsh.dylib)$(wildcard $(ORACLE_LIB)/libclntsh.dylib.*),)
+            $(error Oracle Instant Client Basic not found (libclntsh.dylib) in $(ORACLE_LIB). The SDK package is headers only. Install Basic for the same CPU arch as lux, unzip/copy next to sdk/, then: make USE_ORACLE=1 ORACLE_HOME=$(ORACLE_HOME))
+        endif
+        ORACLE_DYLIB_ARCH := $(shell lipo -archs $(ORACLE_LIB)/libclntsh.dylib 2>/dev/null)
+        ifneq ($(ORACLE_DYLIB_ARCH),)
+            ifeq ($(filter $(ARCH),$(ORACLE_DYLIB_ARCH)),)
+                $(error Oracle Instant Client at $(ORACLE_LIB) is '$(ORACLE_DYLIB_ARCH)' but lux is building for $(ARCH). Install Instant Client for $(ARCH), or rebuild with ARCH=$(firstword $(ORACLE_DYLIB_ARCH)) USE_ORACLE=1)
+            endif
+        endif
+    else
+        ifeq ($(wildcard $(ORACLE_LIB)/libclntsh.so)$(wildcard $(ORACLE_LIB)/libclntsh.so.*),)
+            $(error Oracle Instant Client Basic not found (libclntsh.so) in $(ORACLE_LIB). The SDK package is headers only. Install Basic+SDK and set ORACLE_HOME to the Instant Client root.)
+        endif
+    endif
     DB_FLAGS += -DDB_ORACLE -I$(ORACLE_INC)
-    DB_LDFLAGS += -L$(ORACLE_LIB) -lclntsh
+    DB_LDFLAGS += -L$(ORACLE_LIB) -lclntsh -Wl,-rpath,$(ORACLE_LIB)
 endif
 
 # OS-specific flags
@@ -53,9 +138,17 @@ ifeq ($(UNAME_S),Linux)
     LDFLAGS = -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),Darwin)
-    # macOS: Use Homebrew OpenSSL, compile for x86_64
-    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch x86_64 -I/usr/local/opt/openssl@3/include $(DB_FLAGS)
-    LDFLAGS = -arch x86_64 -L/usr/local/opt/openssl@3/lib -lcurl -lcrypto -lm $(DB_LDFLAGS)
+    # Native arch (arm64 or x86_64). Override with ARCH=...
+    ifeq ($(ARCH),arm64)
+        OPENSSL_PREFIX ?= $(firstword $(wildcard /opt/homebrew/opt/openssl@3 /usr/local/opt/openssl@3))
+    else
+        OPENSSL_PREFIX ?= $(firstword $(wildcard /usr/local/opt/openssl@3 /opt/homebrew/opt/openssl@3))
+    endif
+    ifeq ($(OPENSSL_PREFIX),)
+        OPENSSL_PREFIX := /usr/local/opt/openssl@3
+    endif
+    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch $(ARCH) -I$(OPENSSL_PREFIX)/include $(DB_FLAGS)
+    LDFLAGS = -arch $(ARCH) -L$(OPENSSL_PREFIX)/lib -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),OpenBSD)
     # OpenBSD: use ports-installed curl and OpenSSL under /usr/local.
