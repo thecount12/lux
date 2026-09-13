@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <sys/select.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <fcntl.h>
@@ -114,6 +115,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request with a JSON body."},
 	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
 	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request. Body may be a string, nil, Form, or parts array."},
+	{"httpStream", "httpStream(method, url, body, headers, onLine)", "HTTP request that calls onLine(line) for each response line (NDJSON). body and headers may be nil. Returns true or nil."},
 	{"httpPostForm", "httpPostForm(url, parts, [headers])", "POST multipart/form-data from a parts array or Form instance."},
 	{"httpServer", "httpServer(port)", "Start a simple HTTP server (legacy, built-in routes)."},
 	{"Server", "Server(port)", "Create HTTP server with routing, middleware, static files, and .handle() for Lambda."},
@@ -2685,6 +2687,233 @@ static Value httpRequestNative(int argCount, Value* args) {
 	return result;
 }
 
+static bool call(ObjClosure* closure, int argCount);
+static InterpretResult run(void);
+
+#define HTTP_STREAM_MAX_LINE (1024 * 1024)
+
+typedef struct {
+	ObjClosure* onLine;
+	char* buf;
+	int len;
+	int cap;
+	int aborted;
+	int failed;
+} HttpStreamState;
+
+static void httpStreamEmitLine(HttpStreamState* st, const char* line, int lineLen) {
+	Value* savedTop;
+	ObjString* s;
+	InterpretResult ir;
+	if (st == NULL || st->aborted || st->onLine == NULL)
+		return;
+	while (lineLen > 0 && line[lineLen - 1] == '\r')
+		lineLen--;
+	if (lineLen <= 0)
+		return;
+	savedTop = vm.stackTop;
+	s = copyString(line, lineLen);
+	push(OBJ_VAL(st->onLine));
+	push(OBJ_VAL(s));
+	if (!call(st->onLine, 1)) {
+		st->failed = 1;
+		st->aborted = 1;
+		vm.stackTop = savedTop;
+		return;
+	}
+	ir = run();
+	if (ir != INTERPRET_OK) {
+		st->failed = 1;
+		st->aborted = 1;
+		vm.stackTop = savedTop;
+		return;
+	}
+	if (vm.stackTop > savedTop) {
+		Value ret = vm.stackTop[-1];
+		if (IS_BOOL(ret) && !AS_BOOL(ret))
+			st->aborted = 1;
+	}
+	vm.stackTop = savedTop;
+}
+
+static void httpStreamFeed(HttpStreamState* st, const char* data, int n) {
+	int i;
+	if (st == NULL || data == NULL || n <= 0 || st->aborted)
+		return;
+	for (i = 0; i < n; i++) {
+		char c = data[i];
+		if (c == '\n') {
+			httpStreamEmitLine(st, st->buf, st->len);
+			st->len = 0;
+			if (st->aborted)
+				return;
+			continue;
+		}
+		if (st->len + 1 >= st->cap) {
+			int newCap = st->cap == 0 ? 256 : st->cap * 2;
+			char* nb;
+			if (newCap > HTTP_STREAM_MAX_LINE) {
+				st->aborted = 1;
+				st->failed = 1;
+				return;
+			}
+			nb = realloc(st->buf, (size_t)newCap);
+			if (nb == NULL) {
+				st->aborted = 1;
+				st->failed = 1;
+				return;
+			}
+			st->buf = nb;
+			st->cap = newCap;
+		}
+		st->buf[st->len++] = c;
+	}
+}
+
+static size_t streamWriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+	HttpStreamState* st = (HttpStreamState*)userp;
+	size_t realsize = size * nmemb;
+	if (st == NULL || st->aborted)
+		return 0;
+	httpStreamFeed(st, (const char*)contents, (int)realsize);
+	if (st->aborted)
+		return 0;
+	return realsize;
+}
+
+/* httpStream(method, url, body, headers, onLine) -> true or nil
+ * Calls onLine(line) for each NDJSON / SSE line (no trailing \\n).
+ * Empty lines are skipped. onLine returning false stops the stream.
+ * body and headers may be nil. */
+static Value httpStreamNative(int argCount, Value* args) {
+	char* method;
+	char* url;
+	char* body = NULL;
+	long bodyLen = 0;
+	int bodyOwned = 0;
+	int isMultipart = 0;
+	char contentTypeLine[160];
+	ObjInstance* headersObj = NULL;
+	ObjClosure* onLine;
+	CURL* curl;
+	struct curl_slist* headers = NULL;
+	CURLcode res;
+	HttpStreamState st;
+	int ok;
+
+	if (argCount != 5)
+		return NIL_VAL;
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_CLOSURE(args[4]))
+		return NIL_VAL;
+
+	method = AS_CSTRING(args[0]);
+	url = AS_CSTRING(args[1]);
+	onLine = AS_CLOSURE(args[4]);
+
+	if (!IS_NIL(args[2])) {
+		ObjArray* parts = multipartPartsFromValue(args[2]);
+		if (parts != NULL) {
+			MultipartBody mp;
+			if (!encodeMultipart(parts, &mp)) {
+				fprintf(stderr, "httpStream: multipart encode failed\n");
+				return NIL_VAL;
+			}
+			body = mp.data;
+			bodyLen = (long)mp.size;
+			bodyOwned = 1;
+			isMultipart = 1;
+			snprintf(contentTypeLine, sizeof(contentTypeLine),
+				"Content-Type: %s", mp.contentType);
+		} else if (IS_STRING(args[2])) {
+			body = AS_CSTRING(args[2]);
+			bodyLen = AS_STRING(args[2])->length;
+		} else {
+			return NIL_VAL;
+		}
+	}
+
+	if (!IS_NIL(args[3])) {
+		if (!IS_INSTANCE(args[3])) {
+			if (bodyOwned)
+				free(body);
+			return NIL_VAL;
+		}
+		headersObj = AS_INSTANCE(args[3]);
+	}
+
+	memset(&st, 0, sizeof(st));
+	st.onLine = onLine;
+
+	curl = curl_easy_init();
+	if (!curl) {
+		if (bodyOwned)
+			free(body);
+		return NIL_VAL;
+	}
+
+	if (strcmp(method, "GET") == 0) {
+		/* default */
+	} else if (strcmp(method, "POST") == 0) {
+		curl_easy_setopt(curl, CURLOPT_POST, 1L);
+	} else if (strcmp(method, "PUT") == 0) {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+	} else if (strcmp(method, "DELETE") == 0) {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+	} else if (strcmp(method, "HEAD") == 0) {
+		curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+	} else {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
+	}
+
+	if (body != NULL) {
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, bodyLen);
+	}
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamWriteCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&st);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "lux/1.0");
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
+	curl_easy_setopt(curl, CURLOPT_PATH_AS_IS, 1L);
+
+	headers = appendInstanceHeaders(headers, headersObj, isMultipart);
+	if (isMultipart)
+		headers = curl_slist_append(headers, contentTypeLine);
+	if (body != NULL)
+		headers = curl_slist_append(headers, "Expect:");
+	if (headers != NULL)
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+	push(OBJ_VAL(onLine));
+	res = curl_easy_perform(curl);
+	pop();
+
+	if (st.len > 0 && !st.aborted)
+		httpStreamEmitLine(&st, st.buf, st.len);
+
+	if (headers != NULL)
+		curl_slist_free_all(headers);
+	curl_easy_cleanup(curl);
+	if (bodyOwned)
+		free(body);
+	free(st.buf);
+
+	ok = (res == CURLE_OK);
+	if (!ok && st.aborted && !st.failed && res == CURLE_WRITE_ERROR)
+		ok = 1;
+	if (st.failed)
+		ok = 0;
+	if (!ok) {
+		if (res != CURLE_OK && res != CURLE_WRITE_ERROR)
+			fprintf(stderr, "httpStream: %s\n", curl_easy_strerror(res));
+		return NIL_VAL;
+	}
+	return BOOL_VAL(true);
+}
+
 /* httpPostForm(url, parts, [headers]) -> string or nil */
 static Value httpPostFormNative(int argCount, Value* args) {
 	Value reqArgs[4];
@@ -2763,7 +2992,7 @@ typedef struct {
 	char path[1024];
 	char host[256];
 	char authorization[512];
-	char body[4096];
+	char* body; /* points into the request buffer; not owned */
 	int bodyLen;
 } HttpRequest;
 
@@ -2828,6 +3057,8 @@ static int parseHttpRequest(char* buffer, int bufLen, HttpRequest* req) {
 
 	req->host[0] = '\0';
 	req->authorization[0] = '\0';
+	req->body = buffer + bufLen;
+	req->bodyLen = 0;
 	
 	/* Parse method (GET, POST, etc.) */
 	char* methodEnd = strchr(p, ' ');
@@ -2858,35 +3089,41 @@ static int parseHttpRequest(char* buffer, int bufLen, HttpRequest* req) {
 			bodyStart = NULL;
 	}
 
-	/* Parse Host and Authorization headers */
+	/* Parse Host, Authorization, Content-Length */
 	endHeaders = bodyStart != NULL ? bodyStart : buffer + bufLen;
 	line = strchr(buffer, '\n');
 	if (line != NULL) line++;
-	while (line != NULL && line < endHeaders) {
-		char* next = strchr(line, '\n');
-		char* lineEnd = next != NULL ? next : endHeaders;
-		if (lineEnd > line && lineEnd[-1] == '\r')
-			lineEnd--;
-		if (httpHeaderNameIs(line, "host")) {
-			httpCopyHeaderValue(line, lineEnd, 4, req->host, (int)sizeof(req->host));
-			httpStripHostPort(req->host);
-		} else if (httpHeaderNameIs(line, "authorization")) {
-			httpCopyHeaderValue(line, lineEnd, 13, req->authorization,
-				(int)sizeof(req->authorization));
+	{
+		int contentLen = -1;
+		while (line != NULL && line < endHeaders) {
+			char* next = strchr(line, '\n');
+			char* lineEnd = next != NULL ? next : endHeaders;
+			if (lineEnd > line && lineEnd[-1] == '\r')
+				lineEnd--;
+			if (httpHeaderNameIs(line, "host")) {
+				httpCopyHeaderValue(line, lineEnd, 4, req->host, (int)sizeof(req->host));
+				httpStripHostPort(req->host);
+			} else if (httpHeaderNameIs(line, "authorization")) {
+				httpCopyHeaderValue(line, lineEnd, 13, req->authorization,
+					(int)sizeof(req->authorization));
+			} else if (httpHeaderNameIs(line, "content-length")) {
+				char clbuf[32];
+				httpCopyHeaderValue(line, lineEnd, 14, clbuf, (int)sizeof(clbuf));
+				contentLen = atoi(clbuf);
+			}
+			if (next == NULL) break;
+			line = next + 1;
 		}
-		if (next == NULL) break;
-		line = next + 1;
-	}
-	
-	/* Extract body if present */
-	if (bodyStart != NULL) {
-		req->bodyLen = bufLen - (bodyStart - buffer);
-		if (req->bodyLen >= 4096) req->bodyLen = 4095;
-		memcpy(req->body, bodyStart, req->bodyLen);
-		req->body[req->bodyLen] = '\0';
-	} else {
-		req->body[0] = '\0';
-		req->bodyLen = 0;
+
+		/* Body points into the request buffer (no 4KiB copy cap). */
+		if (bodyStart != NULL) {
+			req->body = bodyStart;
+			req->bodyLen = bufLen - (int)(bodyStart - buffer);
+			if (req->bodyLen < 0) req->bodyLen = 0;
+			if (contentLen >= 0 && contentLen < req->bodyLen)
+				req->bodyLen = contentLen;
+			bodyStart[req->bodyLen] = '\0';
+		}
 	}
 	
 	return 0;
@@ -3502,8 +3739,12 @@ static InterpretResult run(void);
 static const char* httpStatusText(int statusCode) {
 	if (statusCode == 200) return "OK";
 	if (statusCode == 201) return "Created";
+	if (statusCode == 202) return "Accepted";
+	if (statusCode == 204) return "No Content";
 	if (statusCode == 400) return "Bad Request";
 	if (statusCode == 404) return "Not Found";
+	if (statusCode == 405) return "Method Not Allowed";
+	if (statusCode == 413) return "Payload Too Large";
 	if (statusCode == 500) return "Internal Server Error";
 	return "OK";
 }
@@ -3513,6 +3754,173 @@ static int resGetFd(ObjInstance* res) {
 	if (!tableGet(&res->fields, copyString("_fd", 3), &fdVal) || !IS_NUMBER(fdVal))
 		return -1;
 	return (int)AS_NUMBER(fdVal);
+}
+
+static int resFlagOn(ObjInstance* res, const char* key, int keyLen) {
+	Value v;
+	if (!tableGet(&res->fields, copyString(key, keyLen), &v) || !IS_NUMBER(v))
+		return 0;
+	return AS_NUMBER(v) != 0;
+}
+
+static void resSetFlag(ObjInstance* res, const char* key, int keyLen, int on) {
+	tableSet(&res->fields, copyString(key, keyLen), NUMBER_VAL(on ? 1 : 0));
+}
+
+static const char* resExtraHeaders(ObjInstance* res) {
+	Value v;
+	if (tableGet(&res->fields, copyString("_extraHeaders", 13), &v) && IS_STRING(v))
+		return AS_CSTRING(v);
+	return "";
+}
+
+static int resWriteAll(int fd, const void* data, int len) {
+	const char* p = (const char*)data;
+	while (len > 0) {
+		ssize_t n = write(fd, p, (size_t)len);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			return -1;
+		}
+		if (n == 0)
+			return -1;
+		p += n;
+		len -= (int)n;
+	}
+	return 0;
+}
+
+static int httpStrEqCI(const char* a, const char* b) {
+	int i;
+	if (a == NULL || b == NULL)
+		return 0;
+	for (i = 0; ; i++) {
+		char ca = a[i];
+		char cb = b[i];
+		if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+		if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+		if (ca != cb) return 0;
+		if (ca == '\0') return 1;
+	}
+}
+
+static int httpHeaderUnsafe(const char* s) {
+	int i;
+	if (s == NULL) return 1;
+	for (i = 0; s[i] != '\0'; i++) {
+		if (s[i] == '\r' || s[i] == '\n')
+			return 1;
+	}
+	return 0;
+}
+
+/* bodyLen ignored when streaming. extra may be empty. */
+static void resWriteStatusHeaders(int fd, int statusCode, const char* contentType,
+		const char* extra, int bodyLen, int streaming) {
+	char header[4096];
+	int n;
+	if (contentType == NULL) contentType = "text/plain";
+	if (extra == NULL) extra = "";
+	if (streaming) {
+		n = snprintf(header, sizeof(header),
+			"HTTP/1.1 %d %s\r\n"
+			"Content-Type: %s\r\n"
+			"Cache-Control: no-cache\r\n"
+			"Server: lux/1.0\r\n"
+			"Connection: close\r\n"
+			"X-Accel-Buffering: no\r\n"
+			"%s\r\n",
+			statusCode, httpStatusText(statusCode), contentType, extra);
+	} else {
+		n = snprintf(header, sizeof(header),
+			"HTTP/1.1 %d %s\r\n"
+			"Content-Type: %s\r\n"
+			"Content-Length: %d\r\n"
+			"Server: lux/1.0\r\n"
+			"Connection: close\r\n"
+			"%s\r\n",
+			statusCode, httpStatusText(statusCode), contentType, bodyLen, extra);
+	}
+	if (n > 0)
+		resWriteAll(fd, header, n < (int)sizeof(header) ? n : (int)sizeof(header) - 1);
+#ifdef TCP_NODELAY
+	if (streaming) {
+		int one = 1;
+		setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+	}
+#endif
+}
+
+static void resAppendBody(ObjInstance* res, const char* data, int len) {
+	Value bodyVal;
+	const char* oldChars = "";
+	int oldLen = 0;
+	char* buf;
+	if (len < 0) len = 0;
+	if (data == NULL) {
+		data = "";
+		len = 0;
+	}
+	if (tableGet(&res->fields, copyString("_body", 5), &bodyVal) && IS_STRING(bodyVal)) {
+		oldChars = AS_CSTRING(bodyVal);
+		oldLen = AS_STRING(bodyVal)->length;
+	}
+	buf = malloc((size_t)oldLen + (size_t)len + 1);
+	if (buf == NULL) return;
+	if (oldLen > 0)
+		memcpy(buf, oldChars, (size_t)oldLen);
+	if (len > 0)
+		memcpy(buf + oldLen, data, (size_t)len);
+	buf[oldLen + len] = '\0';
+	tableSet(&res->fields, copyString("_body", 5),
+		OBJ_VAL(copyString(buf, oldLen + len)));
+	free(buf);
+}
+
+static void resWriteBody(ObjInstance* res, const char* data, int len) {
+	int fd = resGetFd(res);
+	if (len < 0) len = 0;
+	if (data == NULL) {
+		data = "";
+		len = 0;
+	}
+	if (fd >= 0) {
+		if (len > 0)
+			resWriteAll(fd, data, len);
+		return;
+	}
+	resAppendBody(res, data, len);
+}
+
+static int resGetStatus(ObjInstance* res) {
+	Value statusVal;
+	if (tableGet(&res->fields, copyString("_statusCode", 11), &statusVal) && IS_NUMBER(statusVal))
+		return (int)AS_NUMBER(statusVal);
+	return 200;
+}
+
+static void resStartStream(ObjInstance* res, const char* contentType) {
+	int statusCode;
+	int fd;
+	if (resFlagOn(res, "_headerSent", 11))
+		return;
+	if (contentType == NULL || contentType[0] == '\0')
+		contentType = "text/event-stream";
+	statusCode = resGetStatus(res);
+	tableSet(&res->fields, copyString("_statusCode", 11), NUMBER_VAL((double)statusCode));
+	tableSet(&res->fields, copyString("_contentType", 12),
+		OBJ_VAL(copyString(contentType, (int)strlen(contentType))));
+	resSetFlag(res, "_streaming", 10, 1);
+	resSetFlag(res, "_headerSent", 11, 1);
+	{
+		Value dummy;
+		if (!tableGet(&res->fields, copyString("_body", 5), &dummy) || !IS_STRING(dummy))
+			tableSet(&res->fields, copyString("_body", 5), OBJ_VAL(copyString("", 0)));
+	}
+	fd = resGetFd(res);
+	if (fd >= 0)
+		resWriteStatusHeaders(fd, statusCode, contentType, resExtraHeaders(res), -1, 1);
 }
 
 /* Write to the client socket, or capture body/type on res when _fd is absent (Server.handle). */
@@ -3526,13 +3934,20 @@ static void resEmit(ObjInstance* res, int statusCode, const char* contentType,
 	}
 	if (bodyLen < 0) bodyLen = 0;
 	tableSet(&res->fields, copyString("_statusCode", 11), NUMBER_VAL((double)statusCode));
-	if (fd >= 0) {
-		sendHttpResponseBinary(fd, statusCode, httpStatusText(statusCode),
-			contentType, body, bodyLen);
+	if (resFlagOn(res, "_streaming", 10) && resFlagOn(res, "_headerSent", 11)) {
+		resWriteBody(res, (const char*)body, bodyLen);
 		return;
 	}
+	resSetFlag(res, "_headerSent", 11, 1);
 	tableSet(&res->fields, copyString("_contentType", 12),
 		OBJ_VAL(copyString(contentType, (int)strlen(contentType))));
+	if (fd >= 0) {
+		resWriteStatusHeaders(fd, statusCode, contentType, resExtraHeaders(res),
+			bodyLen, 0);
+		if (bodyLen > 0)
+			resWriteAll(fd, body, bodyLen);
+		return;
+	}
 	tableSet(&res->fields, copyString("_body", 5),
 		OBJ_VAL(copyString((const char*)body, bodyLen)));
 }
@@ -3638,6 +4053,133 @@ static Value resJsonNative(int argCount, Value* args) {
 	resEmit(res, statusCode, "application/json", buffer, len);
 	free(buffer);
 	return NIL_VAL;
+}
+
+/* res.header(name, value) — extra response header, or Content-Type for begin(). */
+static Value resHeaderNative(int argCount, Value* args) {
+	ObjInstance* res;
+	ObjString* nameObj;
+	ObjString* valueObj;
+	Value extraVal;
+	const char* extra;
+	int extraLen;
+	int nameLen, valueLen, addLen;
+	char* buf;
+	if (argCount != 3 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	nameObj = valueToString(args[1]);
+	valueObj = valueToString(args[2]);
+	if (httpHeaderUnsafe(nameObj->chars) || httpHeaderUnsafe(valueObj->chars))
+		return args[0];
+	if (httpStrEqCI(nameObj->chars, "Content-Type")) {
+		tableSet(&res->fields, copyString("_contentType", 12), OBJ_VAL(valueObj));
+		return args[0];
+	}
+	extra = "";
+	extraLen = 0;
+	if (tableGet(&res->fields, copyString("_extraHeaders", 13), &extraVal) && IS_STRING(extraVal)) {
+		extra = AS_CSTRING(extraVal);
+		extraLen = AS_STRING(extraVal)->length;
+	}
+	nameLen = nameObj->length;
+	valueLen = valueObj->length;
+	addLen = extraLen + nameLen + 2 + valueLen + 2;
+	buf = malloc((size_t)addLen + 1);
+	if (buf == NULL) return args[0];
+	if (extraLen > 0)
+		memcpy(buf, extra, (size_t)extraLen);
+	memcpy(buf + extraLen, nameObj->chars, (size_t)nameLen);
+	buf[extraLen + nameLen] = ':';
+	buf[extraLen + nameLen + 1] = ' ';
+	memcpy(buf + extraLen + nameLen + 2, valueObj->chars, (size_t)valueLen);
+	buf[extraLen + nameLen + 2 + valueLen] = '\r';
+	buf[extraLen + nameLen + 3 + valueLen] = '\n';
+	buf[addLen] = '\0';
+	tableSet(&res->fields, copyString("_extraHeaders", 13),
+		OBJ_VAL(copyString(buf, addLen)));
+	free(buf);
+	return args[0];
+}
+
+/* res.begin([contentType]) — send headers without Content-Length (SSE). */
+static Value resBeginNative(int argCount, Value* args) {
+	ObjInstance* res;
+	const char* contentType = NULL;
+	Value typeVal;
+	if (argCount < 1 || argCount > 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	if (argCount == 2 && IS_STRING(args[1]))
+		contentType = AS_CSTRING(args[1]);
+	else if (tableGet(&res->fields, copyString("_contentType", 12), &typeVal) && IS_STRING(typeVal))
+		contentType = AS_CSTRING(typeVal);
+	resStartStream(res, contentType);
+	return args[0];
+}
+
+/* res.write(text) — append to an open stream (auto-begins SSE). */
+static Value resWriteNative(int argCount, Value* args) {
+	ObjInstance* res;
+	ObjString* bodyObj;
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	bodyObj = valueToString(args[1]);
+	if (!resFlagOn(res, "_headerSent", 11))
+		resStartStream(res, "text/event-stream");
+	if (!resFlagOn(res, "_streaming", 10) && resGetFd(res) >= 0)
+		return args[0];
+	resWriteBody(res, bodyObj->chars, bodyObj->length);
+	return args[0];
+}
+
+/* res.event(obj) — SSE `event: message` with JSON data. */
+static Value resEventNative(int argCount, Value* args) {
+	ObjInstance* res;
+	int cap = 256;
+	int len = 0;
+	char* json;
+	char* event;
+	int prefixLen = 21; /* "event: message\ndata: " */
+	int eventLen;
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	json = malloc((size_t)cap);
+	if (json == NULL) return NIL_VAL;
+	json[0] = '\0';
+	serializeJsonValue(args[1], &json, &len, &cap);
+	eventLen = prefixLen + len + 2;
+	event = malloc((size_t)eventLen + 1);
+	if (event == NULL) {
+		free(json);
+		return NIL_VAL;
+	}
+	memcpy(event, "event: message\ndata: ", (size_t)prefixLen);
+	if (len > 0)
+		memcpy(event + prefixLen, json, (size_t)len);
+	event[prefixLen + len] = '\n';
+	event[prefixLen + len + 1] = '\n';
+	event[eventLen] = '\0';
+	free(json);
+	if (!resFlagOn(res, "_headerSent", 11))
+		resStartStream(res, "text/event-stream");
+	if (!resFlagOn(res, "_streaming", 10) && resGetFd(res) >= 0) {
+		free(event);
+		return args[0];
+	}
+	resWriteBody(res, event, eventLen);
+	free(event);
+	return args[0];
+}
+
+/* res.end() — mark stream complete (socket is closed by the accept loop). */
+static Value resEndNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	resSetFlag(AS_INSTANCE(args[0]), "_ended", 6, 1);
+	return args[0];
 }
 
 /* Helper: get or create _routes array on server instance */
@@ -4027,48 +4569,166 @@ static int serverGetWorkerCount(ObjInstance* server) {
 	return n;
 }
 
+#define HTTP_REQ_INIT 16384
+#define HTTP_REQ_MAX (1024 * 1024)
+
+static int httpContentLength(const char* buf, int headerBytes) {
+	const char* line;
+	const char* end;
+	const char* nl;
+	if (buf == NULL || headerBytes <= 0)
+		return -1;
+	end = buf + headerBytes;
+	nl = strchr(buf, '\n');
+	line = nl != NULL ? nl + 1 : buf;
+	while (line < end) {
+		const char* next = strchr(line, '\n');
+		const char* lineEnd = next != NULL ? next : end;
+		if (lineEnd > end)
+			lineEnd = end;
+		if (lineEnd > line && lineEnd[-1] == '\r')
+			lineEnd--;
+		if (httpHeaderNameIs((char*)line, "content-length")) {
+			char tmp[32];
+			httpCopyHeaderValue((char*)line, (char*)lineEnd, 14, tmp, (int)sizeof(tmp));
+			return atoi(tmp);
+		}
+		if (next == NULL || next + 1 >= end)
+			break;
+		line = next + 1;
+	}
+	return -1;
+}
+
+/* 0 ok (*outBuf malloced), -1 fail, -2 too large. */
+static int httpReadRequest(int fd, char** outBuf, int* outLen) {
+	int cap = HTTP_REQ_INIT;
+	int total = 0;
+	char* buf = malloc((size_t)cap);
+	if (buf == NULL)
+		return -1;
+	for (;;) {
+		int space = cap - total - 1;
+		int n;
+		char* headerEnd;
+		int contentLen;
+		int headerBytes;
+		int need;
+		if (space <= 0) {
+			int newCap;
+			char* nb;
+			if (cap >= HTTP_REQ_MAX) {
+				free(buf);
+				return -2;
+			}
+			newCap = cap * 2;
+			if (newCap > HTTP_REQ_MAX)
+				newCap = HTTP_REQ_MAX;
+			if (newCap <= cap) {
+				free(buf);
+				return -2;
+			}
+			nb = realloc(buf, (size_t)newCap);
+			if (nb == NULL) {
+				free(buf);
+				return -1;
+			}
+			buf = nb;
+			cap = newCap;
+			space = cap - total - 1;
+			if (space <= 0) {
+				free(buf);
+				return -2;
+			}
+		}
+		n = (int)read(fd, buf + total, (size_t)space);
+		if (n < 0) {
+			free(buf);
+			return -1;
+		}
+		if (n == 0) {
+			if (total == 0) {
+				free(buf);
+				return -1;
+			}
+			break;
+		}
+		total += n;
+		buf[total] = '\0';
+		headerEnd = strstr(buf, "\r\n\r\n");
+		if (headerEnd != NULL)
+			headerBytes = (int)(headerEnd - buf) + 4;
+		else {
+			headerEnd = strstr(buf, "\n\n");
+			if (headerEnd != NULL)
+				headerBytes = (int)(headerEnd - buf) + 2;
+			else
+				headerBytes = -1;
+		}
+		if (headerBytes < 0)
+			continue;
+		contentLen = httpContentLength(buf, headerBytes);
+		if (contentLen < 0)
+			contentLen = 0;
+		if (contentLen > HTTP_REQ_MAX) {
+			free(buf);
+			return -2;
+		}
+		need = headerBytes + contentLen;
+		if (need < headerBytes) {
+			free(buf);
+			return -2;
+		}
+		if (need > HTTP_REQ_MAX) {
+			free(buf);
+			return -2;
+		}
+		if (need + 1 > cap) {
+			char* nb = realloc(buf, (size_t)need + 1);
+			if (nb == NULL) {
+				free(buf);
+				return -1;
+			}
+			buf = nb;
+			cap = need + 1;
+		}
+		while (total < need) {
+			n = (int)read(fd, buf + total, (size_t)(need - total));
+			if (n <= 0)
+				break;
+			total += n;
+		}
+		buf[total] = '\0';
+		break;
+	}
+	*outBuf = buf;
+	*outLen = total;
+	return 0;
+}
+
 /* Handle one accepted client connection (does not close client_fd). */
 static void serverHandleClient(ObjInstance* server, int client_fd, ObjArray* routes,
 		const char* defaultStaticDir) {
-	char buffer[8192];
+	char* buffer = NULL;
 	int totalRead = 0;
-	int n = read(client_fd, buffer, sizeof(buffer) - 1);
+	int rc;
 	HttpRequest req;
 	ObjInstance* resObj;
 	(void)routes;
 	(void)defaultStaticDir;
 
-	if (n <= 0)
+	rc = httpReadRequest(client_fd, &buffer, &totalRead);
+	if (rc == -2) {
+		sendHttpResponse(client_fd, 413, "Payload Too Large",
+			"{\"error\":\"Payload Too Large\"}");
 		return;
-	totalRead = n;
-	buffer[totalRead] = '\0';
-
-	{
-		char* headerEnd = strstr(buffer, "\r\n\r\n");
-		if (headerEnd == NULL) headerEnd = strstr(buffer, "\n\n");
-		if (headerEnd != NULL) {
-			char* clHeader = strstr(buffer, "Content-Length:");
-			if (clHeader == NULL) clHeader = strstr(buffer, "content-length:");
-			if (clHeader != NULL) {
-				int contentLen = atoi(clHeader + 15);
-				int bodyStart = (headerEnd - buffer) + 4;
-				if (strstr(buffer, "\n\n") != NULL && strstr(buffer, "\r\n\r\n") == NULL)
-					bodyStart = (headerEnd - buffer) + 2;
-				int bodyReceived = totalRead - bodyStart;
-				int needMore = contentLen - bodyReceived;
-				while (needMore > 0 && totalRead < (int)sizeof(buffer) - 1) {
-					n = read(client_fd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
-					if (n <= 0) break;
-					totalRead += n;
-					needMore -= n;
-				}
-				buffer[totalRead] = '\0';
-			}
-		}
 	}
+	if (rc < 0 || buffer == NULL)
+		return;
 
 	if (parseHttpRequest(buffer, totalRead, &req) < 0) {
 		sendHttpResponse(client_fd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
+		free(buffer);
 		return;
 	}
 	fprintf(stdout, "%s %s Host:%s\n", req.method, req.path, req.host);
@@ -4080,6 +4740,7 @@ static void serverHandleClient(ObjInstance* server, int client_fd, ObjArray* rou
 	tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
 	serverDispatch(server, req.method, req.path, req.host, req.body, req.authorization, resObj);
 	pop(); /* res */
+	free(buffer);
 }
 
 static void httpCopyUpper(char* dst, int dstSz, const char* src) {
@@ -4131,7 +4792,7 @@ static Value serverHandleNative(int argCount, Value* args) {
 	char methodBuf[16];
 	char pathBuf[1024];
 	char hostBuf[256];
-	Value statusVal, bodyVal, typeVal;
+	Value statusVal, bodyVal, typeVal, hdrVal;
 	int statusCode = 200;
 
 	if (argCount < 3 || argCount > 6 || !IS_INSTANCE(args[0]) ||
@@ -4179,6 +4840,10 @@ static Value serverHandleNative(int argCount, Value* args) {
 		tableSet(&out->fields, copyString("contentType", 11), typeVal);
 	else
 		tableSet(&out->fields, copyString("contentType", 11), OBJ_VAL(copyString("text/plain", 10)));
+	if (tableGet(&resObj->fields, copyString("_extraHeaders", 13), &hdrVal) && IS_STRING(hdrVal))
+		tableSet(&out->fields, copyString("headers", 7), hdrVal);
+	else
+		tableSet(&out->fields, copyString("headers", 7), OBJ_VAL(copyString("", 0)));
 	pop(); /* out */
 	pop(); /* res */
 	return OBJ_VAL(out);
@@ -5309,6 +5974,7 @@ void initVM() {
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
 	defineNative("httpRequest", httpRequestNative);
+	defineNative("httpStream", httpStreamNative);
 	defineNative("httpPostForm", httpPostFormNative);
 	defineNative("httpServer", httpServerNative);
 	defineNative("sha256", sha256Native);
@@ -5319,6 +5985,11 @@ void initVM() {
 	tableSet(&serverResClass->methods, copyString("html", 4), OBJ_VAL(newNative(resHtmlNative)));
 	tableSet(&serverResClass->methods, copyString("json", 4), OBJ_VAL(newNative(resJsonNative)));
 	tableSet(&serverResClass->methods, copyString("status", 6), OBJ_VAL(newNative(resStatusNative)));
+	tableSet(&serverResClass->methods, copyString("header", 6), OBJ_VAL(newNative(resHeaderNative)));
+	tableSet(&serverResClass->methods, copyString("begin", 5), OBJ_VAL(newNative(resBeginNative)));
+	tableSet(&serverResClass->methods, copyString("write", 5), OBJ_VAL(newNative(resWriteNative)));
+	tableSet(&serverResClass->methods, copyString("event", 5), OBJ_VAL(newNative(resEventNative)));
+	tableSet(&serverResClass->methods, copyString("end", 3), OBJ_VAL(newNative(resEndNative)));
 
 	serverClass = newClass(copyString("Server", 6));
 	tableSet(&serverClass->methods, vm.initString, OBJ_VAL(newNative(serverInitNative)));

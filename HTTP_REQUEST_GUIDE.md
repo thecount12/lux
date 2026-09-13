@@ -198,11 +198,11 @@ if (response == nil) {
 ## Limitations
 
 ### Current Implementation
-- No access to HTTP status codes (returns body or nil)
+- No access to HTTP status codes (returns body or nil; `httpStream` returns true or nil)
 - No access to response headers
 - No progress callbacks for large transfers
-- Fixed timeout values (30 seconds for POSIX)
-- No streaming - entire response loaded into memory
+- `httpRequest` / `httpGet` / `httpPost` / `httpPut` load the entire body into memory (30s POSIX timeout)
+- `httpStream(method, url, body, headers, onLine)` streams NDJSON/SSE **lines** to a callback (600s timeout). Return `false` from `onLine` to stop.
 
 ### Security Notes
 - HTTPS certificates are validated (POSIX/libcurl)

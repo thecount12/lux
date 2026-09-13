@@ -171,6 +171,12 @@ var formHeaders = Headers();
 formHeaders.accept = "application/json";
 var formResp = httpRequest("POST", "https://api.example.com/upload", form, formHeaders);
 
+// NDJSON / Ollama stream: true — one callback per line (not one buffered body)
+fun onLine(line) {
+    print line;
+}
+httpStream("POST", "http://10.0.0.22:11434/api/chat", body, headers, onLine);
+
 ```
 
 ### HTTP Server
@@ -1283,7 +1289,7 @@ while (idx + 64 <= 10000) {
 
 ### DataFrame, CSV, and graphs
 
-Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`). Multipart HTTP lives in `lib/http.lux` (`Form`). OpenAPI / Swagger UI lives in `lib/swagger.lux` (`Op`, `swagger`). OAuth 2.0 client-credentials lives in `lib/oauth.lux` (`OAuth`).
+Lux is not a pandas/numpy replacement. For moderate tables and small graphs, import modules from `lib/` (paths are relative to the process working directory; tests run from `posix/` use `../lib/...`). Multipart HTTP lives in `lib/http.lux` (`Form`). OpenAPI / Swagger UI lives in `lib/swagger.lux` (`Op`, `swagger`). OAuth 2.0 client-credentials lives in `lib/oauth.lux` (`OAuth`). MCP Streamable HTTP lives in `lib/mcp.lux` (`mcpMount`).
 
 #### CSV and DataFrame (`lib/dataframe.lux`)
 
@@ -1453,6 +1459,23 @@ if (jsonBody != nil) {
 }
 ```
 
+#### `httpStream(method, url, body, headers, onLine)` → true or nil
+Like `httpRequest`, but delivers the response **line by line** (NDJSON, Ollama `"stream": true`). `body` and `headers` may be `nil`. `onLine(line)` is called without the trailing newline; empty lines are skipped. Return `false` from `onLine` to stop. Timeout is 600s (connect 15s). `mcpOllamaChat` in `lib/mcp.lux` unwraps Ollama `message.content` / `response` deltas.
+
+```lux
+var text = "";
+fun onDelta(delta) {
+    text = text + delta;
+    print delta;
+}
+class Headers { init() {} }
+var headers = Headers();
+headers.Content_Type = "application/json";
+mcpOllamaChat("http://10.0.0.22:11434/api/chat",
+    "{\"model\":\"qwen2.5-coder:14b\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+    headers, onDelta);
+```
+
 #### `httpServer(port)` → bool
 Starts a basic HTTP server listening on the specified port. The server runs in a blocking loop and responds to requests with built-in routes. Press Ctrl+C to stop the server.
 
@@ -1500,6 +1523,7 @@ Create a configurable HTTP server with user-defined routes. See `examples/static
 ```lux
 fun handleHello(req, res) { res.send("Hello from Lux!"); }
 /* res.send → text/plain; res.html → text/html; res.json → application/json */
+/* res.header / res.begin / res.write / res.event / res.end → extra headers + SSE */
 
 fun handleData(req, res) {
   var body = parseJSON(req.body);
@@ -1619,6 +1643,8 @@ server.use(requireAuth);
 ```
 
 **OpenAPI / Swagger UI (`lib/swagger.lux`):** `swagger(server)` mounts FastAPI-style `GET /docs` (Swagger UI) and `GET /openapi.json` from the route table. Pass an optional `Op` as the last argument to `get` / `post` / `getHost` / `postHost`, or attach one later with `swaggerDoc`. See `examples/swagger_server.lux` and `tests/test_swagger.lux`.
+
+**MCP Streamable HTTP (`lib/mcp.lux`):** Point Cline at a dedicated path (`/mcp`), not `/`. `mcpMount(server, "/mcp", name, version, tools, onCall)` answers `initialize`, `notifications/*` (202), `tools/list`, and `tools/call` with JSON-RPC. GET without SSE is 405, which the spec allows. Buffered `res.json` is valid Streamable HTTP; use `res.begin` / `res.event` / `res.end` when you want `text/event-stream`. For Ollama `"stream": true`, `httpStream` / `mcpOllamaChat` call your callback per NDJSON line. See `tests/test_mcp.lux` and `tests/test_http_stream.lux`.
 
 ```lux
 import "../lib/swagger.lux";

@@ -100,6 +100,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request with a JSON body."},
 	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
 	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request. Body may be a string, nil, Form, or parts array."},
+	{"httpStream", "httpStream(method, url, body, headers, onLine)", "HTTP request that calls onLine(line) for each response line (NDJSON). body and headers may be nil. Returns true or nil."},
 	{"httpPostForm", "httpPostForm(url, parts, [headers])", "POST multipart/form-data from a parts array or Form instance."},
 	{"httpServer", "httpServer(port, handler)", "Start a simple HTTP server."},
 	{"Server", "Server(port)", "HTTP server with routing, static files, and .handle() for Lambda."},
@@ -2746,6 +2747,326 @@ httpRequestNative(int argCount, Value* args)
 	return result;
 }
 
+static bool call(ObjClosure* closure, int argCount);
+static InterpretResult run(void);
+
+#define HTTP_STREAM_MAX_LINE (1024 * 1024)
+
+typedef struct {
+	ObjClosure* onLine;
+	char* buf;
+	int len;
+	int cap;
+	int aborted;
+	int failed;
+} HttpStreamState;
+
+static void
+httpStreamEmitLine(HttpStreamState* st, char* line, int lineLen)
+{
+	Value* savedTop;
+	ObjString* s;
+	InterpretResult ir;
+
+	if (st == nil || st->aborted || st->onLine == nil)
+		return;
+	while (lineLen > 0 && line[lineLen - 1] == '\r')
+		lineLen--;
+	if (lineLen <= 0)
+		return;
+	savedTop = vm.stackTop;
+	s = copyString(line, lineLen);
+	push(OBJ_VAL(st->onLine));
+	push(OBJ_VAL(s));
+	if (!call(st->onLine, 1)) {
+		st->failed = 1;
+		st->aborted = 1;
+		vm.stackTop = savedTop;
+		return;
+	}
+	ir = run();
+	if (ir != INTERPRET_OK) {
+		st->failed = 1;
+		st->aborted = 1;
+		vm.stackTop = savedTop;
+		return;
+	}
+	if (vm.stackTop > savedTop) {
+		Value ret = vm.stackTop[-1];
+		if (IS_BOOL(ret) && !AS_BOOL(ret))
+			st->aborted = 1;
+	}
+	vm.stackTop = savedTop;
+}
+
+static void
+httpStreamFeed(HttpStreamState* st, char* data, int n)
+{
+	int i;
+
+	if (st == nil || data == nil || n <= 0 || st->aborted)
+		return;
+	for (i = 0; i < n; i++) {
+		char c = data[i];
+		if (c == '\n') {
+			httpStreamEmitLine(st, st->buf, st->len);
+			st->len = 0;
+			if (st->aborted)
+				return;
+			continue;
+		}
+		if (st->len + 1 >= st->cap) {
+			int newCap = st->cap == 0 ? 256 : st->cap * 2;
+			char* nb;
+			if (newCap > HTTP_STREAM_MAX_LINE) {
+				st->aborted = 1;
+				st->failed = 1;
+				return;
+			}
+			nb = realloc(st->buf, newCap);
+			if (nb == nil) {
+				st->aborted = 1;
+				st->failed = 1;
+				return;
+			}
+			st->buf = nb;
+			st->cap = newCap;
+		}
+		st->buf[st->len++] = c;
+	}
+}
+
+static int
+httpStreamReadFd(int fd, HttpStreamState* st)
+{
+	int cap, len, n, headerBytes;
+	char* buffer;
+	char* headerEnd;
+	char tmp[4096];
+
+	cap = 4096;
+	len = 0;
+	headerBytes = -1;
+	buffer = malloc(cap);
+	if (buffer == nil)
+		return -1;
+	while (headerBytes < 0) {
+		if (len >= cap - 1) {
+			char* nb;
+			cap *= 2;
+			nb = realloc(buffer, cap);
+			if (nb == nil) {
+				free(buffer);
+				return -1;
+			}
+			buffer = nb;
+		}
+		n = read(fd, buffer + len, cap - len - 1);
+		if (n <= 0) {
+			free(buffer);
+			return -1;
+		}
+		len += n;
+		buffer[len] = '\0';
+		headerEnd = strstr(buffer, "\r\n\r\n");
+		if (headerEnd != nil)
+			headerBytes = (headerEnd - buffer) + 4;
+		else {
+			headerEnd = strstr(buffer, "\n\n");
+			if (headerEnd != nil)
+				headerBytes = (headerEnd - buffer) + 2;
+		}
+	}
+	httpStreamFeed(st, buffer + headerBytes, len - headerBytes);
+	free(buffer);
+	while (!st->aborted) {
+		n = read(fd, tmp, sizeof(tmp));
+		if (n <= 0)
+			break;
+		httpStreamFeed(st, tmp, n);
+	}
+	if (st->len > 0 && !st->aborted)
+		httpStreamEmitLine(st, st->buf, st->len);
+	if (st->failed)
+		return -1;
+	return 0;
+}
+
+static Value
+httpStreamNative(int argCount, Value* args)
+{
+	char* method;
+	char* url;
+	char* requestBody;
+	int requestBodyLen;
+	int bodyOwned;
+	int isMultipart;
+	char multipartCT[128];
+	ObjInstance* headersObj;
+	ObjClosure* onLine;
+	UrlParts parts;
+	int fd;
+	TLSconn conn;
+	char dialAddr[512];
+	char request[32768];
+	int reqLen;
+	HttpStreamState st;
+	int rc;
+
+	requestBody = nil;
+	requestBodyLen = 0;
+	bodyOwned = 0;
+	isMultipart = 0;
+	headersObj = nil;
+	memset(&st, 0, sizeof(st));
+	memset(&conn, 0, sizeof(conn));
+
+	if (argCount != 5)
+		return NIL_VAL;
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]) || !IS_CLOSURE(args[4]))
+		return NIL_VAL;
+
+	method = AS_CSTRING(args[0]);
+	url = AS_CSTRING(args[1]);
+	onLine = AS_CLOSURE(args[4]);
+	st.onLine = onLine;
+
+	if (!IS_NIL(args[2])) {
+		ObjArray* mpParts = multipartPartsFromValue(args[2]);
+		if (mpParts != nil) {
+			MultipartBody mp;
+			if (!encodeMultipart(mpParts, &mp)) {
+				fprint(2, "httpStream: multipart encode failed\n");
+				return NIL_VAL;
+			}
+			requestBody = mp.data;
+			requestBodyLen = mp.size;
+			bodyOwned = 1;
+			isMultipart = 1;
+			snprint(multipartCT, sizeof(multipartCT), "%s", mp.contentType);
+		} else if (IS_STRING(args[2])) {
+			requestBody = AS_CSTRING(args[2]);
+			requestBodyLen = AS_STRING(args[2])->length;
+		} else {
+			return NIL_VAL;
+		}
+	}
+
+	if (!IS_NIL(args[3])) {
+		if (!IS_INSTANCE(args[3])) {
+			if (bodyOwned)
+				free(requestBody);
+			return NIL_VAL;
+		}
+		headersObj = AS_INSTANCE(args[3]);
+	}
+
+	if (parseUrl(url, &parts) < 0) {
+		if (bodyOwned)
+			free(requestBody);
+		return NIL_VAL;
+	}
+
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
+
+	if (parts.ishttps) {
+		conn.serverName = parts.host;
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0) {
+			if (bodyOwned)
+				free(requestBody);
+			return NIL_VAL;
+		}
+		fd = tlsClient(fd, &conn);
+		if (fd < 0) {
+			fprint(2, "TLS handshake failed for %s\n", parts.host);
+			close(fd);
+			if (bodyOwned)
+				free(requestBody);
+			return NIL_VAL;
+		}
+	} else {
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0) {
+			if (bodyOwned)
+				free(requestBody);
+			return NIL_VAL;
+		}
+	}
+
+	reqLen = snprint(request, sizeof(request),
+		"%s %s HTTP/1.1\r\n"
+		"Host: %s\r\n"
+		"User-Agent: lux/1.0\r\n",
+		method, parts.path, parts.host);
+
+	if (headersObj != nil) {
+		int i;
+		for (i = 0; i < headersObj->fields.capacity; i++) {
+			if (headersObj->fields.entries[i].key != nil) {
+				char* headerName = headersObj->fields.entries[i].key->chars;
+				Value headerValue = headersObj->fields.entries[i].value;
+				if (IS_STRING(headerValue)) {
+					char convertedName[256];
+					char* p;
+					strncpy(convertedName, headerName, sizeof(convertedName) - 1);
+					convertedName[sizeof(convertedName) - 1] = '\0';
+					for (p = convertedName; *p; p++) {
+						if (*p == '_') *p = '-';
+					}
+					if (isMultipart && headerNameIsContentType(convertedName))
+						continue;
+					reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+						"%s: %s\r\n", convertedName, AS_CSTRING(headerValue));
+				}
+			}
+		}
+	}
+
+	if (isMultipart)
+		reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+			"Content-Type: %s\r\n", multipartCT);
+	if (requestBody != nil && requestBodyLen > 0)
+		reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+			"Content-Length: %d\r\n", requestBodyLen);
+	reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+		"Connection: close\r\n\r\n");
+
+	if (writeAll(fd, request, reqLen) < 0) {
+		if (parts.ishttps)
+			free(conn.cert);
+		close(fd);
+		if (bodyOwned)
+			free(requestBody);
+		return NIL_VAL;
+	}
+	if (requestBody != nil && requestBodyLen > 0) {
+		if (writeAll(fd, requestBody, requestBodyLen) < 0) {
+			if (parts.ishttps)
+				free(conn.cert);
+			close(fd);
+			if (bodyOwned)
+				free(requestBody);
+			return NIL_VAL;
+		}
+	}
+	if (bodyOwned)
+		free(requestBody);
+
+	push(OBJ_VAL(onLine));
+	rc = httpStreamReadFd(fd, &st);
+	pop();
+
+	if (parts.ishttps)
+		free(conn.cert);
+	close(fd);
+	free(st.buf);
+
+	if (rc < 0)
+		return NIL_VAL;
+	return BOOL_VAL(true);
+}
+
 /* httpPostForm(url, parts, [headers]) -> string or nil */
 static Value
 httpPostFormNative(int argCount, Value* args)
@@ -2950,7 +3271,7 @@ typedef struct {
 	char path[1024];
 	char host[256];
 	char authorization[512];
-	char body[4096];
+	char* body; /* points into the request buffer; not owned */
 	int bodyLen;
 } HttpRequest;
 
@@ -3023,6 +3344,8 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 	
 	req->host[0] = '\0';
 	req->authorization[0] = '\0';
+	req->body = buffer + bufLen;
+	req->bodyLen = 0;
 
 	/* Parse method (GET, POST, etc.) */
 	char* methodEnd = strchr(p, ' ');
@@ -3053,35 +3376,42 @@ parseHttpRequest(char* buffer, int bufLen, HttpRequest* req)
 			bodyStart = nil;
 	}
 
-	/* Parse Host and Authorization headers */
+	/* Parse Host, Authorization, Content-Length */
 	endHeaders = bodyStart != nil ? bodyStart : buffer + bufLen;
 	line = strchr(buffer, '\n');
 	if (line != nil) line++;
-	while (line != nil && line < endHeaders) {
-		char* next = strchr(line, '\n');
-		char* lineEnd = next != nil ? next : endHeaders;
-		if (lineEnd > line && lineEnd[-1] == '\r')
-			lineEnd--;
-		if (httpHeaderNameIs(line, "host")) {
-			httpCopyHeaderValue(line, lineEnd, 4, req->host, (int)sizeof(req->host));
-			httpStripHostPort(req->host);
-		} else if (httpHeaderNameIs(line, "authorization")) {
-			httpCopyHeaderValue(line, lineEnd, 13, req->authorization,
-				(int)sizeof(req->authorization));
+	{
+		int contentLen;
+
+		contentLen = -1;
+		while (line != nil && line < endHeaders) {
+			char* next = strchr(line, '\n');
+			char* lineEnd = next != nil ? next : endHeaders;
+			if (lineEnd > line && lineEnd[-1] == '\r')
+				lineEnd--;
+			if (httpHeaderNameIs(line, "host")) {
+				httpCopyHeaderValue(line, lineEnd, 4, req->host, (int)sizeof(req->host));
+				httpStripHostPort(req->host);
+			} else if (httpHeaderNameIs(line, "authorization")) {
+				httpCopyHeaderValue(line, lineEnd, 13, req->authorization,
+					(int)sizeof(req->authorization));
+			} else if (httpHeaderNameIs(line, "content-length")) {
+				char clbuf[32];
+				httpCopyHeaderValue(line, lineEnd, 14, clbuf, (int)sizeof(clbuf));
+				contentLen = atoi(clbuf);
+			}
+			if (next == nil) break;
+			line = next + 1;
 		}
-		if (next == nil) break;
-		line = next + 1;
-	}
-	
-	/* Extract body if present */
-	if (bodyStart != nil) {
-		req->bodyLen = bufLen - (bodyStart - buffer);
-		if (req->bodyLen >= 4096) req->bodyLen = 4095;
-		memcpy(req->body, bodyStart, req->bodyLen);
-		req->body[req->bodyLen] = '\0';
-	} else {
-		req->body[0] = '\0';
-		req->bodyLen = 0;
+
+		if (bodyStart != nil) {
+			req->body = bodyStart;
+			req->bodyLen = bufLen - (int)(bodyStart - buffer);
+			if (req->bodyLen < 0) req->bodyLen = 0;
+			if (contentLen >= 0 && contentLen < req->bodyLen)
+				req->bodyLen = contentLen;
+			bodyStart[req->bodyLen] = '\0';
+		}
 	}
 	
 	return 0;
@@ -3172,8 +3502,12 @@ httpStatusText(int statusCode)
 {
 	if (statusCode == 200) return "OK";
 	if (statusCode == 201) return "Created";
+	if (statusCode == 202) return "Accepted";
+	if (statusCode == 204) return "No Content";
 	if (statusCode == 400) return "Bad Request";
 	if (statusCode == 404) return "Not Found";
+	if (statusCode == 405) return "Method Not Allowed";
+	if (statusCode == 413) return "Payload Too Large";
 	if (statusCode == 500) return "Internal Server Error";
 	return "OK";
 }
@@ -3186,6 +3520,194 @@ resGetFd(ObjInstance* res)
 	if (!tableGet(&res->fields, copyString("_fd", 3), &fdVal) || !IS_NUMBER(fdVal))
 		return -1;
 	return (int)AS_NUMBER(fdVal);
+}
+
+static int
+resFlagOn(ObjInstance* res, char* key, int keyLen)
+{
+	Value v;
+
+	if (!tableGet(&res->fields, copyString(key, keyLen), &v) || !IS_NUMBER(v))
+		return 0;
+	return AS_NUMBER(v) != 0;
+}
+
+static void
+resSetFlag(ObjInstance* res, char* key, int keyLen, int on)
+{
+	tableSet(&res->fields, copyString(key, keyLen), NUMBER_VAL(on ? 1 : 0));
+}
+
+static char*
+resExtraHeaders(ObjInstance* res)
+{
+	Value v;
+
+	if (tableGet(&res->fields, copyString("_extraHeaders", 13), &v) && IS_STRING(v))
+		return AS_CSTRING(v);
+	return "";
+}
+
+static int
+resWriteAll(int fd, void* data, int len)
+{
+	char* p;
+
+	p = data;
+	while (len > 0) {
+		int n = write(fd, p, len);
+		if (n <= 0)
+			return -1;
+		p += n;
+		len -= n;
+	}
+	return 0;
+}
+
+static int
+httpStrEqCI(char* a, char* b)
+{
+	int i;
+
+	if (a == nil || b == nil)
+		return 0;
+	for (i = 0; ; i++) {
+		char ca = a[i];
+		char cb = b[i];
+		if (ca >= 'A' && ca <= 'Z') ca = ca - 'A' + 'a';
+		if (cb >= 'A' && cb <= 'Z') cb = cb - 'A' + 'a';
+		if (ca != cb) return 0;
+		if (ca == '\0') return 1;
+	}
+}
+
+static int
+httpHeaderUnsafe(char* s)
+{
+	int i;
+
+	if (s == nil) return 1;
+	for (i = 0; s[i] != '\0'; i++) {
+		if (s[i] == '\r' || s[i] == '\n')
+			return 1;
+	}
+	return 0;
+}
+
+static void
+resWriteStatusHeaders(int fd, int statusCode, char* contentType, char* extra,
+	int bodyLen, int streaming)
+{
+	char header[4096];
+	int n;
+
+	if (contentType == nil) contentType = "text/plain";
+	if (extra == nil) extra = "";
+	if (streaming)
+		n = snprint(header, sizeof(header),
+			"HTTP/1.1 %d %s\r\n"
+			"Content-Type: %s\r\n"
+			"Cache-Control: no-cache\r\n"
+			"Server: lux/1.0\r\n"
+			"Connection: close\r\n"
+			"X-Accel-Buffering: no\r\n"
+			"%s\r\n",
+			statusCode, httpStatusText(statusCode), contentType, extra);
+	else
+		n = snprint(header, sizeof(header),
+			"HTTP/1.1 %d %s\r\n"
+			"Content-Type: %s\r\n"
+			"Content-Length: %d\r\n"
+			"Server: lux/1.0\r\n"
+			"Connection: close\r\n"
+			"%s\r\n",
+			statusCode, httpStatusText(statusCode), contentType, bodyLen, extra);
+	if (n > 0)
+		resWriteAll(fd, header, n < sizeof(header) ? n : sizeof(header) - 1);
+}
+
+static void
+resAppendBody(ObjInstance* res, char* data, int len)
+{
+	Value bodyVal;
+	char* oldChars;
+	int oldLen;
+	char* buf;
+
+	oldChars = "";
+	oldLen = 0;
+	if (len < 0) len = 0;
+	if (data == nil) {
+		data = "";
+		len = 0;
+	}
+	if (tableGet(&res->fields, copyString("_body", 5), &bodyVal) && IS_STRING(bodyVal)) {
+		oldChars = AS_CSTRING(bodyVal);
+		oldLen = AS_STRING(bodyVal)->length;
+	}
+	buf = malloc(oldLen + len + 1);
+	if (buf == nil) return;
+	if (oldLen > 0)
+		memcpy(buf, oldChars, oldLen);
+	if (len > 0)
+		memcpy(buf + oldLen, data, len);
+	buf[oldLen + len] = '\0';
+	tableSet(&res->fields, copyString("_body", 5),
+		OBJ_VAL(copyString(buf, oldLen + len)));
+	free(buf);
+}
+
+static void
+resWriteBody(ObjInstance* res, char* data, int len)
+{
+	int fd;
+
+	fd = resGetFd(res);
+	if (len < 0) len = 0;
+	if (data == nil) {
+		data = "";
+		len = 0;
+	}
+	if (fd >= 0) {
+		if (len > 0)
+			resWriteAll(fd, data, len);
+		return;
+	}
+	resAppendBody(res, data, len);
+}
+
+static int
+resGetStatus(ObjInstance* res)
+{
+	Value statusVal;
+
+	if (tableGet(&res->fields, copyString("_statusCode", 11), &statusVal) && IS_NUMBER(statusVal))
+		return (int)AS_NUMBER(statusVal);
+	return 200;
+}
+
+static void
+resStartStream(ObjInstance* res, char* contentType)
+{
+	int statusCode;
+	int fd;
+	Value dummy;
+
+	if (resFlagOn(res, "_headerSent", 11))
+		return;
+	if (contentType == nil || contentType[0] == '\0')
+		contentType = "text/event-stream";
+	statusCode = resGetStatus(res);
+	tableSet(&res->fields, copyString("_statusCode", 11), NUMBER_VAL((double)statusCode));
+	tableSet(&res->fields, copyString("_contentType", 12),
+		OBJ_VAL(copyString(contentType, (int)strlen(contentType))));
+	resSetFlag(res, "_streaming", 10, 1);
+	resSetFlag(res, "_headerSent", 11, 1);
+	if (!tableGet(&res->fields, copyString("_body", 5), &dummy) || !IS_STRING(dummy))
+		tableSet(&res->fields, copyString("_body", 5), OBJ_VAL(copyString("", 0)));
+	fd = resGetFd(res);
+	if (fd >= 0)
+		resWriteStatusHeaders(fd, statusCode, contentType, resExtraHeaders(res), -1, 1);
 }
 
 static void
@@ -3203,13 +3725,20 @@ resEmit(ObjInstance* res, int statusCode, char* contentType, void* body, int bod
 	if (bodyLen < 0)
 		bodyLen = 0;
 	tableSet(&res->fields, copyString("_statusCode", 11), NUMBER_VAL((double)statusCode));
-	if (fd >= 0) {
-		sendHttpResponseBinary(fd, statusCode, httpStatusText(statusCode),
-			contentType, body, bodyLen);
+	if (resFlagOn(res, "_streaming", 10) && resFlagOn(res, "_headerSent", 11)) {
+		resWriteBody(res, body, bodyLen);
 		return;
 	}
+	resSetFlag(res, "_headerSent", 11, 1);
 	tableSet(&res->fields, copyString("_contentType", 12),
 		OBJ_VAL(copyString(contentType, (int)strlen(contentType))));
+	if (fd >= 0) {
+		resWriteStatusHeaders(fd, statusCode, contentType, resExtraHeaders(res),
+			bodyLen, 0);
+		if (bodyLen > 0)
+			resWriteAll(fd, body, bodyLen);
+		return;
+	}
 	tableSet(&res->fields, copyString("_body", 5),
 		OBJ_VAL(copyString((char*)body, bodyLen)));
 }
@@ -3334,6 +3863,142 @@ resJsonNative(int argCount, Value* args)
 	resEmit(res, statusCode, "application/json", buffer, len);
 	free(buffer);
 	return NIL_VAL;
+}
+
+static Value
+resHeaderNative(int argCount, Value* args)
+{
+	ObjInstance* res;
+	ObjString* nameObj;
+	ObjString* valueObj;
+	Value extraVal;
+	char* extra;
+	int extraLen, nameLen, valueLen, addLen;
+	char* buf;
+
+	if (argCount != 3 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	nameObj = valueToString(args[1]);
+	valueObj = valueToString(args[2]);
+	if (httpHeaderUnsafe(nameObj->chars) || httpHeaderUnsafe(valueObj->chars))
+		return args[0];
+	if (httpStrEqCI(nameObj->chars, "Content-Type")) {
+		tableSet(&res->fields, copyString("_contentType", 12), OBJ_VAL(valueObj));
+		return args[0];
+	}
+	extra = "";
+	extraLen = 0;
+	if (tableGet(&res->fields, copyString("_extraHeaders", 13), &extraVal) && IS_STRING(extraVal)) {
+		extra = AS_CSTRING(extraVal);
+		extraLen = AS_STRING(extraVal)->length;
+	}
+	nameLen = nameObj->length;
+	valueLen = valueObj->length;
+	addLen = extraLen + nameLen + 2 + valueLen + 2;
+	buf = malloc(addLen + 1);
+	if (buf == nil) return args[0];
+	if (extraLen > 0)
+		memcpy(buf, extra, extraLen);
+	memcpy(buf + extraLen, nameObj->chars, nameLen);
+	buf[extraLen + nameLen] = ':';
+	buf[extraLen + nameLen + 1] = ' ';
+	memcpy(buf + extraLen + nameLen + 2, valueObj->chars, valueLen);
+	buf[extraLen + nameLen + 2 + valueLen] = '\r';
+	buf[extraLen + nameLen + 3 + valueLen] = '\n';
+	buf[addLen] = '\0';
+	tableSet(&res->fields, copyString("_extraHeaders", 13),
+		OBJ_VAL(copyString(buf, addLen)));
+	free(buf);
+	return args[0];
+}
+
+static Value
+resBeginNative(int argCount, Value* args)
+{
+	ObjInstance* res;
+	char* contentType;
+	Value typeVal;
+
+	contentType = nil;
+	if (argCount < 1 || argCount > 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	if (argCount == 2 && IS_STRING(args[1]))
+		contentType = AS_CSTRING(args[1]);
+	else if (tableGet(&res->fields, copyString("_contentType", 12), &typeVal) && IS_STRING(typeVal))
+		contentType = AS_CSTRING(typeVal);
+	resStartStream(res, contentType);
+	return args[0];
+}
+
+static Value
+resWriteNative(int argCount, Value* args)
+{
+	ObjInstance* res;
+	ObjString* bodyObj;
+
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	bodyObj = valueToString(args[1]);
+	if (!resFlagOn(res, "_headerSent", 11))
+		resStartStream(res, "text/event-stream");
+	if (!resFlagOn(res, "_streaming", 10) && resGetFd(res) >= 0)
+		return args[0];
+	resWriteBody(res, bodyObj->chars, bodyObj->length);
+	return args[0];
+}
+
+static Value
+resEventNative(int argCount, Value* args)
+{
+	ObjInstance* res;
+	int jsonCap, len, prefixLen, eventLen;
+	char* json;
+	char* event;
+
+	jsonCap = 256;
+	len = 0;
+	prefixLen = 21;
+	if (argCount != 2 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	res = AS_INSTANCE(args[0]);
+	json = malloc((ulong)jsonCap);
+	if (json == nil) return NIL_VAL;
+	json[0] = '\0';
+	serializeJsonValue(args[1], &json, &len, &jsonCap);
+	eventLen = prefixLen + len + 2;
+	event = malloc(eventLen + 1);
+	if (event == nil) {
+		free(json);
+		return NIL_VAL;
+	}
+	memcpy(event, "event: message\ndata: ", prefixLen);
+	if (len > 0)
+		memcpy(event + prefixLen, json, len);
+	event[prefixLen + len] = '\n';
+	event[prefixLen + len + 1] = '\n';
+	event[eventLen] = '\0';
+	free(json);
+	if (!resFlagOn(res, "_headerSent", 11))
+		resStartStream(res, "text/event-stream");
+	if (!resFlagOn(res, "_streaming", 10) && resGetFd(res) >= 0) {
+		free(event);
+		return args[0];
+	}
+	resWriteBody(res, event, eventLen);
+	free(event);
+	return args[0];
+}
+
+static Value
+resEndNative(int argCount, Value* args)
+{
+	if (argCount != 1 || !IS_INSTANCE(args[0]))
+		return NIL_VAL;
+	resSetFlag(AS_INSTANCE(args[0]), "_ended", 6, 1);
+	return args[0];
 }
 
 /* Helper: get or create _routes array on server instance */
@@ -3759,53 +4424,172 @@ serverGetWorkerCount(ObjInstance* server)
 	return n;
 }
 
+#define HTTP_REQ_INIT 16384
+#define HTTP_REQ_MAX (1024 * 1024)
+
+static int
+httpContentLength(char* buf, int headerBytes)
+{
+	char* line;
+	char* end;
+	char* nl;
+
+	if (buf == nil || headerBytes <= 0)
+		return -1;
+	end = buf + headerBytes;
+	nl = strchr(buf, '\n');
+	line = nl != nil ? nl + 1 : buf;
+	while (line < end) {
+		char* next = strchr(line, '\n');
+		char* lineEnd = next != nil ? next : end;
+		if (lineEnd > end)
+			lineEnd = end;
+		if (lineEnd > line && lineEnd[-1] == '\r')
+			lineEnd--;
+		if (httpHeaderNameIs(line, "content-length")) {
+			char tmp[32];
+			httpCopyHeaderValue(line, lineEnd, 14, tmp, sizeof(tmp));
+			return atoi(tmp);
+		}
+		if (next == nil || next + 1 >= end)
+			break;
+		line = next + 1;
+	}
+	return -1;
+}
+
+static int
+httpReadRequest(int fd, char** outBuf, int* outLen)
+{
+	int cap, total, n, contentLen, headerBytes, need, space;
+	char* buf;
+	char* headerEnd;
+	char* nb;
+
+	cap = HTTP_REQ_INIT;
+	total = 0;
+	buf = malloc(cap);
+	if (buf == nil)
+		return -1;
+	for (;;) {
+		space = cap - total - 1;
+		if (space <= 0) {
+			int newCap;
+			if (cap >= HTTP_REQ_MAX) {
+				free(buf);
+				return -2;
+			}
+			newCap = cap * 2;
+			if (newCap > HTTP_REQ_MAX)
+				newCap = HTTP_REQ_MAX;
+			if (newCap <= cap) {
+				free(buf);
+				return -2;
+			}
+			nb = realloc(buf, newCap);
+			if (nb == nil) {
+				free(buf);
+				return -1;
+			}
+			buf = nb;
+			cap = newCap;
+			space = cap - total - 1;
+			if (space <= 0) {
+				free(buf);
+				return -2;
+			}
+		}
+		n = read(fd, buf + total, space);
+		if (n < 0) {
+			free(buf);
+			return -1;
+		}
+		if (n == 0) {
+			if (total == 0) {
+				free(buf);
+				return -1;
+			}
+			break;
+		}
+		total += n;
+		buf[total] = '\0';
+		headerEnd = strstr(buf, "\r\n\r\n");
+		if (headerEnd != nil)
+			headerBytes = (headerEnd - buf) + 4;
+		else {
+			headerEnd = strstr(buf, "\n\n");
+			if (headerEnd != nil)
+				headerBytes = (headerEnd - buf) + 2;
+			else
+				headerBytes = -1;
+		}
+		if (headerBytes < 0)
+			continue;
+		contentLen = httpContentLength(buf, headerBytes);
+		if (contentLen < 0)
+			contentLen = 0;
+		if (contentLen > HTTP_REQ_MAX) {
+			free(buf);
+			return -2;
+		}
+		need = headerBytes + contentLen;
+		if (need < headerBytes) {
+			free(buf);
+			return -2;
+		}
+		if (need > HTTP_REQ_MAX) {
+			free(buf);
+			return -2;
+		}
+		if (need + 1 > cap) {
+			nb = realloc(buf, need + 1);
+			if (nb == nil) {
+				free(buf);
+				return -1;
+			}
+			buf = nb;
+			cap = need + 1;
+		}
+		while (total < need) {
+			n = read(fd, buf + total, need - total);
+			if (n <= 0)
+				break;
+			total += n;
+		}
+		buf[total] = '\0';
+		break;
+	}
+	*outBuf = buf;
+	*outLen = total;
+	return 0;
+}
+
 /* Handle one accepted client connection (does not close dfd). */
 static void
 serverHandleClient(ObjInstance* server, int dfd, ObjArray* routes, char* defaultStaticDir)
 {
-	char buffer[8192];
+	char* buffer;
 	int totalRead;
-	int n;
+	int rc;
 	HttpRequest req;
 	ObjInstance* resObj;
 
 	USED(routes);
 	USED(defaultStaticDir);
-
-	n = read(dfd, buffer, sizeof(buffer) - 1);
-	if (n <= 0)
+	buffer = nil;
+	totalRead = 0;
+	rc = httpReadRequest(dfd, &buffer, &totalRead);
+	if (rc == -2) {
+		sendHttpResponse(dfd, 413, "Payload Too Large",
+			"{\"error\":\"Payload Too Large\"}");
 		return;
-	totalRead = n;
-	buffer[totalRead] = '\0';
-
-	{
-		char* headerEnd = strstr(buffer, "\r\n\r\n");
-		if (headerEnd == nil)
-			headerEnd = strstr(buffer, "\n\n");
-		if (headerEnd != nil) {
-			char* clHeader = strstr(buffer, "Content-Length:");
-			if (clHeader == nil)
-				clHeader = strstr(buffer, "content-length:");
-			if (clHeader != nil) {
-				int contentLen = atoi(clHeader + 15);
-				int bodyStart = (headerEnd - buffer) + 4;
-				if (strstr(buffer, "\n\n") != nil && strstr(buffer, "\r\n\r\n") == nil)
-					bodyStart = (headerEnd - buffer) + 2;
-				int bodyReceived = totalRead - bodyStart;
-				int needMore = contentLen - bodyReceived;
-				while (needMore > 0 && totalRead < sizeof(buffer) - 1) {
-					n = read(dfd, buffer + totalRead, sizeof(buffer) - totalRead - 1);
-					if (n <= 0) break;
-					totalRead += n;
-					needMore -= n;
-				}
-				buffer[totalRead] = '\0';
-			}
-		}
 	}
+	if (rc < 0 || buffer == nil)
+		return;
 
 	if (parseHttpRequest(buffer, totalRead, &req) < 0) {
 		sendHttpResponse(dfd, 400, "Bad Request", "{\"error\":\"Bad Request\"}");
+		free(buffer);
 		return;
 	}
 	fprint(1, "%s %s Host:%s\n", req.method, req.path, req.host);
@@ -3816,6 +4600,7 @@ serverHandleClient(ObjInstance* server, int dfd, ObjArray* routes, char* default
 	tableSet(&resObj->fields, copyString("_statusCode", 11), NUMBER_VAL(200));
 	serverDispatch(server, req.method, req.path, req.host, req.body, req.authorization, resObj);
 	pop(); /* res */
+	free(buffer);
 }
 
 static void
@@ -3877,7 +4662,7 @@ serverHandleNative(int argCount, Value* args)
 	char methodBuf[16];
 	char pathBuf[1024];
 	char hostBuf[256];
-	Value statusVal, bodyVal, typeVal;
+	Value statusVal, bodyVal, typeVal, hdrVal;
 	int statusCode;
 
 	bodySrc = "";
@@ -3929,6 +4714,10 @@ serverHandleNative(int argCount, Value* args)
 		tableSet(&out->fields, copyString("contentType", 11), typeVal);
 	else
 		tableSet(&out->fields, copyString("contentType", 11), OBJ_VAL(copyString("text/plain", 10)));
+	if (tableGet(&resObj->fields, copyString("_extraHeaders", 13), &hdrVal) && IS_STRING(hdrVal))
+		tableSet(&out->fields, copyString("headers", 7), hdrVal);
+	else
+		tableSet(&out->fields, copyString("headers", 7), OBJ_VAL(copyString("", 0)));
 	pop(); /* out */
 	pop(); /* res */
 	return OBJ_VAL(out);
@@ -4898,6 +5687,11 @@ initVM(void)
 	tableSet(&serverResClass->methods, copyString("html", 4), OBJ_VAL(newNative(resHtmlNative)));
 	tableSet(&serverResClass->methods, copyString("json", 4), OBJ_VAL(newNative(resJsonNative)));
 	tableSet(&serverResClass->methods, copyString("status", 6), OBJ_VAL(newNative(resStatusNative)));
+	tableSet(&serverResClass->methods, copyString("header", 6), OBJ_VAL(newNative(resHeaderNative)));
+	tableSet(&serverResClass->methods, copyString("begin", 5), OBJ_VAL(newNative(resBeginNative)));
+	tableSet(&serverResClass->methods, copyString("write", 5), OBJ_VAL(newNative(resWriteNative)));
+	tableSet(&serverResClass->methods, copyString("event", 5), OBJ_VAL(newNative(resEventNative)));
+	tableSet(&serverResClass->methods, copyString("end", 3), OBJ_VAL(newNative(resEndNative)));
 
 	serverClass = newClass(copyString("Server", 6));
 	tableSet(&serverClass->methods, vm.initString, OBJ_VAL(newNative(serverInitNative)));
@@ -4985,6 +5779,7 @@ initVM(void)
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
 	defineNative("httpRequest", httpRequestNative);
+	defineNative("httpStream", httpStreamNative);
 	defineNative("httpPostForm", httpPostFormNative);
 	defineNative("httpServer", httpServerNative);
 	defineNative("sha256", sha256Native);
