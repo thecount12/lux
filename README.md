@@ -1644,7 +1644,7 @@ server.use(requireAuth);
 
 **OpenAPI / Swagger UI (`lib/swagger.lux`):** `swagger(server)` mounts FastAPI-style `GET /docs` (Swagger UI) and `GET /openapi.json` from the route table. Pass an optional `Op` as the last argument to `get` / `post` / `getHost` / `postHost`, or attach one later with `swaggerDoc`. See `examples/swagger_server.lux` and `tests/test_swagger.lux`.
 
-**MCP Streamable HTTP (`lib/mcp.lux`):** Point Cline at a dedicated path (`/mcp`), not `/`. `mcpMount(server, "/mcp", name, version, tools, onCall)` answers `initialize`, `notifications/*` (202), `tools/list`, and `tools/call` with JSON-RPC. GET without SSE is 405, which the spec allows. Buffered `res.json` is valid Streamable HTTP; use `res.begin` / `res.event` / `res.end` when you want `text/event-stream`. For Ollama `"stream": true`, `httpStream` / `mcpOllamaChat` call your callback per NDJSON line. See `tests/test_mcp.lux` and `tests/test_http_stream.lux`.
+**MCP Streamable HTTP (`lib/mcp.lux`):** Point Cline at a dedicated path (`/mcp`), not `/`. `mcpMount(server, "/mcp", name, version, tools, onCall)` answers `initialize`, `notifications/*` (202), `tools/list`, and `tools/call` with JSON-RPC. GET without SSE is 405, which the spec allows. Buffered `res.json` is valid Streamable HTTP; use `res.begin` / `res.event` / `res.end` when you want `text/event-stream`. For Ollama `"stream": true`, `httpStream` / `mcpOllamaChat` call your callback per NDJSON line. See `tests/test_mcp.lux`, `tests/test_http_stream.lux`, and `examples/mcp/` (`ask_devops_assistant` plus allow-listed `devops.md`). The Cline UI may require `https://`; edit `cline_mcp_settings.json` to use `http://127.0.0.1:8080/mcp`.
 
 ```lux
 import "../lib/swagger.lux";

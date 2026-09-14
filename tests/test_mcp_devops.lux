@@ -1,0 +1,19 @@
+import "../examples/mcp/mcp_definition.lux";
+
+print "=== MCP devops definition ===";
+
+assert(definition.name == "ask_devops_assistant", "tool name");
+assert(strFind(definition.description, "FastAPI") >= 0, "description");
+assert(definition.inputSchema.required[0] == "question", "question required");
+
+var guide = nil;
+if (fileExists("../examples/mcp/devops.md")) {
+    guide = "../examples/mcp/devops.md";
+}
+if (fileExists("examples/mcp/devops.md")) {
+    guide = "examples/mcp/devops.md";
+}
+assert(guide != nil, "devops.md present");
+assert(strFind(readFile(guide), "FastAPI") >= 0, "guide text");
+
+print "All MCP devops definition tests passed";
