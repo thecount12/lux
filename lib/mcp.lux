@@ -1,0 +1,215 @@
+// Buffered MCP Streamable HTTP helpers (JSON-RPC over one URL).
+// Import relative to the process working directory:
+//   import "../lib/mcp.lux";   // from posix/ or tests/
+//   import "lib/mcp.lux";      // from repo root
+//
+// Streamable HTTP does not require SSE. res.json() is valid.
+// GET /mcp should 405 until you call res.begin() / res.event().
+//
+// Cline:
+//   "mcpServers": { "lux": { "type": "streamableHttp", "url": "http://host:8080/mcp" } }
+
+class McpText {
+    init(text) {
+        this.type = "text";
+        this.text = text;
+    }
+}
+
+class McpCallResult {
+    init(content) {
+        this.content = content;
+    }
+}
+
+class McpServerInfo {
+    init(name, version) {
+        this.name = name;
+        this.version = version;
+    }
+}
+
+class McpInitResult {
+    init(protocolVersion, serverInfo, capabilities) {
+        this.protocolVersion = protocolVersion;
+        this.serverInfo = serverInfo;
+        this.capabilities = capabilities;
+    }
+}
+
+class McpTools {
+    init(tools) {
+        this.tools = tools;
+    }
+}
+
+class McpRpc {
+    init(id, result) {
+        this.jsonrpc = "2.0";
+        this.id = id;
+        this.result = result;
+    }
+}
+
+class McpErrBody {
+    init(code, message) {
+        this.code = code;
+        this.message = message;
+    }
+}
+
+class McpRpcError {
+    init(id, error) {
+        this.jsonrpc = "2.0";
+        this.id = id;
+        this.error = error;
+    }
+}
+
+class McpTool {
+    init(name, description, inputSchema) {
+        this.name = name;
+        this.description = description;
+        this.inputSchema = inputSchema;
+    }
+}
+
+fun mcpCaps() {
+    return parseJSON("{\"tools\": {}}");
+}
+
+fun mcpInitialize(name, version, protocolVersion) {
+    if (protocolVersion == nil) {
+        protocolVersion = "2024-11-05";
+    }
+    return McpInitResult(protocolVersion, McpServerInfo(name, version), mcpCaps());
+}
+
+fun mcpReply(res, id, result) {
+    res.json(McpRpc(id, result));
+}
+
+fun mcpReplyError(res, id, code, message) {
+    res.json(McpRpcError(id, McpErrBody(code, message)));
+}
+
+fun mcpAccepted(res) {
+    res.status(202);
+    res.send("");
+}
+
+fun mcpMethodNotAllowed(res) {
+    res.status(405);
+    res.send("Method Not Allowed");
+}
+
+fun mcpCallText(text) {
+    if (text == nil) {
+        text = "";
+    }
+    return McpCallResult([McpText(text)]);
+}
+
+fun mcpIsNotification(body) {
+    if (body == nil) {
+        return true;
+    }
+    return getField(body, "id") == nil;
+}
+
+fun mcpBeginSse(res) {
+    res.begin("text/event-stream");
+}
+
+fun mcpReplySse(res, id, result) {
+    mcpBeginSse(res);
+    res.event(McpRpc(id, result));
+    res.end();
+}
+
+fun mcpOllamaChat(url, body, headers, onDelta) {
+    fun onLine(line) {
+        var chunk = parseJSON(line);
+        var msg;
+        var delta;
+        if (chunk == nil) {
+            return;
+        }
+        msg = getField(chunk, "message");
+        delta = nil;
+        if (msg != nil) {
+            delta = getField(msg, "content");
+        }
+        if (delta == nil) {
+            delta = getField(chunk, "response");
+        }
+        if (delta != nil and delta != "") {
+            onDelta(delta);
+        }
+    }
+    return httpStream("POST", url, body, headers, onLine);
+}
+
+fun mcpPost(req, res, name, version, tools, onCall) {
+    var body = parseJSON(req.body);
+    if (body == nil) {
+        mcpReplyError(res, nil, -32700, "Parse error");
+        return;
+    }
+    var method = getField(body, "method");
+    var params = getField(body, "params");
+    var id = getField(body, "id");
+    if (method == nil) {
+        mcpAccepted(res);
+        return;
+    }
+    if (mcpIsNotification(body)) {
+        mcpAccepted(res);
+        return;
+    }
+    if (method == "initialize") {
+        var pv = "2024-11-05";
+        if (params != nil) {
+            var requested = getField(params, "protocolVersion");
+            if (requested != nil) {
+                pv = requested;
+            }
+        }
+        mcpReply(res, id, mcpInitialize(name, version, pv));
+        return;
+    }
+    if (method == "tools/list") {
+        if (tools == nil) {
+            tools = [];
+        }
+        mcpReply(res, id, McpTools(tools));
+        return;
+    }
+    if (method == "tools/call") {
+        var toolName = getField(params, "name");
+        var arguments = getField(params, "arguments");
+        if (onCall == nil) {
+            mcpReplyError(res, id, -32601, "Method not found");
+            return;
+        }
+        var text = onCall(toolName, arguments, params);
+        if (text == nil) {
+            mcpReplyError(res, id, -32602, "Unknown tool");
+            return;
+        }
+        mcpReply(res, id, mcpCallText(text));
+        return;
+    }
+    mcpReplyError(res, id, -32601, "Method not found");
+}
+
+fun mcpMount(server, path, name, version, tools, onCall) {
+    fun handleGet(req, res) {
+        mcpMethodNotAllowed(res);
+    }
+    fun handlePost(req, res) {
+        mcpPost(req, res, name, version, tools, onCall);
+    }
+    server.get(path, handleGet);
+    server.post(path, handlePost);
+}

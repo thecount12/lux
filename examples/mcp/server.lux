@@ -1,0 +1,207 @@
+/* Experimental MCP devops assistant (Ollama).
+ *
+ *   cd posix && ./lux ../examples/mcp/server.lux
+ *
+ * Cline (edit cline_mcp_settings.json; the UI may reject http://):
+ *   "lux-devops": {
+ *     "type": "streamableHttp",
+ *     "url": "http://127.0.0.1:8080/mcp"
+ *   }
+ *
+ * Models to try (set OLLAMA_MODEL):
+ *   qwen2.5-coder:14b
+ *   qwen2.5-coder:32b
+ *   qwen3-coder:30b
+ *   deepseek-r1:32b
+ *   qwen3-coder-next:latest   (79B — often too big)
+ *
+ * OLLAMA_HOST  default http://10.0.0.22:11434
+ * OLLAMA_MODEL default qwen2.5-coder:14b
+ */
+
+import "../lib/mcp.lux";
+import "../lib/swagger.lux";
+import "../examples/mcp/mcp_definition.lux";
+
+var ALLOWED_DOCS = ["devops.md"];
+var OLLAMA_HOST = getenv("OLLAMA_HOST");
+var OLLAMA_MODEL = getenv("OLLAMA_MODEL");
+if (OLLAMA_HOST == nil or OLLAMA_HOST == "") {
+	OLLAMA_HOST = "http://10.0.0.22:11434";
+}
+if (OLLAMA_MODEL == nil or OLLAMA_MODEL == "") {
+	OLLAMA_MODEL = "qwen2.5-coder:14b";
+}
+
+class Headers { init() {} }
+class Health { init() {} }
+
+var health = Health();
+health.status = "ok";
+
+class Allowed {
+	init(allowed_docs, count, note) {
+		this.allowed_docs = allowed_docs;
+		this.count = count;
+		this.note = note;
+	}
+}
+
+class OMessages {
+	init(content) {
+		this.role = "user";
+		this.content = content;
+	}
+}
+
+class OModel {
+	init(messages, model, stream) {
+		this.model = model;
+		this.stream = stream;
+		this.messages = messages;
+	}
+}
+
+fun firstExisting(paths) {
+	var i = 0;
+	while (i < paths.length) {
+		if (fileExists(paths[i])) {
+			return paths[i];
+		}
+		i = i + 1;
+	}
+	return nil;
+}
+
+fun docPath(name) {
+	return firstExisting([
+		"examples/mcp/" + name,
+		"../examples/mcp/" + name,
+		name
+	]);
+}
+
+fun loadAllowedDocs() {
+	var blob = "";
+	var i = 0;
+	while (i < ALLOWED_DOCS.length) {
+		var name = ALLOWED_DOCS[i];
+		var path = docPath(name);
+		if (path != nil) {
+			blob = blob + "\n\n# " + name + "\n" + readFile(path);
+		}
+		i = i + 1;
+	}
+	return blob;
+}
+
+fun ollamaChat(prompt) {
+	var header = Headers();
+	header.Content_Type = "application/json";
+	var model = OModel([OMessages(prompt)], OLLAMA_MODEL, false);
+	var response = httpRequest("POST", OLLAMA_HOST + "/api/chat", toJSON(model), header);
+	if (response == nil) {
+		return nil;
+	}
+	var result = parseJSON(response);
+	if (result == nil) {
+		return nil;
+	}
+	var msg = getField(result, "message");
+	if (msg == nil) {
+		return nil;
+	}
+	return getField(msg, "content");
+}
+
+fun onCall(name, arguments, params) {
+	if (name != "ask_devops_assistant") {
+		return nil;
+	}
+	var question = getField(arguments, "question");
+	if (question == nil) {
+		question = "";
+	}
+	var docs = loadAllowedDocs();
+	var prompt = "You are an internal DevOps assistant. Prefer our Python and FastAPI practices in the documentation over generic advice.\n" +
+		docs + "\n\nQuestion:\n" + question;
+	var answer = ollamaChat(prompt);
+	if (answer == nil) {
+		return "Ollama is not reachable at " + OLLAMA_HOST + " (model " + OLLAMA_MODEL + ").";
+	}
+	return answer;
+}
+
+fun handleHealth(req, res) {
+	res.json(health);
+}
+
+fun handleDocs(req, res) {
+	var allowed = Allowed(ALLOWED_DOCS, ALLOWED_DOCS.length, "allow-listed markdown next to this server (examples/mcp/)");
+	res.json(allowed);
+}
+
+fun handleOmodels(req, res) {
+	var response = httpGet(OLLAMA_HOST + "/api/tags");
+	if (response == nil) {
+		res.status(502);
+		res.send("{\"error\":\"ollama unreachable\"}");
+		return;
+	}
+	var result = parseJSON(response);
+	if (result == nil) {
+		res.status(502);
+		res.send("{\"error\":\"bad ollama response\"}");
+		return;
+	}
+	res.json(result);
+}
+
+fun handleOchat(req, res) {
+	var body = parseJSON(req.body);
+	var msg = getField(body, "msg");
+	if (msg == nil) {
+		res.status(400);
+		res.json(parseJSON("{\"error\":\"no msg\"}"));
+		return;
+	}
+	var answer = ollamaChat(msg);
+	if (answer == nil) {
+		res.status(502);
+		res.send("{\"error\":\"ollama unreachable\"}");
+		return;
+	}
+	var out = parseJSON("{\"content\":\"\"}");
+	out.content = answer;
+	res.json(out);
+}
+
+fun logger(req, res, next) {
+	print "Request: " + req.method + " " + req.path;
+	next();
+}
+
+var server = Server(8080);
+server.workers(1);
+server.swaggerTitle = "Demo MCP";
+server.use(logger);
+
+mcpMount(server, "/mcp", "mcp-devops-assistant", "0.1.0", [definition], onCall);
+
+var healthOp = Op("Health check", "ops");
+healthOp.example = parseJSON(health);
+server.get("/mcp/health", handleHealth, healthOp);
+server.get("/mcp/allowed-docs", handleDocs);
+server.get("/models", handleOmodels);
+server.post("/api/chat", handleOchat);
+
+swagger(server);
+
+print "MCP devops assistant on http://127.0.0.1:8080/mcp";
+print "  OLLAMA_HOST=" + OLLAMA_HOST + " model=" + OLLAMA_MODEL;
+print "  GET  /mcp/health";
+print "  GET  /mcp/allowed-docs";
+print "  GET  /models            ollama tags";
+print "  POST /api/chat          {\"msg\":\"hello\"}";
+print "  GET  /docs              swagger";
+server.start();

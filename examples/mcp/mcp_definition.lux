@@ -1,0 +1,85 @@
+// MCP tool Definition — ask_devops_assistant
+// Import from posix/: import "../examples/mcp/mcp_definition.lux";
+
+class PropertiesContent {
+	init() {
+		this.type = "string";
+	}
+}
+
+class PropertiesRole {
+	init() {
+		this.type = "string";
+		this.enum = ["user", "assistant", "system"];
+	}
+}
+
+class HisItemProperties {
+	init(role, content) {
+		this.role = role;
+		this.content = content;
+	}
+}
+
+class HistoryItems {
+	init(properties) {
+		this.type = "object";
+		this.properties = properties;
+	}
+}
+
+class History {
+	init(item) {
+		this.type = "array";
+		this.items = item;
+	}
+}
+
+class Context {
+	init() {
+		this.type = "object";
+		this.description = "Additional context for the question";
+	}
+}
+
+class Question {
+	init() {
+		this.type = "string";
+		this.description = "The question to ask";
+	}
+}
+
+class Properties {
+	init(question, context, history) {
+		this.question = question;
+		this.context = context;
+		this.history = history;
+	}
+}
+
+class Schema {
+	init(properties) {
+		this.type = "object";
+		this.properties = properties;
+		this.required = ["question"];
+	}
+}
+
+class Definition {
+	init(inputSchema) {
+		this.name = "ask_devops_assistant";
+		this.description = "Ask the internal DevOps assistant about our Python and FastAPI practices (allow-listed markdown, starting with devops.md)";
+		this.inputSchema = inputSchema;
+	}
+}
+
+var propcon = PropertiesContent();
+var proprole = PropertiesRole();
+var hisitemprop = HisItemProperties(proprole, propcon);
+var hisitems = HistoryItems(hisitemprop);
+var hist = History(hisitems);
+var context = Context();
+var question = Question();
+var properties = Properties(question, context, hist);
+var schema = Schema(properties);
+var definition = Definition(schema);

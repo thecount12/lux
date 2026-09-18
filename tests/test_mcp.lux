@@ -1,0 +1,82 @@
+import "../lib/mcp.lux";
+
+print "=== MCP buffered + Res streaming ===";
+
+class Schema {
+    init() {
+        this.type = "object";
+        this.properties = parseJSON("{\"question\":{\"type\":\"string\"}}");
+        this.required = ["question"];
+    }
+}
+
+fun onCall(name, arguments, params) {
+    if (name != "ask") {
+        return nil;
+    }
+    var q = getField(arguments, "question");
+    if (q == nil) {
+        q = "";
+    }
+    return "echo:" + q;
+}
+
+var tool = McpTool("ask", "Ask a question", Schema());
+var server = Server(0);
+mcpMount(server, "/mcp", "mcp-devops-assistant", "0.1.0", [tool], onCall);
+
+var r = server.handle("GET", "/mcp");
+assert(r.statusCode == 405, "GET is 405 without SSE");
+
+r = server.handle("POST", "/mcp", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\"}}");
+assert(r.statusCode == 200, "initialize status");
+assert(strFind(r.contentType, "application/json") >= 0, "initialize json");
+assert(strFind(r.body, "mcp-devops-assistant") >= 0, "server name");
+assert(strFind(r.body, "2025-03-26") >= 0, "echo protocol");
+assert(strFind(r.body, "\"jsonrpc\":\"2.0\"") >= 0, "rpc version");
+
+r = server.handle("POST", "/mcp", "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+assert(r.statusCode == 202, "notification 202");
+
+r = server.handle("POST", "/mcp", "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+assert(strFind(r.body, "ask") >= 0, "tools/list name");
+assert(strFind(r.body, "Ask a question") >= 0, "tools/list desc");
+
+r = server.handle("POST", "/mcp", "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"ask\",\"arguments\":{\"question\":\"uptime\"}}}");
+assert(strFind(r.body, "echo:uptime") >= 0, "tools/call text");
+assert(strFind(r.body, "\"type\":\"text\"") >= 0, "content type");
+
+r = server.handle("POST", "/mcp", "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"nope\",\"arguments\":{}}}");
+assert(strFind(r.body, "Unknown tool") >= 0, "unknown tool");
+
+r = server.handle("POST", "/mcp", "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"ping\"}");
+assert(strFind(r.body, "Method not found") >= 0, "unknown method");
+
+fun handleHdr(req, res) {
+    res.header("Mcp-Session-Id", "sess-1");
+    res.json(parseJSON("{\"ok\":true}"));
+}
+
+fun handleSse(req, res) {
+    res.status(200);
+    res.begin("text/event-stream");
+    res.event(parseJSON("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}"));
+    res.write("event: message\ndata: {\"done\":true}\n\n");
+    res.end();
+}
+
+var s2 = Server(0);
+s2.post("/hdr", handleHdr);
+s2.post("/sse", handleSse);
+
+r = s2.handle("POST", "/hdr", "{}");
+assert(strFind(r.body, "\"ok\":true") >= 0, "header json body");
+assert(strFind(r.headers, "Mcp-Session-Id: sess-1") >= 0, "extra header");
+
+r = s2.handle("POST", "/sse", "{}");
+assert(strFind(r.contentType, "text/event-stream") >= 0, "sse type");
+assert(strFind(r.body, "event: message") >= 0, "sse event");
+assert(strFind(r.body, "\"ok\":true") >= 0, "sse json");
+assert(strFind(r.body, "\"done\":true") >= 0, "sse write");
+
+print "All MCP tests passed";

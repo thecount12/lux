@@ -1,0 +1,34 @@
+print "=== httpStream NDJSON ===";
+
+var path = "_stream_ndjson.txt";
+writeFile(path, "{\"n\":1}\n{\"n\":2}\r\n\n{\"n\":3}");
+
+var cwd = strTrim(run("pwd"));
+var url = "file://" + cwd + "/" + path;
+
+var lines = [];
+fun onLine(line) {
+    lines[lines.length] = line;
+}
+
+var ok = httpStream("GET", url, nil, nil, onLine);
+assert(ok == true, "stream ok");
+assert(lines.length == 3, "three non-empty lines");
+assert(lines[0] == "{\"n\":1}", "line 0");
+assert(lines[1] == "{\"n\":2}", "CRLF stripped");
+assert(lines[2] == "{\"n\":3}", "final line without newline");
+
+var n = 0;
+fun stopEarly(line) {
+    n = n + 1;
+    return false;
+}
+ok = httpStream("GET", url, nil, nil, stopEarly);
+assert(ok == true, "abort still true");
+assert(n == 1, "stopped after first line");
+
+assert(httpStream("GET", "file:///no/such/lux_ndjson_file", nil, nil, onLine) == nil, "missing file");
+assert(httpStream("GET", url, nil, nil) == nil, "needs onLine");
+
+deleteFile(path);
+print "All httpStream tests passed";
