@@ -1,9 +1,15 @@
 {% raw %}
-# Lux
+<p align="center">
+  <img src="lux9-wordmark.png" alt="Lux9 — plan 9 · posix" width="720">
+</p>
 
-A portable scripting language for system automation, HTTP services, and cloud work. Full [Lox](https://craftinginterpreters.com/) parity, native on **Plan 9**, and the same runtime on **macOS, Linux, and OpenBSD**.
+# Lux9
 
-[View on GitHub](https://github.com/thecount12/lux) · [Download v1.1.0](https://github.com/thecount12/lux/releases/tag/v1.1.0) · [README](https://github.com/thecount12/lux#readme)
+A Lox-family scripting language for system automation, HTTP services, and cloud work. Native on **Plan 9**, same runtime on **macOS, Linux, and OpenBSD**.
+
+Not the JVM Lisp at [LuxLang/lux](https://github.com/LuxLang/lux), and not the Lux9 microkernel. Scripts are still `.lux`; the command is still `lux`.
+
+[View on GitHub](https://github.com/thecount12/lux) · [Download v1.1.0](https://github.com/thecount12/lux/releases/tag/v1.1.0) · [README](https://github.com/thecount12/lux#readme) · [lux9.dev](https://lux9.dev)
 
 ---
 
