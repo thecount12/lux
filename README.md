@@ -1,9 +1,16 @@
-# Lux — A Portable Scripting Language
+<p align="center">
+  <img src="docs/lux9-wordmark.png" alt="Lux9 — plan 9 · posix" width="720">
+</p>
+
+# Lux9 — a Lox-family scripting language for Plan 9 and POSIX
+
+Not the JVM Lisp at [LuxLang/lux](https://github.com/LuxLang/lux), and not the Lux9 microkernel. Scripts are still `.lux`; the command is still `lux`. Site: [luxlang.dev](https://luxlang.dev) · [lux9.dev](https://lux9.dev).
 
 Lux is a dynamically-typed scripting language for system automation, cloud integration, and embedded scripting. Originally written in Plan 9 C, it runs on **macOS, Linux, OpenBSD, and Plan 9**.
 
-## 🌟 Why "Lux"?
-The name **Lux** (Latin for "light") signifies the evolution of this project. While it maintains full parity with the original Lox specification, it has been "enlightened" with new features, better performance, and first-class support for the **Plan 9** operating system.
+## Why Lux9?
+
+The language is still **Lux** (Latin for "light"): Lox from *Crafting Interpreters*, grown up for Plan 9. **Lux9** is the public name so it can be found. Full Lox parity, plus a real standard library and first-class Plan 9 support.
 
 Built from first principles (inspired by "Crafting Interpreters"), Lux combines a clean language design with modern features: HTTP/HTTPS, cryptography, AWS integration, databases, and file I/O. The language itself is defined in [SPEC.md](SPEC.md).
 
