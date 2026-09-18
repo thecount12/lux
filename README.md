@@ -652,6 +652,8 @@ Compile error:
 [line N] Error at 'name': Too many unique identifiers in one chunk.
 ```
 
+With a script path the same error is `file.lux:N: Error at 'name': …` so Acme can plumb it.
+
 This is **not** a file line-count limit. Each compiled function is a **chunk** (top-level script, each `fun`, each method, each `import`). Identifier opcodes (`assert`, `.status`, globals, …) can only point at constant-pool slots `0..255`. String literals share that same pool (they can use `OP_CONSTANT_LONG` for later slots, but they still take indices). Names are **not interned**: every `assert(...)` at top level burns another slot.
 
 A test file with lots of `assert` + string literals hits this while a 400-line `lib/` file is fine, because methods each get their own chunk.

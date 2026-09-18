@@ -50,7 +50,9 @@ int main(int argc, const char* argv[]) {
     initVM();
 
     char* source = readFile(argv[1]);
+    setCompileSourceName(argv[1]);
     ObjFunction* function = compile(source);
+    setCompileSourceName(NULL);
     free(source);
 
     if (function == NULL) {

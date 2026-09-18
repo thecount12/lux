@@ -96,6 +96,23 @@ typedef struct ClassCompiler {
 Parser parser;
 Compiler* current = NULL;
 ClassCompiler* currentClass = NULL;
+static const char* compileSourceName = NULL;
+
+void setCompileSourceName(const char* name) {
+	compileSourceName = name;
+}
+
+const char* getCompileSourceName(void) {
+	return compileSourceName;
+}
+
+/* Acme plumber: file.ext:line */
+static void errorHead(int line, const char* kind) {
+	if (compileSourceName != NULL && compileSourceName[0] != '\0')
+		fprintf(stderr, "%s:%d: %s", compileSourceName, line, kind);
+	else
+		fprintf(stderr, "[line %d] %s", line, kind);
+}
 
 /* Break statement support */
 #define MAX_BREAK_JUMPS 256
@@ -109,7 +126,7 @@ static Chunk* currentChunk() {
 static void errorAt(Token* token, const char* message) {
 	if (parser.panicMode) return;
 	parser.panicMode = true;
-	fprintf(stderr, "[line %d] Error", token->line);
+	errorHead(token->line, "Error");
 
 	if (token->type == TOKEN_EOF) {
 		fprintf(stderr, " at end");
@@ -119,7 +136,7 @@ static void errorAt(Token* token, const char* message) {
 		fprintf(stderr, " at '%.*s'", token->length, token->start);
 	}
 
-	fprintf(stderr, ":%s\n", message);
+	fprintf(stderr, ": %s\n", message);
 	parser.hadError = true;
 }
 
@@ -134,7 +151,7 @@ static void errorAtCurrent(const char* message) {
 static void warnAt(Token* token, const char* message) {
 	if (!lintOpts || !lintOpts->lint) return;
 	lintOpts->warningCount++;
-	fprintf(stderr, "[line %d] Warning", token->line);
+	errorHead(token->line, "Warning");
 	if (token->type != TOKEN_EOF && token->type != TOKEN_ERROR && token->length > 0) {
 		fprintf(stderr, " at '%.*s'", token->length, token->start);
 	}
@@ -144,7 +161,8 @@ static void warnAt(Token* token, const char* message) {
 static void warnAtLine(int line, const char* message) {
 	if (!lintOpts || !lintOpts->lint) return;
 	lintOpts->warningCount++;
-	fprintf(stderr, "[line %d] Warning: %s\n", line, message);
+	errorHead(line, "Warning");
+	fprintf(stderr, ": %s\n", message);
 }
 
 static void advance() {
@@ -258,6 +276,11 @@ static void initCompiler(Compiler* compiler, FunctionType type) {
 	compiler->loopScopeDepth = 0;
 	compiler->function = newFunction();
 	current = compiler;
+	if (compiler->enclosing != NULL && compiler->enclosing->function->sourceName != NULL)
+		current->function->sourceName = compiler->enclosing->function->sourceName;
+	else if (compileSourceName != NULL && compileSourceName[0] != '\0')
+		current->function->sourceName = copyString(compileSourceName,
+			(int)strlen(compileSourceName));
 	if (type != TYPE_SCRIPT) {
 		current->function->name = copyString(parser.previous.start,
 											 parser.previous.length);

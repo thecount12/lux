@@ -55,6 +55,7 @@ typedef struct {
 	int upvalueCount;
 	Chunk chunk;
 	ObjString* name;
+	ObjString* sourceName;	/* script path; Acme file:line: */
 } ObjFunction;
 
 typedef Value (*NativeFn)(int argCount, Value* args);

@@ -403,7 +403,7 @@ import "utils/math.lux";
 
 ### 12.1 Compile errors
 
-Printed as `[line N] Error …`. Compilation fails; the chunk is not run.
+Printed as `file.lux:N: Error …` when a path is known (Acme-plumbable). Without a path (`-c`, REPL): `[line N] Error …`. Compilation fails; the chunk is not run.
 
 ### 12.2 Runtime errors
 
@@ -434,7 +434,7 @@ These are part of the current language as implemented:
 | `break` patch list per loop | 256 |
 | Constant pool | 24-bit (`OP_CONSTANT_LONG`); not limited to 256 |
 
-The error is `[line N] Error at 'name': Too many unique identifiers in one chunk.`
+The error is `file.lux:N: Error at 'name': Too many unique identifiers in one chunk.` (or `[line N] …` with `lux -c`).
 
 That is **not** a line-count limit and **not** “256 unique names per file.” A **chunk** is one compiled function: the top-level script, each `fun` body, each method, and each `import` (the imported file is its own script chunk). Identifier opcodes can only address pool slots `0..255`. String literals in the same chunk use `OP_CONSTANT_LONG` past 256, but they still **occupy** pool slots, and each identifier **use** appends another slot (names are not interned). A long top-level test with many `assert(...)` calls and string literals will trip this even when the set of names is small.
 

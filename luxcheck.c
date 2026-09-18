@@ -60,7 +60,9 @@ main(int argc, char *argv[])
 	initVM();
 
 	source = readFile(argv[1]);
+	setCompileSourceName(argv[1]);
 	function = compile(source);
+	setCompileSourceName(nil);
 	free(source);
 
 	if (function == nil) {
