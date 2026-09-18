@@ -24,14 +24,13 @@ import "../lib/swagger.lux";
 import "../examples/mcp/mcp_definition.lux";
 
 var ALLOWED_DOCS = ["devops.md"];
+
+/* getenv() is POSIX-only; Plan 9 has no native. Uncomment on posix/ if you want env overrides.
 var OLLAMA_HOST = getenv("OLLAMA_HOST");
 var OLLAMA_MODEL = getenv("OLLAMA_MODEL");
-if (OLLAMA_HOST == nil or OLLAMA_HOST == "") {
-	OLLAMA_HOST = "http://10.0.0.22:11434";
-}
-if (OLLAMA_MODEL == nil or OLLAMA_MODEL == "") {
-	OLLAMA_MODEL = "qwen2.5-coder:14b";
-}
+*/
+var OLLAMA_HOST = "http://10.0.0.22:11434";
+var OLLAMA_MODEL = "qwen2.5-coder:14b";
 
 class Headers { init() {} }
 class Health { init() {} }
@@ -61,6 +60,8 @@ class OModel {
 		this.messages = messages;
 	}
 }
+
+class Payload { init() {} }
 
 fun firstExisting(paths) {
 	var i = 0;
@@ -114,6 +115,71 @@ fun ollamaChat(prompt) {
 	return getField(msg, "content");
 }
 
+fun ollamaPassChat(payload) {
+	var header = Headers();
+	header.Content_Type = "application/json";
+	
+	var response = httpRequest("POST", OLLAMA_HOST + "/api/chat", toJSON(payload), header);
+	if (response == nil) {
+		return nil;
+	}
+
+	print "pass res type: " + typeof(response);
+	
+	var lines = strSplit(response, "\n");
+	print "line count: " + lines.length;
+	
+	var size = lines.length;
+	var num = 0;
+	
+	// Track the stitched content string and the last valid object template
+	var combinedContent = "";
+	var finalTemplateObj = nil;
+
+	while (num < size) {
+		var cleanLine = strTrim(lines[num]);
+		
+		if (len(cleanLine) > 0) {
+			var parsedChunk = parseJSON(cleanLine);
+			
+			if (parsedChunk != nil) {
+				var item = getField(parsedChunk, "model");
+				
+				if (item != nil) {
+					// Keep overwriting this so we capture the structure of the last row
+					finalTemplateObj = parsedChunk;
+					
+					// Safely pull the text block from the nested message object
+					var msgObj = getField(parsedChunk, "message");
+					if (msgObj != nil) {
+						var chunkText = getField(msgObj, "content");
+						if (chunkText != nil) {
+							// Append the piece to our full answer text string
+							combinedContent = combinedContent + chunkText;
+						}
+					}
+				}
+			}
+		}
+		num = num + 1;
+	}
+
+	// If we successfully caught the object stream, build the single target layout
+	if (finalTemplateObj != nil) {
+		// Update the nested message context with our newly consolidated text block
+		var targetMessage = getField(finalTemplateObj, "message");
+		if (targetMessage != nil) {
+			targetMessage.content = combinedContent;
+		}
+		
+		// Return the single completed object instead of the array!
+		return finalTemplateObj;
+	}
+	
+	return nil;
+}
+
+
 fun onCall(name, arguments, params) {
 	if (name != "ask_devops_assistant") {
 		return nil;
@@ -158,22 +224,28 @@ fun handleOmodels(req, res) {
 }
 
 fun handleOchat(req, res) {
-	var body = parseJSON(req.body);
-	var msg = getField(body, "msg");
-	if (msg == nil) {
-		res.status(400);
-		res.json(parseJSON("{\"error\":\"no msg\"}"));
-		return;
-	}
-	var answer = ollamaChat(msg);
-	if (answer == nil) {
-		res.status(502);
-		res.send("{\"error\":\"ollama unreachable\"}");
-		return;
-	}
-	var out = parseJSON("{\"content\":\"\"}");
-	out.content = answer;
-	res.json(out);
+	var payload = Payload();
+	var body = req.body;
+	var model = getField(parseJSON(body), "model");
+	var msg = getField(parseJSON(body), "messages");
+
+	payload.model = model;
+	payload.messages = msg;
+	
+	var answer = ollamaPassChat(payload);
+	// print "answer: " + toJSON(answer); // debug only
+	res.json(answer);
+	//debug
+	/* 
+	res.json(toJSON("{\"foo\": \"bar\"}"));
+	*/
+
+}
+
+fun handleOtags(req, res) {
+	var response = httpRequest("GET", OLLAMA_HOST + "/api/tags", nil, nil);
+	var result = strSplit(response, "\r");
+	return res.json(parseJSON(result[1]));
 }
 
 fun logger(req, res, next) {
@@ -194,6 +266,7 @@ server.get("/mcp/health", handleHealth, healthOp);
 server.get("/mcp/allowed-docs", handleDocs);
 server.get("/models", handleOmodels);
 server.post("/api/chat", handleOchat);
+server.get("/api/tags", handleOtags); // left off here
 
 swagger(server);
 
@@ -205,3 +278,4 @@ print "  GET  /models            ollama tags";
 print "  POST /api/chat          {\"msg\":\"hello\"}";
 print "  GET  /docs              swagger";
 server.start();
+
