@@ -6332,41 +6332,53 @@ run(void)
 				a = pop();
 				push(NUMBER_VAL(AS_NUMBER(a) + AS_NUMBER(b)));
 			} else if (IS_ARRAY(peek(0)) && IS_ARRAY(peek(1))) {
-				/* Both are arrays, concatenate them */
-				ObjArray* bArr = AS_ARRAY(pop());
-				ObjArray* aArr = AS_ARRAY(pop());
+				/* Both are arrays, concatenate them.
+				 * Leave the sources on the stack across newArray/writeArray. */
+				ObjArray* bArr = AS_ARRAY(peek(0));
+				ObjArray* aArr = AS_ARRAY(peek(1));
 				ObjArray* result = newArray();
-				/* Push result first, then aArr, bArr so GC blackens sources before result */
 				push(OBJ_VAL(result));
-				push(OBJ_VAL(aArr));
-				push(OBJ_VAL(bArr));
 				for (int i = 0; i < aArr->count; i++)
 					writeArray(result, aArr->elements[i]);
 				for (int i = 0; i < bArr->count; i++)
 					writeArray(result, bArr->elements[i]);
-				/* stack: [result, aArr, bArr] -> leave result on top */
+				/* stack: [aArr, bArr, result] -> leave result on top */
+				pop(); /* result */
 				pop(); /* bArr */
 				pop(); /* aArr */
-				/* result already at top */
+				push(OBJ_VAL(result));
 			} else {
-				/* At least one is not a number, convert both to strings and concatenate */
-				b = pop();
-				a = pop();
-				ObjString* bStr = valueToString(b);
-				ObjString* aStr = valueToString(a);
+				/* At least one is not a number, convert both to strings and concatenate.
+				 * Chained + leaves the left piece only on the stack; popping it
+				 * before ALLOCATE lets GC free it mid-copy. */
+				ObjString* bStr;
+				ObjString* aStr;
+				int aLen, bLen, length;
+				char* chars;
+				ObjString* result;
+
+				bStr = valueToString(peek(0));
+				push(OBJ_VAL(bStr));
+				aStr = valueToString(peek(2));
+				push(OBJ_VAL(aStr));
 
 				/* Sanity check: prevent memcpy with corrupt length (e.g. array treated as string) */
-				int aLen = aStr->length, bLen = bStr->length;
+				aLen = aStr->length;
+				bLen = bStr->length;
 				if (aLen < 0 || aLen > 16*1024*1024) aLen = 0;
 				if (bLen < 0 || bLen > 16*1024*1024) bLen = 0;
 
-				int length = aLen + bLen;
-				char* chars = ALLOCATE(char, length + 1);
+				length = aLen + bLen;
+				chars = ALLOCATE(char, length + 1);
 				memcpy(chars, aStr->chars, aLen);
 				memcpy(chars + aLen, bStr->chars, bLen);
 				chars[length] = '\0';
 
-				ObjString* result = takeString(chars, length);
+				result = takeString(chars, length);
+				pop(); /* aStr */
+				pop(); /* bStr */
+				pop(); /* b */
+				pop(); /* a */
 				push(OBJ_VAL(result));
 			}
 			break;	

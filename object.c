@@ -42,9 +42,14 @@ newBoundMethod(Value receiver, ObjClosure* method)
 ObjClass* 
 newClass(ObjString* name)
 {
-	ObjClass* klass = ALLOCATE_OBJ(ObjClass, OBJ_CLASS);
+	ObjClass* klass;
+
+	/* name is often a fresh copyString() with no other root. */
+	push(OBJ_VAL(name));
+	klass = ALLOCATE_OBJ(ObjClass, OBJ_CLASS);
 	klass->name = name;
 	initTable(&klass->methods);
+	pop();
 	return klass;
 }
 
