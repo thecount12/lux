@@ -40,7 +40,8 @@ lux.$O: version.h buildstamp.h
 
 buildstamp.h:Q: stamp.force stamp.rc
 	rc stamp.rc >$target.tmp
-	cmp -s $target.tmp $target || mv $target.tmp $target
+	if(! cmp -s $target.tmp $target)
+		mv $target.tmp $target
 	rm -f $target.tmp
 
 stamp.force:VQ:
