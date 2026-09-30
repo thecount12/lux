@@ -1,4 +1,8 @@
 # Auto-detect OS and CPU (override with ARCH=arm64 or ARCH=x86_64)
+# Variable assignments (USE_ORACLE, ARCH, ORACLE_HOME, SDKROOT) are not targets.
+# Without this, the first rule in the file becomes the goal and `make` never links lux.
+.DEFAULT_GOAL := all
+
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 ARCH ?= $(UNAME_M)
@@ -174,6 +178,9 @@ TEST_OBJ = $(TEST_SRC:.c=.o)
 # Define the header files for dependency tracking
 DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h template_render.h markdown.h
 
+# Default goal. Must stay above the buildstamp rule, or plain `make` only writes that header.
+all: $(TARGET)
+
 # Identity baked into the lux binary (branch and git describe of this tree).
 ../buildstamp.h: force-stamp
 	@os=`uname -s | tr A-Z a-z`; \
@@ -186,9 +193,6 @@ DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h objec
 	printf '#define LUX_OS "%s"\n#define LUX_ARCH "%s"\n#define LUX_BRANCH "%s"\n#define LUX_GIT "%s"\n' \
 		"$$os" "$$arch" "$$branch" "$$gitv" > $$tmp; \
 	if cmp -s $$tmp ../buildstamp.h 2>/dev/null; then rm -f $$tmp; else mv $$tmp ../buildstamp.h; fi
-
-# The default target, which builds the executable
-all: $(TARGET)
 
 # Build the formatter utility
 $(FMT_TARGET): $(FMT_OBJ)
