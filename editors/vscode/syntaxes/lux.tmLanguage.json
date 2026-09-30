@@ -1,0 +1,79 @@
+{
+  "scopeName": "source.lux",
+  "name": "Lux",
+  "fileTypes": ["lux"],
+  "uuid": "E2C87983-22C1-422D-BF47-7A37C426114D",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#function-decl" },
+    { "include": "#class-decl" },
+    { "include": "#keyword" },
+    { "include": "#constant" },
+    { "include": "#number" },
+    { "include": "#call" },
+    { "include": "#operator" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.lux",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.lux",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.lux",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.lux",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "function-decl": {
+      "match": "\\b(fun)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.lux" },
+        "2": { "name": "entity.name.function.lux" }
+      }
+    },
+    "class-decl": {
+      "match": "\\b(class)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+      "captures": {
+        "1": { "name": "keyword.control.lux" },
+        "2": { "name": "entity.name.type.class.lux" },
+        "3": { "name": "keyword.operator.lux" },
+        "4": { "name": "entity.other.inherited-class.lux" }
+      }
+    },
+    "keyword": {
+      "match": "\\b(and|break|continue|else|for|if|import|or|print|return|super|this|var|while)\\b",
+      "name": "keyword.control.lux"
+    },
+    "constant": {
+      "match": "\\b(true|false|nil)\\b",
+      "name": "constant.language.lux"
+    },
+    "number": {
+      "match": "\\b\\d+(?:\\.\\d+)?\\b",
+      "name": "constant.numeric.lux"
+    },
+    "call": {
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "name": "entity.name.function.lux"
+    },
+    "operator": {
+      "match": "!=|==|>=|<=|[+\\-*/%=<>!&|?:]",
+      "name": "keyword.operator.lux"
+    }
+  }
+}

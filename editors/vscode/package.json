@@ -1,0 +1,36 @@
+{
+  "name": "lux",
+  "displayName": "Lux",
+  "description": "Syntax highlighting for the Lux scripting language (.lux)",
+  "version": "0.1.0",
+  "publisher": "lux9",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "lux",
+        "aliases": ["Lux", "lux"],
+        "extensions": [".lux"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "lux",
+        "scopeName": "source.lux",
+        "path": "./syntaxes/lux.tmLanguage.json"
+      }
+    ],
+    "configurationDefaults": {
+      "[lux]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true
+      }
+    }
+  }
+}

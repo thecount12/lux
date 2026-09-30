@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>name</key>
+	<string>Lux</string>
+	<key>description</key>
+	<string>Syntax highlighting for the Lux scripting language</string>
+	<key>uuid</key>
+	<string>7F4C1A2E-9B30-4D6A-8E15-2C8A6F0D91B4</string>
+</dict>
+</plist>
