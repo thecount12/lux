@@ -6514,29 +6514,40 @@ static InterpretResult run() {
 					double a = AS_NUMBER(pop());
 					push(NUMBER_VAL(a + b));
 				} else if (IS_ARRAY(peek(0)) && IS_ARRAY(peek(1))) {
-					/* Both are arrays, concatenate them */
-					ObjArray* bArr = AS_ARRAY(pop());
-					ObjArray* aArr = AS_ARRAY(pop());
+					/* Both are arrays, concatenate them.
+					 * Leave the sources on the stack across newArray/writeArray. */
+					ObjArray* bArr = AS_ARRAY(peek(0));
+					ObjArray* aArr = AS_ARRAY(peek(1));
 					ObjArray* result = newArray();
+					push(OBJ_VAL(result));
 					for (int i = 0; i < aArr->count; i++)
 						writeArray(result, aArr->elements[i]);
 					for (int i = 0; i < bArr->count; i++)
 						writeArray(result, bArr->elements[i]);
+					pop(); /* result */
+					pop(); /* bArr */
+					pop(); /* aArr */
 					push(OBJ_VAL(result));
 				} else {
-					/* At least one is not a number, convert both to strings and concatenate */
-					Value b = pop();
-					Value a = pop();
-					ObjString* bStr = valueToString(b);
-					ObjString* aStr = valueToString(a);
-					
+					/* At least one is not a number, convert both to strings and concatenate.
+					 * Chained + leaves the left piece only on the stack; popping it
+					 * before ALLOCATE lets GC free it mid-copy. */
+					ObjString* bStr = valueToString(peek(0));
+					push(OBJ_VAL(bStr));
+					ObjString* aStr = valueToString(peek(2));
+					push(OBJ_VAL(aStr));
+
 					int length = aStr->length + bStr->length;
 					char* chars = ALLOCATE(char, length + 1);
 					memcpy(chars, aStr->chars, aStr->length);
 					memcpy(chars + aStr->length, bStr->chars, bStr->length);
 					chars[length] = '\0';
-					
+
 					ObjString* result = takeString(chars, length);
+					pop(); /* aStr */
+					pop(); /* bStr */
+					pop(); /* b */
+					pop(); /* a */
 					push(OBJ_VAL(result));
 				}
 				break;

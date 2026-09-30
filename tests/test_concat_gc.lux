@@ -1,0 +1,23 @@
+/* Chained + must stay correct across a collection.
+ * The left piece of a chain is only a temporary; GC used to free it mid-copy. */
+var s = "MI" + "." + "MI_PROPERTY_STATUSES";
+if (s != "MI.MI_PROPERTY_STATUSES") {
+    print "fail chain " + s;
+    exit();
+}
+
+var edge = "  \"" + s + "\" -- \"" + s + "\";";
+if (edge != "  \"MI.MI_PROPERTY_STATUSES\" -- \"MI.MI_PROPERTY_STATUSES\";") {
+    print "fail edge " + edge;
+    exit();
+}
+
+var i = 0;
+var n = 0;
+while (i < 20000) {
+    var t = "MI" + "." + "MI_PROPERTY_STATUSES";
+    var line = "  \"" + t + "\" -- \"" + t + "\";";
+    n = n + len(line);
+    i = i + 1;
+}
+print n;
