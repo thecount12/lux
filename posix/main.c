@@ -7,6 +7,7 @@
 //#include "chunk.h"
 //#include "debug.h"
 #include "vm.h"
+#include "../version.h"
 #include "compiler.h"
 
 static void repl() {
@@ -64,14 +65,41 @@ static void runFile(const char* path, int scriptArgc, char** scriptArgv) {
 }
 
 
+static void printVersion(void) {
+	printf("lux %s %s/%s %s %s",
+		LUX_VERSION, LUX_OS, LUX_ARCH, LUX_BRANCH, LUX_GIT);
+#ifdef DB_SQLITE
+	printf(" +sqlite");
+#endif
+#ifdef DB_POSTGRES
+	printf(" +postgres");
+#endif
+#ifdef DB_MYSQL
+	printf(" +mysql");
+#endif
+#ifdef DB_ORACLE
+	printf(" +oracle");
+#endif
+	printf("\n");
+}
+
 int main(int argc, const char* argv[]) {
+	if (argc >= 2 && (strcmp(argv[1], "-v") == 0 || strcmp(argv[1], "--version") == 0)) {
+		if (argc != 2) {
+			fprintf(stderr, "Usage: lux [-v] [script] [args...] | lux -c \"code\"\n");
+			exit(64);
+		}
+		printVersion();
+		return 0;
+	}
+
 	initVM();
 	if (argc == 1) {
 		setScriptArgs(0, NULL);
 		repl();
 	} else if (strcmp(argv[1], "-c") == 0) {
 		if (argc != 3) {
-			fprintf(stderr, "Usage: lux [script] [args...] | lux -c \"code\"\n");
+			fprintf(stderr, "Usage: lux [-v] [script] [args...] | lux -c \"code\"\n");
 			exit(64);
 		}
 		setScriptArgs(0, NULL);
@@ -81,7 +109,7 @@ int main(int argc, const char* argv[]) {
 	} else if (argc >= 2) {
 		runFile(argv[1], argc - 2, (char**)(argv + 2));
 	} else {
-		fprintf(stderr, "Usage: lux [script] [args...] | lux -c \"code\"\n");
+		fprintf(stderr, "Usage: lux [-v] [script] [args...] | lux -c \"code\"\n");
 		exit(64);
 	}
 	

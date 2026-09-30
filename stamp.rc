@@ -1,0 +1,16 @@
+#!/bin/rc
+# Print buildstamp.h for the Plan 9 mk build. POSIX uses posix/Makefile.
+rfork e
+branch=`{git rev-parse --abbrev-ref HEAD >[2]/dev/null}
+if(~ $#branch 0)
+	branch=unknown
+gitv=`{git describe --tags --always --dirty --abbrev=12 >[2]/dev/null}
+if(~ $#gitv 0)
+	gitv=unknown
+arch=$objtype
+if(~ $#arch 0)
+	arch=unknown
+echo '#define LUX_OS "plan9"'
+echo '#define LUX_ARCH "'^$arch^'"'
+echo '#define LUX_BRANCH "'^$branch^'"'
+echo '#define LUX_GIT "'^$gitv^'"'

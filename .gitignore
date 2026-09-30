@@ -1,4 +1,6 @@
 # Build artifacts
+buildstamp.h
+buildstamp.h.tmp
 *.o
 *.8
 *.6

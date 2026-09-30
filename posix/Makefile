@@ -174,6 +174,19 @@ TEST_OBJ = $(TEST_SRC:.c=.o)
 # Define the header files for dependency tracking
 DEPS = chunk.h memory.h common.h debug.h value.h vm.h compiler.h scanner.h object.h table.h dict.h template_render.h markdown.h
 
+# Identity baked into the lux binary (branch and git describe of this tree).
+../buildstamp.h: force-stamp
+	@os=`uname -s | tr A-Z a-z`; \
+	arch=`uname -m`; \
+	branch=`git -C .. rev-parse --abbrev-ref HEAD 2>/dev/null`; \
+	test -n "$$branch" || branch=unknown; \
+	gitv=`git -C .. describe --tags --always --dirty --abbrev=12 2>/dev/null`; \
+	test -n "$$gitv" || gitv=unknown; \
+	tmp=../buildstamp.h.tmp; \
+	printf '#define LUX_OS "%s"\n#define LUX_ARCH "%s"\n#define LUX_BRANCH "%s"\n#define LUX_GIT "%s"\n' \
+		"$$os" "$$arch" "$$branch" "$$gitv" > $$tmp; \
+	if cmp -s $$tmp ../buildstamp.h 2>/dev/null; then rm -f $$tmp; else mv $$tmp ../buildstamp.h; fi
+
 # The default target, which builds the executable
 all: $(TARGET)
 
@@ -191,7 +204,8 @@ $(TARGET): $(OBJS)
 
 # Pattern rule to compile .c files into .o files
 # Dependencies on header files are explicitly listed
-main.o: main.c chunk.h memory.h common.h debug.h
+main.o: main.c ../buildstamp.h ../version.h chunk.h memory.h common.h debug.h
+	$(CC) $(CFLAGS) -c main.c -o main.o
 chunk.o: chunk.c chunk.h common.h debug.h value.h
 memory.o: memory.c memory.h common.h debug.h
 debug.o: debug.c debug.h memory.h common.h
@@ -217,9 +231,9 @@ $(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Phony targets don't create a file of the same name
-.PHONY: all clean $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
+.PHONY: all clean force-stamp $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
 
 # Rule to clean up generated files
 clean:
-	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
+	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET) ../buildstamp.h ../buildstamp.h.tmp
 

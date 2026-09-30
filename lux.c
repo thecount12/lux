@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "object.h"
 #include "table.h"
+#include "version.h"
 #include "compiler.h"
 
 void initVM(void);
@@ -91,9 +92,38 @@ runFile(char* path, int scriptArgc, char** scriptArgv)
 
 void initVM(void);
 
+static void
+printVersion(void)
+{
+	print("lux %s %s/%s %s %s",
+		LUX_VERSION, LUX_OS, LUX_ARCH, LUX_BRANCH, LUX_GIT);
+#ifdef DB_SQLITE
+	print(" +sqlite");
+#endif
+#ifdef DB_POSTGRES
+	print(" +postgres");
+#endif
+#ifdef DB_MYSQL
+	print(" +mysql");
+#endif
+#ifdef DB_ORACLE
+	print(" +oracle");
+#endif
+	print("\n");
+}
+
 void
 main(int argc, char *argv[])
 {
+	if (argc >= 2 && (strcmp(argv[1], "-v") == 0 || strcmp(argv[1], "--version") == 0)) {
+		if (argc != 2) {
+			fprint(2, "Usage: lux [-v] [path] [args...] | lux -c \"code\"\n");
+			exits("usage");
+		}
+		printVersion();
+		exits(nil);
+	}
+
 	initVM();
 
 	if (argc == 1) {
@@ -101,7 +131,7 @@ main(int argc, char *argv[])
 		repl();
 	} else if (strcmp(argv[1], "-c") == 0) {
 		if (argc != 3) {
-			fprint(2, "Usage: lux [path] [args...] | lux -c \"code\"\n");
+			fprint(2, "Usage: lux [-v] [path] [args...] | lux -c \"code\"\n");
 			exits("usage");
 		}
 		setScriptArgs(0, nil);
@@ -111,7 +141,7 @@ main(int argc, char *argv[])
 	} else if (argc >= 2) {
 		runFile(argv[1], argc - 2, argv + 2);
 	} else {
-		fprint(2, "Usage: lux [path] [args...] | lux -c \"code\"\n");
+		fprint(2, "Usage: lux [-v] [path] [args...] | lux -c \"code\"\n");
 		exits("usage");
 	}
 	

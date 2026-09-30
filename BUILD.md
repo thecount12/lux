@@ -18,6 +18,8 @@ make luxlint      # Build linter (unused vars, unreachable code, etc.)
 make clean        # Clean object files and binaries
 ```
 
+`lux -v` prints release, os/arch, git branch, and `git describe` for the tree that was compiled. `mk` writes the same line with os `plan9` and arch `$objtype`. If git is missing, branch and describe are `unknown`.
+
 ### macOS (Homebrew)
 
 Install dependencies:

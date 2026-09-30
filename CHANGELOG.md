@@ -1,3 +1,15 @@
+# Lux v1.2.0
+
+Work landed on `front` since v1.1.0.
+
+- **Build identity:** `lux -v` prints release, os/arch, git branch, and `git describe` (with `-dirty` when the tree was not clean). Enabled database drivers are appended (`+sqlite`, `+postgres`, `+mysql`, `+oracle`).
+- **Lux9:** public name and logos.
+- **Language and data:** `continue`, Float64Array, DataFrame, and graphs.
+- **I/O:** streamed file reads, multipart forms, acme-friendly errors, editor support, large-file GC fix.
+- **Net and HTTP:** DNS lookup, TCP ping, Swagger / OpenAPI, bearer tokens, web checks.
+- **Cloud:** AWS tooling, Lambda / Mangum, OpenAI, Bedrock, MCP streamable HTTP.
+- **Databases:** Oracle, plus Docker builds for Oracle, PostgreSQL, and MySQL.
+
 # 🚀 Lux v1.0.0 — The "Grand Opening" Release
 
 After 6 months of development, **Lux** is officially hitting **v1.0.0**. What started as a port of the Lox language to Plan 9 has evolved into a feature-rich, and highly portable interpreter.

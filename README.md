@@ -69,6 +69,17 @@ mk
 ./8.out ../examples/demo.lux
 ```
 
+### Which binary
+
+`lux -v` (or `lux --version`) prints the release, the system it was compiled on, the git branch, and `git describe`. A `-dirty` suffix means the tree had uncommitted changes. Database drivers show up only when that build enabled them:
+
+```text
+lux 1.2.0 darwin/arm64 front v1.2.0
+lux 1.2.0 linux/x86_64 oracle v1.2.0-4-gabcd123 +oracle
+```
+
+The line is fixed at compile time, so a copy on another machine still names the branch it came from.
+
 ### Hello Lux
 ```lux
 print "Hello, Lux!";
