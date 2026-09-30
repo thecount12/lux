@@ -51,7 +51,9 @@ int main(int argc, const char* argv[]) {
 
     char* source = readFile(argv[1]);
     CompileOptions opts = { .lint = true, .warningCount = 0 };
+    setCompileSourceName(argv[1]);
     ObjFunction* function = compileWithOptions(source, &opts);
+    setCompileSourceName(NULL);
     free(source);
 
     freeVM();

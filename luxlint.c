@@ -68,7 +68,9 @@ main(int argc, char *argv[])
 	opts.warningCount = 0;
 
 	source = readFile(argv[1]);
+	setCompileSourceName(argv[1]);
 	function = compileWithOptions(source, &opts);
+	setCompileSourceName(nil);
 	free(source);
 
 	freeVM();

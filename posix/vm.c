@@ -5859,6 +5859,25 @@ static void resetStack() {
 	vm.openUpvalues = NULL;
 }
 
+static void printStackTrace(void) {
+	for (int i = vm.frameCount -1; i >= 0; i--) {
+		CallFrame* frame = &vm.frames[i];
+		ObjFunction* function = frame->closure->function;
+		size_t instruction = frame->ip - function->chunk.code -1;
+		if (function->sourceName != NULL)
+			fprintf(stderr, "%s:%d: in ", function->sourceName->chars,
+				function->chunk.lines[instruction]);
+		else
+			fprintf(stderr, "[line %d] in ",
+				function->chunk.lines[instruction]);
+		if (function->name == NULL) {
+			fprintf(stderr, "script\n");
+		} else {
+			fprintf(stderr, "%s()\n", function->name->chars);
+		}
+	}
+}
+
 static void runtimeError(const char* format, ...) {
 	va_list args;
 	va_start(args, format);
@@ -5866,18 +5885,7 @@ static void runtimeError(const char* format, ...) {
 	va_end(args);
 	fputs("\n", stderr);
 
-	for (int i = vm.frameCount -1; i >= 0; i--) {
-		CallFrame* frame = &vm.frames[i];
-		ObjFunction* function = frame->closure->function;
-		size_t instruction = frame->ip - function->chunk.code -1;
-		fprintf(stderr, "[line %d] in ", 
-			function->chunk.lines[instruction]);
-		if (function->name == NULL) {
-			fprintf(stderr, "script\n");
-		} else {
-			fprintf(stderr, "%s()\n", function->name->chars);
-		}
-	}
+	printStackTrace();
 
 	resetStack();
 }
@@ -6303,15 +6311,17 @@ static bool importModule(ObjString* path) {
 	fclose(file);
 	
 	/* Compile the module */
-	ObjFunction* function = compile(buffer);
+	const char* saved = getCompileSourceName();
+	ObjFunction* function;
+	setCompileSourceName(path->chars);
+	function = compile(buffer);
+	setCompileSourceName(saved);
 	free(buffer);
 	
 	if (function == NULL) {
 		runtimeError("Could not compile import file '%s'.", path->chars);
 		return false;
 	}
-	
-	/* Mark as imported before executing to prevent circular imports */
 	tableSet(&vm.imports, path, NIL_VAL);
 	
 	/* Execute the module */

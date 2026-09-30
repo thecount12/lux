@@ -11,6 +11,8 @@ typedef struct {
 
 ObjFunction* compile(const char* source);
 ObjFunction* compileWithOptions(const char* source, CompileOptions* opts);
+void setCompileSourceName(const char* name);
+const char* getCompileSourceName(void);
 void markCompilerRoots();
 
 #endif

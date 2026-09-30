@@ -80,6 +80,7 @@ newFunction()
 	function->arity = 0;
 	function->upvalueCount = 0;
 	function->name = nil;
+	function->sourceName = nil;
 	initChunk(&function->chunk);
 	return function;
 }

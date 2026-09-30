@@ -241,6 +241,7 @@ struct ObjFunction {
 	int upvalueCount;
 	Chunk chunk;
 	ObjString* name;
+	ObjString* sourceName;	/* script path; Acme file:line: */
 };
 
 typedef Value (*NativeFn)(int argCount, Value* args);

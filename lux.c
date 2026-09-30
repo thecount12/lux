@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "object.h"
 #include "table.h"
+#include "compiler.h"
 
 void initVM(void);
 void freeVM(void);
@@ -78,7 +79,9 @@ runFile(char* path, int scriptArgc, char** scriptArgv)
 {
 	char* source = readFile(path);
 	setScriptArgs(scriptArgc, scriptArgv);
+	setCompileSourceName(path);
 	InterpretResult result = interpret(source);
+	setCompileSourceName(nil);
 	free(source);
 
 	if (result == INTERPRET_COMPILE_ERROR) exits("compile error");

@@ -104,6 +104,29 @@ struct ClassCompiler {
 Parser parser;
 Compiler* current = nil;
 ClassCompiler* currentClass = nil;
+static char *compileSourceName = nil;
+
+void
+setCompileSourceName(char *name)
+{
+	compileSourceName = name;
+}
+
+char*
+getCompileSourceName(void)
+{
+	return compileSourceName;
+}
+
+/* Acme plumber: file.ext:line  (see /sys/lib/plumb/basic) */
+static void
+errorHead(int line, char *kind)
+{
+	if (compileSourceName != nil && compileSourceName[0] != 0)
+		fprint(2, "%s:%d: %s", compileSourceName, line, kind);
+	else
+		fprint(2, "[line %d] %s", line, kind);
+}
 
 /* Break statement support */
 #define MAX_BREAK_JUMPS 256
@@ -144,18 +167,17 @@ errorAt(Token* token, char* message)
 		return;
 	parser.panicMode = 1;
 
-	/* Plan 9 print matches the libc.h definition */
-	print("[line %d] Error", token->line);
+	errorHead(token->line, "Error");
 
 	if(token->type == TOKEN_EOF){
-		print(" at end");
+		fprint(2, " at end");
 	}else if(token->type == TOKEN_ERROR){
 		/* No additional output */
 	}else{
-		print(" at '%.*s'", token->length, token->start);
+		fprint(2, " at '%.*s'", token->length, token->start);
 	}
 
-	print(": %s\n", message);
+	fprint(2, ": %s\n", message);
 	parser.hadError = 1;
 }
 
@@ -177,7 +199,7 @@ warnAt(Token* token, char* message)
 	if(lintOpts == nil || !lintOpts->lint)
 		return;
 	lintOpts->warningCount++;
-	fprint(2, "[line %d] Warning", token->line);
+	errorHead(token->line, "Warning");
 	if(token->type != TOKEN_EOF && token->type != TOKEN_ERROR && token->length > 0)
 		fprint(2, " at '%.*s'", token->length, token->start);
 	fprint(2, ": %s\n", message);
@@ -189,7 +211,8 @@ warnAtLine(int line, char* message)
 	if(lintOpts == nil || !lintOpts->lint)
 		return;
 	lintOpts->warningCount++;
-	fprint(2, "[line %d] Warning: %s\n", line, message);
+	errorHead(line, "Warning");
+	fprint(2, ": %s\n", message);
 }
 
 static void
@@ -331,6 +354,11 @@ initCompiler(Compiler* compiler, FunctionType type)
 	compiler->loopScopeDepth = 0;
 	compiler->function = newFunction();
 	current = compiler;
+	if (compiler->enclosing != nil && compiler->enclosing->function->sourceName != nil)
+		current->function->sourceName = compiler->enclosing->function->sourceName;
+	else if (compileSourceName != nil && compileSourceName[0] != 0)
+		current->function->sourceName = copyString(compileSourceName,
+			(int)strlen(compileSourceName));
 	if (type != TYPE_SCRIPT) {
 		current->function->name = copyString(parser.previous.start,
 											 parser.previous.length);

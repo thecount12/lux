@@ -8,6 +8,8 @@ typedef struct {
 
 ObjFunction* compile(char* source);
 ObjFunction* compileWithOptions(char* source, CompileOptions* opts);
+void setCompileSourceName(char *name);
+char *getCompileSourceName(void);
 void markCompilerRoots();
 
 #endif

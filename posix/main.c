@@ -7,6 +7,7 @@
 //#include "chunk.h"
 //#include "debug.h"
 #include "vm.h"
+#include "compiler.h"
 
 static void repl() {
 	char line[1024];	
@@ -53,7 +54,9 @@ static char* readFile(const char* path) {
 static void runFile(const char* path, int scriptArgc, char** scriptArgv) {
 	char* source = readFile(path);
 	setScriptArgs(scriptArgc, scriptArgv);
+	setCompileSourceName(path);
 	InterpretResult result = interpret(source);
+	setCompileSourceName(NULL);
 	free(source);
 
 	if (result == INTERPRET_COMPILE_ERROR) exit(65);

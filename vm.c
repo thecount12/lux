@@ -5553,6 +5553,25 @@ resetStack(void)
 	vm.openUpvalues = nil;
 }
 
+static void
+printStackTrace(void)
+{
+	for (int i = vm.frameCount -1; i >= 0; i--) {
+		CallFrame* frame = &vm.frames[i];
+		ObjFunction* function = frame->closure->function;
+		long instruction = frame->ip - function->chunk.code -1;
+		if (function->sourceName != nil)
+			fprint(2, "%s:%d: in ", function->sourceName->chars,
+				function->chunk.lines[instruction]);
+		else
+			fprint(2, "[line %d] in ", function->chunk.lines[instruction]);
+		if (function->name == nil)
+			fprint(2, "script\n");
+		else
+			fprint(2, "%s()\n", function->name->chars);
+	}
+}
+
 static void 
 runtimeError(char *format, ...)
 {
@@ -5566,17 +5585,7 @@ runtimeError(char *format, ...)
 
 	/* Pointer subtraction returns long/vlong; size_t is not a Plan 9 type */
 
-	for (int i = vm.frameCount -1; i >= 0; i--) {
-		CallFrame* frame = &vm.frames[i];
-		ObjFunction* function = frame->closure->function;
-		long instruction = frame->ip - function->chunk.code -1;
-		print("[line %d] in ", function->chunk.lines[instruction]);
-		if (function->name == nil) {
-			print("script\n");
-		} else {
-			print("%s()\n", function->name->chars);
-		}
-	}
+	printStackTrace();
 
 	resetStack();
 }
@@ -5596,21 +5605,11 @@ nativeError(char *format, ...)
 	va_end(args);
 
 	if (end == nil)
-		print("native error\n");
+		fprint(2, "native error\n");
 	else
-		print("%s\n", msg);
+		fprint(2, "%s\n", msg);
 
-	for (int i = vm.frameCount -1; i >= 0; i--) {
-		CallFrame* frame = &vm.frames[i];
-		ObjFunction* function = frame->closure->function;
-		long instruction = frame->ip - function->chunk.code -1;
-		print("[line %d] in ", function->chunk.lines[instruction]);
-		if (function->name == nil) {
-			print("script\n");
-		} else {
-			print("%s()\n", function->name->chars);
-		}
-	}
+	printStackTrace();
 }
 
 static void
@@ -6091,7 +6090,12 @@ importModule(ObjString* path)
 	close(fd);
 	
 	/* Compile the module */
-	function = compile(buf);
+	{
+		char *saved = getCompileSourceName();
+		setCompileSourceName(path->chars);
+		function = compile(buf);
+		setCompileSourceName(saved);
+	}
 	free(buf);
 	
 	if(function == nil) {
