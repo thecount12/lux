@@ -36,6 +36,8 @@ HFILES=chunk.h\
 
 BIN=$home/bin/$objtype
 
+</sys/src/cmd/mkone
+
 lux.$O: version.h buildstamp.h
 
 buildstamp.h:Q: stamp.force stamp.rc
@@ -46,7 +48,5 @@ buildstamp.h:Q: stamp.force stamp.rc
 
 stamp.force:VQ:
 	status=''
-
-</sys/src/cmd/mkone
 
 
