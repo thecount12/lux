@@ -1447,7 +1447,7 @@ urlDecodeBytes(const char* in, int inLen, char* out)
 static Value
 decodeSlice(const char* in, int inLen)
 {
-	char* out = malloc((size_t)inLen + 1);
+	char* out = malloc(inLen + 1);
 	if (out == nil) return NIL_VAL;
 	int n = urlDecodeBytes(in, inLen, out);
 	Value v = OBJ_VAL(copyString(out, n));
