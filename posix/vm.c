@@ -110,6 +110,8 @@ static const NativeDoc kNativeDocs[] = {
 	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
 	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
 	{"parseCSV", "parseCSV(text, [sep])", "Parse quoted CSV text into an array of row arrays."},
+	{"urlDecode", "urlDecode(text)", "Decode application/x-www-form-urlencoded text: '+' to space, %HH to a byte."},
+	{"parseForm", "parseForm(body)", "Parse a form body into fields. Splits on '&' and '=', then urlDecode."},
 	{"getField", "getField(obj, name)", "Get an instance field by string name, or nil."},
 	{"httpGet", "httpGet(url)", "Make an HTTP GET request."},
 	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request with a JSON body."},
@@ -216,10 +218,12 @@ static const char* callableCategory(const char* name) {
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
+	    strcmp(name, "urlDecode") == 0 ||
 	    strcmp(name, "arrayIndexOf") == 0 || strcmp(name, "arrayContains") == 0 ||
 	    strcmp(name, "arraySort") == 0 || strcmp(name, "arrayBinarySearch") == 0) return "String and Array";
 	if (strcmp(name, "parseJSON") == 0 || strcmp(name, "toJSON") == 0 ||
 	    strcmp(name, "parseXml") == 0 || strcmp(name, "parseCSV") == 0 ||
+	    strcmp(name, "parseForm") == 0 ||
 	    strcmp(name, "getField") == 0) return "Data Formats";
 	if (strncmp(name, "float64_", 8) == 0) return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
@@ -1519,6 +1523,114 @@ static Value strSplitNative(int argCount, Value* args) {
 
 	pop();
 	return OBJ_VAL(result);
+}
+
+/* application/x-www-form-urlencoded: '+' is space, %HH is one byte. */
+static int hexNibble(unsigned char c) {
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return -1;
+}
+
+static int urlDecodeBytes(const char* in, int inLen, char* out) {
+	int i = 0;
+	int j = 0;
+	while (i < inLen) {
+		unsigned char c = (unsigned char)in[i];
+		if (c == '+') {
+			out[j++] = ' ';
+			i++;
+		} else if (c == '%' && i + 2 < inLen) {
+			int hi = hexNibble((unsigned char)in[i + 1]);
+			int lo = hexNibble((unsigned char)in[i + 2]);
+			if (hi >= 0 && lo >= 0) {
+				out[j++] = (char)((hi << 4) | lo);
+				i += 3;
+			} else {
+				out[j++] = '%';
+				i++;
+			}
+		} else {
+			out[j++] = (char)c;
+			i++;
+		}
+	}
+	return j;
+}
+
+static Value decodeSlice(const char* in, int inLen) {
+	char* out = (char*)malloc((size_t)inLen + 1);
+	if (out == NULL) return NIL_VAL;
+	int n = urlDecodeBytes(in, inLen, out);
+	Value v = OBJ_VAL(copyString(out, n));
+	free(out);
+	return v;
+}
+
+/* urlDecode(text) -> string. '+' -> space, %HH -> byte. Bad % left literal. */
+static Value urlDecodeNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+	ObjString* text = AS_STRING(args[0]);
+	return decodeSlice(text->chars, text->length);
+}
+
+/* parseForm(body) -> instance. Split on '&' and the first '=', then urlDecode. */
+static Value parseFormNative(int argCount, Value* args) {
+	if (argCount != 1 || !IS_STRING(args[0]))
+		return NIL_VAL;
+
+	ObjString* text = AS_STRING(args[0]);
+	ObjClass* objClass = newClass(copyString("Object", 6));
+	push(OBJ_VAL(objClass));
+	ObjInstance* instance = newInstance(objClass);
+	push(OBJ_VAL(instance));
+
+	const char* s = text->chars;
+	int n = text->length;
+	int i = 0;
+	while (i < n) {
+		int start = i;
+		while (i < n && s[i] != '&') i++;
+		int partEnd = i;
+		if (i < n && s[i] == '&') i++;
+		if (partEnd == start) continue;
+
+		int eq = start;
+		while (eq < partEnd && s[eq] != '=') eq++;
+		int keyLen = eq - start;
+		int valStart = eq;
+		int valLen = 0;
+		if (eq < partEnd) {
+			valStart = eq + 1;
+			valLen = partEnd - valStart;
+		}
+
+		Value keyVal = decodeSlice(s + start, keyLen);
+		if (!IS_STRING(keyVal)) {
+			pop();
+			pop();
+			return NIL_VAL;
+		}
+		push(keyVal);
+		Value value = decodeSlice(s + valStart, valLen);
+		if (!IS_STRING(value)) {
+			pop();
+			pop();
+			pop();
+			return NIL_VAL;
+		}
+		push(value);
+		if (AS_STRING(keyVal)->length > 0)
+			tableSet(&instance->fields, AS_STRING(keyVal), value);
+		pop();
+		pop();
+	}
+
+	pop(); /* instance */
+	pop(); /* class */
+	return OBJ_VAL(instance);
 }
 
 static int compareValuesForSort(Value a, Value b, bool* ok) {
@@ -5954,6 +6066,8 @@ void initVM() {
 	defineNative("strStartsWithAt", strStartsWithAtNative);
 	defineNative("strTrim", strTrimNative);
 	defineNative("strSplit", strSplitNative);
+	defineNative("urlDecode", urlDecodeNative);
+	defineNative("parseForm", parseFormNative);
 	defineNative("arrayIndexOf", arrayIndexOfNative);
 	defineNative("arrayContains", arrayContainsNative);
 	defineNative("arraySort", arraySortNative);

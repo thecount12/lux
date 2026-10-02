@@ -85,10 +85,12 @@ static const char* callableCategory(const char* name) {
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
 	    strcmp(name, "strTrim") == 0 || strcmp(name, "strSplit") == 0 ||
+	    strcmp(name, "urlDecode") == 0 ||
 	    strcmp(name, "arrayIndexOf") == 0 || strcmp(name, "arrayContains") == 0 ||
 	    strcmp(name, "arraySort") == 0 || strcmp(name, "arrayBinarySearch") == 0) return "String and Array";
 	if (strcmp(name, "parseJSON") == 0 || strcmp(name, "toJSON") == 0 ||
 	    strcmp(name, "parseXml") == 0 || strcmp(name, "parseCSV") == 0 ||
+	    strcmp(name, "parseForm") == 0 ||
 	    strcmp(name, "getField") == 0) return "Data Formats";
 	if (strncmp(name, "float64_", 8) == 0) return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
