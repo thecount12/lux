@@ -15,6 +15,7 @@
 ## Coding
 - C89/C99 for POSIX; Plan 9 C for root
 - Shared types in root `types.h`; posix has its own `object.h`/`common.h`
+- Plan 9 has no `size_t`. `sizeof` is an `unsigned int`. Use `int` or `unsigned int` for sizes and counts in root sources. Use `vlong` / `uvlong` only when the value must be 64-bit. `size_t` is fine under `posix/`.
 
 - Registers: AX, BX, BP, SP, SB, FP, PC, R8-R15.
 - Print: Use 'print' or 'fprint' from libc.h, never 'printf'.

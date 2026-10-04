@@ -1111,6 +1111,33 @@ while (i < lines.length) {
 }
 ```
 
+#### `urlDecode(text)` → string
+Decodes one `application/x-www-form-urlencoded` value. `+` becomes a space. `%HH` becomes that byte (`%3D` is `=`, `%22` is `"`, `%27` is `'`, `%0D` is carriage return, `%0A` is newline, `%28` / `%29` are parentheses). A `%` that is not two hex digits is left as `%`.
+
+```lux
+print urlDecode("name%3D%22Ada%22");  // name="Ada"
+print urlDecode("a+b");               // a b
+```
+
+#### `parseForm(body)` → instance
+Parses a raw HTML form body. Splits on `&` and the first `=` in each part, then `urlDecode`s the name and the value. Decode after the split so a value may contain `=` or `&`. Duplicate names keep the last value. Read a field with `getField`.
+
+```lux
+fun handleSql(req, res) {
+    var form = parseForm(req.body);
+    var sql = getField(form, "sql");
+    if (sql == nil) {
+        res.status(400);
+        res.send("missing sql");
+        return;
+    }
+    print sql;
+    res.send("ok");
+}
+```
+
+A textarea named `sql` with `SELECT * FROM t WHERE name = "foo"` arrives as `sql=SELECT+*+FROM+t+WHERE+name+%3D+%22foo%22`. `parseForm` returns the original SQL, including real line breaks from `%0D%0A`. Splitting `req.body` on `+` cuts the statement on every space and leaves the percent sequences in place.
+
 **Practical Example: Custom XML Parser**
 ```lux
 // Extract all values for a given XML tag
@@ -1570,6 +1597,8 @@ server.post("/data", handleData);
 server.static("public");   /* serve GET files from ./public/ */
 server.start();
 ```
+
+An HTML form (`method="post"`, no JavaScript) sends `application/x-www-form-urlencoded`, not JSON. `req.body` still has `+` for spaces and `%HH` for other bytes. Use `parseForm(req.body)` and `getField`, or `urlDecode` on a single value. `parseJSON` stays for JSON posts.
 
 **Concurrency (`server.workers(n)`):** Prefork model — after bind/announce, Lux spawns `n` worker processes (clamped to 1..32; default **4** if unset). Each worker has its own VM copy and runs an accept/handle loop; the parent waits and respawns dead workers. `workers(1)` keeps a single-process loop (handy for debugging). In-memory mutations are **not** shared across workers after fork; use files, DB, or external services for shared state. TLS still terminates outside Lux (`tlssrv` on 9front).
 

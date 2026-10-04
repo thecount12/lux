@@ -1,0 +1,26 @@
+var eq = urlDecode("%3D");
+assert(eq == "=", "percent 3D");
+assert(urlDecode("%22") == "\"", "percent 22");
+assert(urlDecode("%27") == "'", "percent 27");
+assert(urlDecode("%28%29") == "()", "parens");
+assert(urlDecode("%0D") == "\r", "cr");
+assert(urlDecode("%0A") == "\n", "lf");
+assert(urlDecode("a+b") == "a b", "plus is space");
+assert(urlDecode("a+%2B+b") == "a + b", "encoded plus");
+assert(urlDecode("%25") == "%", "percent itself");
+assert(urlDecode("100%") == "100%", "bare percent");
+assert(urlDecode("%zz") == "%zz", "bad percent");
+
+var raw = "sql=SELECT+*+FROM+t%0D%0AWHERE+name%3D%22foo%22+AND+q%3D%27bar%27+AND+f%28x%29%3E1";
+var form = parseForm(raw);
+var sql = getField(form, "sql");
+var expect = "SELECT * FROM t\r\nWHERE name=\"foo\" AND q='bar' AND f(x)>1";
+assert(sql == expect, "sql field");
+
+var mixed = parseForm("a=b%3Dc&note=x%26y&a=last");
+assert(getField(mixed, "a") == "last", "last wins");
+assert(getField(mixed, "note") == "x&y", "encoded amp");
+assert(getField(parseForm(""), "sql") == nil, "empty form");
+assert(parseForm(nil) == nil, "nil body");
+
+print "form decode ok";

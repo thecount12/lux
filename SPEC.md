@@ -501,6 +501,7 @@ Wrong arity or type usually returns `nil` (math domain errors follow C `math.h`,
 | `strStartsWithAt(s, prefix, offset)` | bool |
 | `strTrim(s)` | ASCII space/tab/LF/CR |
 | `strSplit(s, delim)` | Empty delim → characters |
+| `urlDecode(text)` | Form encoding: `+` → space, `%HH` → byte. Bad `%` stays literal |
 | `arrayIndexOf(arr, value)` | First `==`, or `-1` |
 | `arrayContains(arr, value)` | bool |
 | `arraySort(arr)` | In place; all-number or all-string; else `nil` |
@@ -513,6 +514,7 @@ Wrong arity or type usually returns `nil` (math domain errors follow C `math.h`,
 | `parseJSON(text)` | Objects → instances; arrays → arrays; failure → `nil` |
 | `toJSON(value)` | Instances serialize fields; `Dict` storage is **not** those fields |
 | `parseCSV(text, [sep])` | Array of row arrays; default comma |
+| `parseForm(body)` | `application/x-www-form-urlencoded` → instance fields. Split on `&` / first `=`, then `urlDecode`. Duplicate keys: last wins |
 | `getField(obj, name)` | Field by string name, or `nil` |
 | `parseXml(text, tag)` | Array of matching tag contents |
 
