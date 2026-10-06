@@ -8,7 +8,8 @@ var sample = "[960491734164_AccountAdmin]\n" +
     "aws_secret_access_key=secret-value\n" +
     "aws_session_token=session-value\n" +
     "region=us-west-2\n" +
-    "bucket=my-bucket\n";
+    "bucket=my-bucket\n" +
+    "bedrock_model=anthropic.claude-sonnet-4-20250514-v1:0\n";
 writeFile("_aws_env_test.txt", sample);
 
 var cfg = loadAwsCredentials("_aws_env_test.txt");
@@ -18,6 +19,7 @@ assert(cfg.secretKey == "secret-value", "secret");
 assert(cfg.sessionToken == "session-value", "session token");
 assert(cfg.region == "us-west-2", "region");
 assert(cfg.bucket == "my-bucket", "bucket");
+assert(cfg.bedrockModel == "anthropic.claude-sonnet-4-20250514-v1:0", "bedrock model");
 
 var quoted = "AWS_ACCESS_KEY_ID=\"AKIATEST\"\nAWS_SECRET_ACCESS_KEY='shh'\n";
 writeFile("_aws_env_test.txt", quoted);
@@ -26,6 +28,7 @@ assert(cfg2 != nil, "uppercase keys loaded");
 assert(cfg2.accessKey == "AKIATEST", "quoted access key");
 assert(cfg2.secretKey == "shh", "quoted secret");
 assert(cfg2.sessionToken == nil, "no token");
+assert(cfg2.bedrockModel == nil, "no bedrock model");
 
 var iso = awsIsoUtc(0);
 assert(iso == "1970-01-01T00:00:00Z", "epoch 0 iso");

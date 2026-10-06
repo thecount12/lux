@@ -1,4 +1,4 @@
-/* Experimental MCP devops assistant (Ollama).
+/* Experimental MCP devops assistant.
  *
  *   cd posix && ./lux ../examples/mcp/server.lux
  *
@@ -7,6 +7,12 @@
  *     "type": "streamableHttp",
  *     "url": "http://127.0.0.1:8080/mcp"
  *   }
+ *
+ * ask_devops_assistant tries Bedrock Converse first when a .env in the
+ * working directory, the repo root, or examples/ has AWS keys
+ * (see examples/env.example). Set bedrock_model there to a foundation
+ * model id or an inference-profile ARN. If Bedrock is not configured,
+ * or the call returns no text, the same prompt goes to Ollama.
  *
  * Models to try (set OLLAMA_MODEL):
  *   qwen2.5-coder:14b
@@ -17,10 +23,12 @@
  *
  * OLLAMA_HOST  default http://10.0.0.22:11434
  * OLLAMA_MODEL default qwen2.5-coder:14b
+ * BEDROCK_MODEL default anthropic.claude-sonnet-4-20250514-v1:0
  */
 
 import "../lib/mcp.lux";
 import "../lib/swagger.lux";
+import "../lib/aws.lux";
 import "../examples/mcp/mcp_definition.lux";
 
 var ALLOWED_DOCS = ["devops.md"];
@@ -31,8 +39,25 @@ var OLLAMA_MODEL = getenv("OLLAMA_MODEL");
 */
 var OLLAMA_HOST = "http://10.0.0.22:11434";
 var OLLAMA_MODEL = "qwen2.5-coder:14b";
+var BEDROCK_MODEL = "anthropic.claude-sonnet-4-20250514-v1:0";
+var BEDROCK_MAX_TOKENS = 2048;
 
 class Headers { init() {} }
+class BedrockInference {
+	init(maxTokens) {
+		this.maxTokens = maxTokens;
+	}
+}
+
+var aws = loadAwsCredentials(nil);
+var bedrock = nil;
+if (aws != nil) {
+	if (aws.bedrockModel != nil and aws.bedrockModel != "") {
+		BEDROCK_MODEL = aws.bedrockModel;
+	}
+	bedrock = BedrockRuntimeClient(aws);
+}
+
 class Health { init() {} }
 
 var health = Health();
@@ -115,6 +140,33 @@ fun ollamaChat(prompt) {
 	return getField(msg, "content");
 }
 
+fun bedrockChat(prompt) {
+	if (bedrock == nil) {
+		return nil;
+	}
+	var raw = bedrock.converse(
+		BEDROCK_MODEL,
+		awsBedrockUserMessage(prompt),
+		BedrockInference(BEDROCK_MAX_TOKENS)
+	);
+	var text = awsBedrockConverseText(raw);
+	if (text != nil) {
+		return text;
+	}
+	var err = "no text";
+	if (raw != nil) {
+		var parsed = parseJSON(raw);
+		if (parsed != nil) {
+			var message = getField(parsed, "message");
+			if (message != nil and message != "") {
+				err = message;
+			}
+		}
+	}
+	print "Bedrock: " + err;
+	return nil;
+}
+
 fun ollamaPassChat(payload) {
 	var header = Headers();
 	header.Content_Type = "application/json";
@@ -191,10 +243,19 @@ fun onCall(name, arguments, params) {
 	var docs = loadAllowedDocs();
 	var prompt = "You are an internal DevOps assistant. Prefer our Python and FastAPI practices in the documentation over generic advice.\n" +
 		docs + "\n\nQuestion:\n" + question;
-	var answer = ollamaChat(prompt);
+	var answer = bedrockChat(prompt);
+	if (answer != nil) {
+		print "assistant: bedrock " + BEDROCK_MODEL;
+		return answer;
+	}
+	answer = ollamaChat(prompt);
 	if (answer == nil) {
+		if (bedrock != nil) {
+			return "Bedrock (" + BEDROCK_MODEL + ") and Ollama at " + OLLAMA_HOST + " (model " + OLLAMA_MODEL + ") did not answer.";
+		}
 		return "Ollama is not reachable at " + OLLAMA_HOST + " (model " + OLLAMA_MODEL + ").";
 	}
+	print "assistant: ollama " + OLLAMA_MODEL;
 	return answer;
 }
 
@@ -271,6 +332,11 @@ server.get("/api/tags", handleOtags); // left off here
 swagger(server);
 
 print "MCP devops assistant on http://127.0.0.1:8080/mcp";
+if (bedrock != nil) {
+	print "  Bedrock model=" + BEDROCK_MODEL + " region=" + aws.region + " (Ollama is the fallback)";
+} else {
+	print "  Bedrock skipped (no .env credentials)";
+}
 print "  OLLAMA_HOST=" + OLLAMA_HOST + " model=" + OLLAMA_MODEL;
 print "  GET  /mcp/health";
 print "  GET  /mcp/allowed-docs";

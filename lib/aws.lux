@@ -115,7 +115,7 @@ fun _awsFindEnvFile(path) {
 }
 
 // Load STS / shared-credentials / dotenv keys.
-// Accepts aws_access_key_id, AWS_ACCESS_KEY_ID, region, bucket, session token.
+// Accepts aws_access_key_id, AWS_ACCESS_KEY_ID, region, bucket, session token, bedrock_model.
 fun loadAwsCredentials(path) {
     var file = _awsFindEnvFile(path);
     if (file == nil) {
@@ -131,6 +131,7 @@ fun loadAwsCredentials(path) {
     var sessionToken = nil;
     var region = "us-east-1";
     var bucket = nil;
+    var bedrockModel = nil;
 
     var lines = strSplit(text, "\n");
     var i = 0;
@@ -162,6 +163,8 @@ fun loadAwsCredentials(path) {
             region = value;
         } else if (key == "bucket" or key == "AWS_BUCKET") {
             bucket = value;
+        } else if (key == "bedrock_model" or key == "BEDROCK_MODEL") {
+            bedrockModel = value;
         }
     }
 
@@ -171,8 +174,12 @@ fun loadAwsCredentials(path) {
     if (sessionToken == "") {
         sessionToken = nil;
     }
+    if (bedrockModel == "") {
+        bedrockModel = nil;
+    }
     var cfg = AwsConfig(accessKey, secretKey, region, sessionToken);
     cfg.bucket = bucket;
+    cfg.bedrockModel = bedrockModel;
     return cfg;
 }
 
@@ -437,6 +444,56 @@ fun awsBedrockArnRegion(modelId) {
         return nil;
     }
     return strSlice(rest, 0, colon);
+}
+
+// Converse user turn: {role, content:[{text}]}.
+fun awsBedrockUserMessage(text) {
+    var body = text;
+    if (body == nil) {
+        body = "";
+    }
+    var block = Dict();
+    block.text = body;
+    var msg = Dict();
+    msg.role = "user";
+    msg.content = [block];
+    return msg;
+}
+
+// output.message.content[].text from a Converse body. Nil when the call failed.
+fun awsBedrockConverseText(raw) {
+    if (raw == nil or raw == "") {
+        return nil;
+    }
+    var result = parseJSON(raw);
+    if (result == nil) {
+        return nil;
+    }
+    var output = getField(result, "output");
+    if (output == nil) {
+        return nil;
+    }
+    var message = getField(output, "message");
+    if (message == nil) {
+        return nil;
+    }
+    var content = getField(message, "content");
+    if (content == nil or typeof(content) != "array") {
+        return nil;
+    }
+    var text = "";
+    var i = 0;
+    while (i < content.length) {
+        var piece = getField(content[i], "text");
+        if (piece != nil) {
+            text = text + piece;
+        }
+        i = i + 1;
+    }
+    if (text == "") {
+        return nil;
+    }
+    return text;
 }
 
 class BedrockRuntimeClient {

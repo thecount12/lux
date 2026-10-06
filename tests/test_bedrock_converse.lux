@@ -1,0 +1,16 @@
+import "../lib/aws.lux";
+
+print "=== Bedrock Converse helpers ===";
+
+var msg = awsBedrockUserMessage("hello");
+var msgJson = toJSON(msg);
+assert(strFind(msgJson, "\"role\":\"user\"") >= 0, "converse role");
+assert(strFind(msgJson, "\"text\":\"hello\"") >= 0, "converse text field");
+
+var converseBody = "{\"output\":{\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"use pydantic\"},{\"text\":\" models\"}]}},\"stopReason\":\"end_turn\"}";
+assert(awsBedrockConverseText(converseBody) == "use pydantic models", "converse text joined");
+assert(awsBedrockConverseText("{\"message\":\"denied\"}") == nil, "error body has no text");
+assert(awsBedrockConverseText(nil) == nil, "nil converse body");
+assert(awsBedrockConverseText("") == nil, "empty converse body");
+
+print "All Bedrock Converse tests passed";
