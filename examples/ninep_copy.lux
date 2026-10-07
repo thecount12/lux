@@ -1,0 +1,44 @@
+/* Copy files over 9P. Pair with examples/ninep_files.lux.
+ *
+ *   ./lux ../examples/ninep_files.lux          # terminal 1
+ *   ./lux ../examples/ninep_copy.lux           # terminal 2
+ *
+ * Pull a remote file:
+ *   c.get("/README.md", "/tmp/README.from9p")
+ *
+ * Push a local file onto an exported name (overwrites):
+ *   c.put("/tmp/hello.txt", "/note.txt")
+ *
+ * Talking to Plan 9 exportfs, get/put work the same if the remote
+ * path already exists (no create yet).
+ */
+
+var addr = "unix!/tmp/lux-files.9p";
+if (args().length > 0) {
+    addr = args()[0];
+}
+
+var c = NineP.connect(addr);
+if (c == nil) {
+    print "connect failed: " + addr;
+    exit(1);
+}
+
+if (!c.get("/README.md", "/tmp/README.from9p")) {
+    print "get failed: " + c.err;
+    exit(1);
+}
+print "got /README.md -> /tmp/README.from9p";
+
+writeFile("/tmp/hello-from-lux.txt", "hello over 9p\n");
+if (!c.put("/tmp/hello-from-lux.txt", "/note.txt")) {
+    print "put failed: " + c.err;
+    exit(1);
+}
+print "put /tmp/hello-from-lux.txt -> /note.txt";
+
+var back = c.read("/note.txt");
+print "read /note.txt:";
+print back;
+
+c.close();

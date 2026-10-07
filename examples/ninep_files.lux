@@ -1,0 +1,31 @@
+/* Export a few real files over 9P (read and write).
+ *
+ * POSIX — terminal 1 (from posix/):
+ *   ./lux ../examples/ninep_files.lux
+ *
+ * POSIX — terminal 2:
+ *   ./lux ../examples/ninep_copy.lux
+ *   9p -a unix!/tmp/lux-files.9p read README.md | head
+ *
+ * Plan 9, after srv/mount of the TCP listener:
+ *   cat /n/lux/README.md
+ */
+
+var addr = "/tmp/lux-files.9p";
+if (args().length > 0) {
+    addr = args()[0];
+}
+
+var fs = NineP();
+if (!fs.export("/README.md", "../README.md")) {
+    print "export README.md failed (run from posix/)";
+    exit(1);
+}
+fs.export("/NINEP.md", "../NINEP.md");
+fs.export("/note.txt", "/tmp/lux-note.txt");
+print "exported README.md, NINEP.md, note.txt";
+print "listen " + addr;
+if (!fs.listen(addr)) {
+    print "listen failed";
+    exit(1);
+}

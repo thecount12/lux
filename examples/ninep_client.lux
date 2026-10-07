@@ -1,0 +1,59 @@
+/* 9P client. Talk to a Lux server or a Plan 9 export.
+ *
+ *   ./lux examples/ninep_status.lux          # terminal 1
+ *   ./lux examples/ninep_client.lux          # terminal 2 (unix!/tmp/lux.9p)
+ *
+ * Other addresses:
+ *   ./lux examples/ninep_client.lux tcp!127.0.0.1!5640
+ *   ./lux examples/ninep_client.lux tcp!plan9.example!564
+ *
+ * Plan 9:
+ *   8.out examples/ninep_client.lux tcp!posixhost!5640
+ *   8.out examples/ninep_client.lux /srv/lux
+ */
+
+var addr = "unix!/tmp/lux.9p";
+if (args().length > 0) {
+    addr = args()[0];
+}
+
+var c = NineP.connect(addr);
+if (c == nil) {
+    print "connect failed: " + addr;
+    exit(1);
+}
+
+print "connected " + addr;
+
+var names = c.ls("/");
+if (names == nil) {
+    print "ls failed: " + c.err;
+} else {
+    print "ls /";
+    var i = 0;
+    while (i < names.length) {
+        print "  " + names[i];
+        i = i + 1;
+    }
+}
+
+var st = c.stat("/status");
+if (st != nil) {
+    print "stat /status type=" + st.type + " length=" + st.length;
+}
+
+var body = c.read("/status");
+if (body == nil) {
+    print "read /status failed: " + c.err;
+} else {
+    print "read /status:";
+    print body;
+}
+
+if (!c.write("/ctl", "hello from client\n")) {
+    print "write /ctl failed: " + c.err;
+} else {
+    print "wrote /ctl";
+}
+
+c.close();
