@@ -14,6 +14,10 @@ typedef struct NinePStat NinePStat;
 typedef struct NinePList NinePList;
 typedef struct NinePClient NinePClient;
 
+/* Callers only see the forward declaration. Without this, 6l hashes
+ * the completed struct from ninep.c and rejects the calls. */
+#pragma incomplete NinePClient
+
 struct NinePFile {
 	char name[64];
 	int readable;
