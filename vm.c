@@ -2185,18 +2185,6 @@ writeAll(int fd, char* buf, int n)
 }
 
 static int
-hexNibble(int c)
-{
-	if (c >= '0' && c <= '9')
-		return c - '0';
-	if (c >= 'a' && c <= 'f')
-		return c - 'a' + 10;
-	if (c >= 'A' && c <= 'F')
-		return c - 'A' + 10;
-	return -1;
-}
-
-static int
 ciPrefix(char* s, int n, char* lit)
 {
 	int i;
@@ -2286,7 +2274,7 @@ decodeChunkedBody(char* body, int bodyLen, int* outLen)
 		size = 0;
 		digits = 0;
 		while (i < bodyLen) {
-			v = hexNibble(body[i]);
+			v = hexNibble((uchar)body[i]);
 			if (v < 0)
 				break;
 			if (size > 0x07ffffff) {
