@@ -69,6 +69,15 @@ Value fileInitNative(int argCount, Value* args);
 Value fileReadLineNative(int argCount, Value* args);
 Value fileCloseNative(int argCount, Value* args);
 void fileSetClass(ObjClass* klass);
+Value tensorInitNative(int argCount, Value* args);
+Value tensorFillNative(int argCount, Value* args);
+Value tensorSetNative(int argCount, Value* args);
+Value tensorGetNative(int argCount, Value* args);
+Value tensorMatmulNative(int argCount, Value* args);
+Value tensorAddBiasNative(int argCount, Value* args);
+Value tensorReluNative(int argCount, Value* args);
+Value tensorShowNative(int argCount, Value* args);
+void tensorSetClass(ObjClass* klass);
 Value ninepInitNative(int argCount, Value* args);
 Value ninepFileNative(int argCount, Value* args);
 Value ninepExportNative(int argCount, Value* args);
@@ -108,6 +117,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"cos", "cos(number)", "Return the cosine of a number (radians)."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"File", "File(path)", "Open a file for line-at-a-time reading. f.ok is false if open failed. f.readLine() returns the next line or nil at EOF. f.close() closes the handle."},
+	{"Tensor", "Tensor(rows, cols)", "Contiguous float matrix. t.set(r, c, v), t.get(r, c), t.fill(v), t.matmul(b), t.addBias(bias), t.relu(), t.show(label). Each side must be from 1 to 4096. t.ok is false if allocation failed."},
 	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
 	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
 	{"renderMarkdown", "renderMarkdown(path)", "Read a Markdown file and convert it to an HTML fragment."},
@@ -3862,6 +3872,7 @@ static ObjClass* serverResClass;
 static ObjClass* serverClass;
 static ObjClass* dictClass;
 static ObjClass* fileClass;
+static ObjClass* tensorClass;
 static ObjClass* ninepClass;
 static ObjClass* ninepConnClass;
 
@@ -6174,6 +6185,21 @@ void initVM() {
 	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
 	pop();
 	pop();
+	tensorClass = newClass(copyString("Tensor", 6));
+	tensorSetClass(tensorClass);
+	tableSet(&tensorClass->methods, vm.initString, OBJ_VAL(newNative(tensorInitNative)));
+	tableSet(&tensorClass->methods, copyString("fill", 4), OBJ_VAL(newNative(tensorFillNative)));
+	tableSet(&tensorClass->methods, copyString("set", 3), OBJ_VAL(newNative(tensorSetNative)));
+	tableSet(&tensorClass->methods, copyString("get", 3), OBJ_VAL(newNative(tensorGetNative)));
+	tableSet(&tensorClass->methods, copyString("matmul", 6), OBJ_VAL(newNative(tensorMatmulNative)));
+	tableSet(&tensorClass->methods, copyString("addBias", 7), OBJ_VAL(newNative(tensorAddBiasNative)));
+	tableSet(&tensorClass->methods, copyString("relu", 4), OBJ_VAL(newNative(tensorReluNative)));
+	tableSet(&tensorClass->methods, copyString("show", 4), OBJ_VAL(newNative(tensorShowNative)));
+	push(OBJ_VAL(copyString("Tensor", 6)));
+	push(OBJ_VAL(tensorClass));
+	tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
+	pop();
+	pop();
 	ninepClass = newClass(copyString("NineP", 5));
 	tableSet(&ninepClass->methods, vm.initString, OBJ_VAL(newNative(ninepInitNative)));
 	tableSet(&ninepClass->methods, copyString("file", 4), OBJ_VAL(newNative(ninepFileNative)));
@@ -6218,6 +6244,7 @@ void markServerRoots(void) {
 	if (serverClass != NULL) markObject((Obj*)serverClass);
 	if (dictClass != NULL) markObject((Obj*)dictClass);
 	if (fileClass != NULL) markObject((Obj*)fileClass);
+	if (tensorClass != NULL) markObject((Obj*)tensorClass);
 	if (ninepClass != NULL) markObject((Obj*)ninepClass);
 	if (ninepConnClass != NULL) markObject((Obj*)ninepConnClass);
 }
