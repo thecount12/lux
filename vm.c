@@ -2184,6 +2184,141 @@ writeAll(int fd, char* buf, int n)
 	return sent;
 }
 
+static int
+ciPrefix(char* s, int n, char* lit)
+{
+	int i;
+
+	for (i = 0; lit[i] != '\0'; i++) {
+		int c;
+
+		if (i >= n)
+			return 0;
+		c = s[i];
+		if (c >= 'A' && c <= 'Z')
+			c = c - 'A' + 'a';
+		if (c != lit[i])
+			return 0;
+	}
+	return 1;
+}
+
+/* True when response headers use Transfer-Encoding: chunked. */
+static int
+headersAreChunked(char* hdr, int hdrLen)
+{
+	int i;
+
+	i = 0;
+	while (i < hdrLen) {
+		int line;
+		int lineEnd;
+		int v;
+		int valStart;
+
+		line = i;
+		while (i < hdrLen && hdr[i] != '\n')
+			i++;
+		lineEnd = i;
+		if (lineEnd > line && hdr[lineEnd - 1] == '\r')
+			lineEnd--;
+		if (i < hdrLen && hdr[i] == '\n')
+			i++;
+		while (line < lineEnd && (hdr[line] == ' ' || hdr[line] == '\t'))
+			line++;
+		if (!ciPrefix(hdr + line, lineEnd - line, "transfer-encoding:"))
+			continue;
+		v = line + 18;
+		while (v < lineEnd && (hdr[v] == ' ' || hdr[v] == '\t'))
+			v++;
+		valStart = v;
+		while (v + 7 <= lineEnd) {
+			int before;
+			int after;
+
+			if (!ciPrefix(hdr + v, lineEnd - v, "chunked")) {
+				v++;
+				continue;
+			}
+			before = (v == valStart) || hdr[v - 1] == ' ' ||
+				hdr[v - 1] == '\t' || hdr[v - 1] == ',';
+			after = (v + 7 == lineEnd) || hdr[v + 7] == ' ' ||
+				hdr[v + 7] == '\t' || hdr[v + 7] == ',' ||
+				hdr[v + 7] == ';';
+			if (before && after)
+				return 1;
+			v++;
+		}
+	}
+	return 0;
+}
+
+/* Strip HTTP/1.1 chunk framing. Returns a new buffer, or nil if malformed. */
+static char*
+decodeChunkedBody(char* body, int bodyLen, int* outLen)
+{
+	char* out;
+	int n;
+	int i;
+
+	out = malloc(bodyLen + 1);
+	if (out == nil)
+		return nil;
+	n = 0;
+	i = 0;
+	while (i < bodyLen) {
+		int size;
+		int digits;
+		int v;
+
+		size = 0;
+		digits = 0;
+		while (i < bodyLen) {
+			v = hexNibble((uchar)body[i]);
+			if (v < 0)
+				break;
+			if (size > 0x07ffffff) {
+				free(out);
+				return nil;
+			}
+			size = (size << 4) + v;
+			digits++;
+			i++;
+		}
+		if (digits == 0) {
+			free(out);
+			return nil;
+		}
+		/* Skip optional chunk-ext through the end of the size line. */
+		while (i < bodyLen && body[i] != '\n')
+			i++;
+		if (i >= bodyLen) {
+			free(out);
+			return nil;
+		}
+		i++;
+		if (size == 0)
+			break;
+		if (size > bodyLen - i) {
+			free(out);
+			return nil;
+		}
+		memcpy(out + n, body + i, size);
+		n += size;
+		i += size;
+		if (i < bodyLen && body[i] == '\r')
+			i++;
+		if (i >= bodyLen || body[i] != '\n') {
+			free(out);
+			return nil;
+		}
+		i++;
+	}
+	out[n] = '\0';
+	*outLen = n;
+	return out;
+}
+
 /* Read HTTP response and extract body */
 static char*
 readHttpResponse(int fd, int* outLen)
@@ -2261,7 +2396,23 @@ readHttpResponse(int fd, int* outLen)
 	}
 	memcpy(body, bodyStart, bodyLen);
 	body[bodyLen] = '\0';
-	
+
+	/* HTTP/1.1 may send Transfer-Encoding: chunked. The size line
+	 * (for example "1ca") and the trailing "0" are framing, not payload. */
+	if (headersAreChunked(buffer, bodyOffset)) {
+		int decodedLen;
+		char* decoded;
+
+		decoded = decodeChunkedBody(body, bodyLen, &decodedLen);
+		if (decoded != nil) {
+			free(body);
+			body = decoded;
+			bodyLen = decodedLen;
+		} else {
+			fprint(2, "http: chunked body could not be decoded\n");
+		}
+	}
+
 	*outLen = bodyLen;
 	free(buffer);
 	return body;
