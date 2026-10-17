@@ -4,6 +4,7 @@
 #include "memory.h"
 #include "vm.h"
 #include "file_native.h"
+#include "tensor_native.h"
 #include "ninep_native.h"
 
 #ifdef DEBUG_LOG_GC
@@ -162,6 +163,7 @@ static void freeObject(Obj* object) {
 		case OBJ_INSTANCE: {
 			ObjInstance* instance = (ObjInstance*)object;
 			fileCloseFromInstance(instance);
+			tensorFreeFromInstance(instance);
 			ninepCloseFromInstance(instance);
 			freeTable(&instance->fields);
 			FREE(ObjInstance, object);
