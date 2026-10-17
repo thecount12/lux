@@ -14,7 +14,7 @@ FLUX9_NATIVE_OBJ =
 ifeq ($(USE_FLUX9),1)
     FLUX9_FLAGS = -DLUX_FLUX9
     FLUX9_CFLAGS = -I$(FLUX9_DIR)
-    FLUX9_OBJS = flux9_tile.o flux9_vm.o flux9_api.o
+    FLUX9_OBJS = flux9_tile.o flux9_vm.o flux9_pack.o flux9_api.o
     FLUX9_NATIVE_OBJ = tensor_flux9_native.o
 endif
 
@@ -265,7 +265,10 @@ flux9_tile.o: $(FLUX9_DIR)/tile.c $(FLUX9_DIR)/tile.h $(FLUX9_DIR)/flux9.h
 flux9_vm.o: $(FLUX9_DIR)/vm.c $(FLUX9_DIR)/vm.h $(FLUX9_DIR)/tile.h $(FLUX9_DIR)/flux9.h
 	$(CC) $(CFLAGS) $(FLUX9_CFLAGS) -c -o $@ $(FLUX9_DIR)/vm.c
 
-flux9_api.o: $(FLUX9_DIR)/api.c $(FLUX9_DIR)/api.h $(FLUX9_DIR)/vm.h $(FLUX9_DIR)/flux9.h
+flux9_pack.o: $(FLUX9_DIR)/pack.c $(FLUX9_DIR)/pack.h $(FLUX9_DIR)/flux9.h
+	$(CC) $(CFLAGS) $(FLUX9_CFLAGS) -c -o $@ $(FLUX9_DIR)/pack.c
+
+flux9_api.o: $(FLUX9_DIR)/api.c $(FLUX9_DIR)/api.h $(FLUX9_DIR)/pack.h $(FLUX9_DIR)/tile.h $(FLUX9_DIR)/vm.h $(FLUX9_DIR)/flux9.h
 	$(CC) $(CFLAGS) $(FLUX9_CFLAGS) -c -o $@ $(FLUX9_DIR)/api.c
 
 tensor_flux9_native.o: tensor_flux9_native.c tensor.h tensor_native.h $(FLUX9_DIR)/api.h $(FLUX9_DIR)/flux9.h

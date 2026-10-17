@@ -120,7 +120,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"cos", "cos(number)", "Return the cosine of a number (radians)."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"File", "File(path)", "Open a file for line-at-a-time reading. f.ok is false if open failed. f.readLine() returns the next line or nil at EOF. f.close() closes the handle."},
-	{"Tensor", "Tensor(rows, cols)", "Contiguous float matrix. t.set(r, c, v), t.get(r, c), t.fill(v), t.matmul(b), t.matmulFlux9(b) (4x4; needs USE_FLUX9=1), t.addBias(bias), t.relu(), t.show(label). Each side must be from 1 to 4096. t.ok is false if allocation failed."},
+	{"Tensor", "Tensor(rows, cols)", "Contiguous float matrix. t.set(r, c, v), t.get(r, c), t.fill(v), t.matmul(b), t.matmulFlux9(b) (dims multiple of 4; needs USE_FLUX9=1), t.addBias(bias), t.relu(), t.show(label). Each side must be from 1 to 4096. t.ok is false if allocation failed."},
 	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
 	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
 	{"renderMarkdown", "renderMarkdown(path)", "Read a Markdown file and convert it to an HTML fragment."},
