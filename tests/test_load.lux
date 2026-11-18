@@ -60,6 +60,10 @@ fun testLoadSamples() {
     assert(fileExists(t.dir + "/results.json") == true, "results.json");
     t.logLine("unit-test");
     assert(fileExists(t.dir + "/run.log") == true, "run.log");
+
+    var inline = LoadTest();
+    inline.inline(true);
+    assert(inline.runInline == true, "inline flag");
 }
 
 fun testLoadLive() {

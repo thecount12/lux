@@ -126,6 +126,14 @@ class LoadTest {
         this.dir = _loadTmp("lux-load");
         this.startedAt = 0;
         this.finishedAt = 0;
+        this.runInline = false; /* Plan 9 demo: no worker subprocess */
+    }
+
+    // Run the load loop in this process (no run()/rc/sh worker). Best on 9front.
+    inline(flag) {
+        if (flag == nil) this.runInline = true;
+        else this.runInline = (flag == true);
+        return this;
     }
 
     users(n) {
@@ -398,10 +406,67 @@ class LoadTest {
         writeFile(this.dir + "/worker-" + userId + ".lux",
             this.workerScript(this.dir + "/cfg-" + userId + ".json", outPath));
         writeFile(outPath, "");
-        this.logLine("worker " + userId + " start");
+        this.logLine("worker " + userId + " start cmd=" +
+            this.luxBin + " " + _loadCmdArg(this.dir + "/worker-" + userId + ".lux"));
         var cmd = this.luxBin + " " + _loadCmdArg(this.dir + "/worker-" + userId + ".lux");
         run(cmd);
         this.logLine("worker " + userId + " done");
+    }
+
+    // In-process VU loop (Plan 9 / debugging). Writes samples-0.txt only.
+    driveInline() {
+        var outPath = this.dir + "/samples-0.txt";
+        writeFile(this.dir + "/cfg-0.json", this.configJson(0));
+        writeFile(outPath, "");
+        this.logLine("inline start");
+        var cfg = parseJSON(this.configJson(0));
+        var end = epoch() + this.durationSec;
+        var seed = (epoch() + 1) % 2147483647;
+        if (seed < 0) seed = 0 - seed;
+        var tasks = cfg.tasks;
+        var total = 0;
+        var i = 0;
+        while (i < tasks.length) {
+            total = total + tasks[i].weight;
+            i = i + 1;
+        }
+        if (total < 1) {
+            this.logLine("inline no tasks");
+            return;
+        }
+        while (epoch() < end) {
+            seed = (seed * 1103515245 + 12345) % 2147483647;
+            if (seed < 0) seed = 0 - seed;
+            var pick = seed % total;
+            var acc = 0;
+            var ti = 0;
+            var task = tasks[0];
+            while (ti < tasks.length) {
+                acc = acc + tasks[ti].weight;
+                if (pick < acc) {
+                    task = tasks[ti];
+                    break;
+                }
+                ti = ti + 1;
+            }
+            var r = httpStat(task.method, task.url, task.body, cfg.headers);
+            var st = r.status;
+            if (st == nil) st = 0;
+            var ms = r.ms;
+            if (ms == nil) ms = 0;
+            var by = r.bytes;
+            if (by == nil) by = 0;
+            appendFile(outPath, "" + st + " " + ms + " " + by + "\n");
+            if (cfg.waitMax > 0) {
+                seed = (seed * 1103515245 + 12345) % 2147483647;
+                if (seed < 0) seed = 0 - seed;
+                var span = cfg.waitMax - cfg.waitMin;
+                var pause = cfg.waitMin;
+                if (span > 0) pause = cfg.waitMin + (seed / 2147483647) * span;
+                sleep(pause);
+            }
+        }
+        this.logLine("inline done");
     }
 
     summarize() {
@@ -423,8 +488,12 @@ class LoadTest {
         writeFile(this.dir + "/run.log", "");
         this.startedAt = epoch();
         this.logLine("start users=" + this.nUsers + " durationSec=" + this.durationSec +
-            " tasks=" + this.tasks.length + " bin=" + this.luxBin);
-        if (this.nUsers == 1) {
+            " tasks=" + this.tasks.length + " bin=" + this.luxBin +
+            " inline=" + this.runInline);
+        if (this.runInline) {
+            this.nUsers = 1;
+            this.driveInline();
+        } else if (this.nUsers == 1) {
             this.driveOne(0, this.dir + "/samples-0.txt");
         } else {
             var i = 0;

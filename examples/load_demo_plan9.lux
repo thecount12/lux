@@ -1,14 +1,13 @@
-// Plan 9 / 9front load demo (single user — no Bourne sh).
+// Plan 9 / 9front load demo — in-process (no worker subprocess / rc spawn).
 // From the repo root after mk:
 //   6.out examples/load_demo_plan9.lux    # amd64
 //   8.out examples/load_demo_plan9.lux    # 386
-// Multi-user spawn stays POSIX (sh). Here we use users(1) via rc-friendly run().
+// Multi-user + StatsD stay on the POSIX side. This path only needs httpStat + sleep.
 import "lib/load.lux";
 
 fun main() {
     var t = LoadTest();
-    /* Match the binary you built: 6.out (amd64) or 8.out (386). */
-    t.bin("./6.out");
+    t.inline(true);          // run loop here — avoids run(6.out worker.lux)
     t.outDir("load-out-" + epoch());
     t.users(1);
     t.duration(5);
@@ -17,12 +16,11 @@ fun main() {
     t.get("https://example.com/");
 
     print "=== output dir: " + t.dir + " ===";
-    print "=== run 1 user for " + t.durationSec + "s via " + t.luxBin + " ===";
+    print "=== inline 1 user for " + t.durationSec + "s ===";
     var s = t.run();
     if (s.ok != true) {
         print "load failed: " + s.error;
         print "see " + t.dir + "/run.log";
-        print "manual check: " + t.luxBin + " " + t.dir + "/worker-0.lux";
         return;
     }
     print "reqs=" + s.count + " fail=" + s.failed + " rps=" + s.rps;
