@@ -1,0 +1,39 @@
+// Polite root-page load against tumeryk.com (no API).
+// From repo: ensure PATH has lux workers via LUX_BIN.
+import "../../lib/load.lux";
+
+fun envOr(name, fallback) {
+    var v = getenv(name);
+    if (v == nil or v == "") return fallback;
+    return v;
+}
+
+fun main() {
+    var host = envOr("LOAD_HOST", "https://www.tumeryk.com");
+    var users = parseJSON(envOr("LOAD_VUS", "5"));
+    if (typeof(users) != "number") users = 5;
+    var dur = envOr("LOAD_DURATION", "10s");
+    var out = envOr("LOAD_OUT", "out/tumeryk-lux");
+    var bin = envOr("LUX_BIN", "../../posix/lux");
+    var wait = parseJSON(envOr("LOAD_WAIT", "0.5"));
+    if (typeof(wait) != "number" or wait < 0) wait = 0.5;
+
+    var t = LoadTest();
+    t.bin(bin);
+    t.outDir(out);
+    t.users(users);
+    t.spawnRate(2);
+    t.duration(dur);
+    t.wait(wait, wait + 0.5);
+    t.header("User-Agent", "lux-load/1.0 (+https://luxlang.dev; tumeryk compare; contact site owner)");
+
+    // Marketing homepage only (no API).
+    t.get(host + "/");
+
+    var s = t.run();
+    print "TUMERYK_LUX ok=" + s.ok + " count=" + s.count + " failed=" + s.failed +
+        " rps=" + s.rps + " avg=" + s.avg + " p50=" + s.p50 + " p95=" + s.p95 +
+        " p99=" + s.p99 + " bytes=" + s.bytes + " dir=" + s.dir;
+}
+
+main();

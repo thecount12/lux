@@ -1,0 +1,89 @@
+// lib/load.lux — script generation and sample parsing (no live load required).
+import "../lib/load.lux";
+
+fun testLoadScript() {
+    assert(_loadParseDuration(30) == 30, "dur num");
+    assert(_loadParseDuration("45s") == 45, "dur s");
+    assert(_loadParseDuration("2m") == 120, "dur m");
+    assert(_loadQuote("a\"b") == "\"a\\\"b\"", "quote");
+    assert(_loadCmdArg("load-out/x.lux") == "load-out/x.lux", "cmd bare");
+    assert(_loadCmdArg("a b") == "\"a b\"", "cmd space");
+
+    var t = LoadTest();
+    t.users(3);
+    t.spawnRate(2);
+    t.duration("15s");
+    t.wait(1, 2);
+    t.bin("./lux");
+    t.header("Accept", "text/html");
+    t.get("https://example.com/");
+    t.task(3, "GET", "https://example.com/a", nil);
+    t.post("https://example.com/b", "{\"n\":1}");
+
+    assert(t.nUsers == 3, "users");
+    assert(t.durationSec == 15, "duration");
+    assert(t.tasks.length == 3, "tasks");
+
+    var cfg = t.configJson(1);
+    assert(strFind(cfg, "\"userId\":1") >= 0, "cfg user");
+    assert(strFind(cfg, "\"durationSec\":15") >= 0, "cfg dur");
+    assert(strFind(cfg, "https://example.com/") >= 0, "cfg url");
+    assert(strFind(cfg, "Accept") >= 0, "cfg hdr");
+    assert(strFind(cfg, "\"weight\":3") >= 0, "cfg weight");
+
+    var ws = t.workerScript("/tmp/cfg.json", "/tmp/out.txt");
+    assert(strFind(ws, "httpStat(") >= 0, "worker httpStat");
+    assert(strFind(ws, "sleep(") >= 0, "worker sleep");
+    assert(strFind(ws, "2147483647") >= 0, "worker mod");
+    assert(strFind(ws, "/tmp/cfg.json") >= 0, "worker cfg");
+
+    var sh = t.shellScript();
+    assert(strFind(sh, "./lux") >= 0, "shell bin");
+    assert(strFind(sh, "worker-0.lux") >= 0, "shell w0");
+    assert(strFind(sh, "wait") >= 0, "shell wait");
+}
+
+fun testLoadSamples() {
+    var t = LoadTest();
+    var samples = "200 12.5 100\n200 40 100\n500 80 20\n0 5 0\n";
+    var r = t.parseSamples(samples);
+    assert(r.ok == true, "samples ok");
+    assert(r.count == 4, "samples count");
+    assert(r.failed == 0.5, "samples fail rate");
+    assert(r.bytes == 220, "samples bytes");
+
+    var empty = t.parseSamples("");
+    assert(empty.ok == false, "empty fail");
+
+    createDir(t.dir);
+    assert(t.writeReports(r).ok == true, "report ok");
+    assert(fileExists(t.dir + "/results.json") == true, "results.json");
+    t.logLine("unit-test");
+    assert(fileExists(t.dir + "/run.log") == true, "run.log");
+
+    var inline = LoadTest();
+    inline.inline(true);
+    assert(inline.runInline == true, "inline flag");
+}
+
+fun testLoadLive() {
+    var probe = httpStat("GET", "https://example.com/", nil, nil);
+    if (probe.status != 200) return;
+    var live = LoadTest();
+    live.bin("./lux");
+    live.outDir("load-out-test-" + epoch());
+    live.users(1);
+    live.duration(2);
+    live.wait(0, 0);
+    live.get("https://example.com/");
+    var s = live.run();
+    assert(s.ok == true, "live ok");
+    assert(s.count >= 1, "live count");
+    assert(fileExists(s.dir + "/results.json") == true, "live results");
+    assert(fileExists(s.dir + "/samples-all.txt") == true, "live samples");
+}
+
+testLoadScript();
+testLoadSamples();
+testLoadLive();
+print "test_load: all assertions passed";

@@ -1,0 +1,33 @@
+// Plan 9 / 9front load demo — in-process (no worker subprocess / rc spawn).
+// From the repo root after mk:
+//   6.out examples/load_demo_plan9.lux    # amd64
+//   8.out examples/load_demo_plan9.lux    # 386
+// Multi-user + StatsD stay on the POSIX side. This path only needs httpStat + sleep.
+import "lib/load.lux";
+
+fun main() {
+    var t = LoadTest();
+    t.inline(true);          // run loop here — avoids run(6.out worker.lux)
+    t.outDir("load-out-" + epoch());
+    t.users(1);
+    t.duration(5);
+    t.wait(0.2, 0.5);
+    t.header("User-Agent", "lux-load/1.0 (+https://luxlang.dev; plan9)");
+    t.get("https://example.com/");
+
+    print "=== output dir: " + t.dir + " ===";
+    print "=== inline 1 user for " + t.durationSec + "s ===";
+    var s = t.run();
+    if (s.ok != true) {
+        print "load failed: " + s.error;
+        print "see " + t.dir + "/run.log";
+        return;
+    }
+    print "reqs=" + s.count + " fail=" + s.failed + " rps=" + s.rps;
+    print "avg=" + s.avg + "ms p50=" + s.p50 + " p95=" + s.p95 + " p99=" + s.p99;
+    print "bytes=" + s.bytes;
+    print "wrote " + s.dir + "/results.txt";
+    print "wrote " + s.dir + "/run.log";
+}
+
+main();

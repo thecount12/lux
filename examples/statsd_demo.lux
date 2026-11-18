@@ -1,0 +1,20 @@
+// DogStatsD demo — safe with or without an agent (UDP is fire-and-forget).
+// From posix/:
+//   ./lux ../examples/statsd_demo.lux
+// ECS: sidecar usually 127.0.0.1:8125; or DD_AGENT_HOST / DD_DOGSTATSD_PORT.
+import "../lib/statsd.lux";
+
+fun main() {
+    var dd = StatsD();
+    dd.fromEnv();
+    dd.prefix("lux.demo.");
+    dd.tag("service", "lux");
+    dd.tag("env", "dev");
+
+    print "statsd -> " + dd.host + ":" + dd.port;
+    print "count ok=" + dd.incr("requests", nil);
+    print "timing ok=" + dd.timing("latency", 42, ["route:home"]);
+    print "raw ok=" + statsdSend("lux.demo.raw:1|c|#service:lux");
+}
+
+main();

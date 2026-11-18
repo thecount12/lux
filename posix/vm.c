@@ -107,6 +107,7 @@ typedef struct {
 static const NativeDoc kNativeDocs[] = {
 	{"clock", "clock()", "Return process CPU time in seconds."},
 	{"epoch", "epoch()", "Return Unix epoch time in seconds (UTC)."},
+	{"sleep", "sleep(seconds)", "Sleep for the given number of seconds (fractional OK)."},
 	{"exit", "exit([code])", "Exit the Lux process with an optional numeric status (default 0)."},
 	{"args", "args()", "Return command-line arguments passed after the script path."},
 	{"getenv", "getenv(name)", "Return the value of an environment variable, or nil if unset."},
@@ -135,6 +136,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"NinePConn", "NineP.connect(addr)", "9P client: ls, read, write, stat, close. Failed ops set .err."},
 	{"netLookup", "netLookup(host)", "Resolve a hostname to its first IP address string, or nil."},
 	{"netPing", "netPing(host, port)", "TCP-connect probe; return round-trip milliseconds, or -1 on failure."},
+	{"statsdSend", "statsdSend(line) or statsdSend(host, port, line)", "Send one UDP DogStatsD/StatsD line. Default host 127.0.0.1 port 8125."},
 	{"len", "len(value)", "Return length for strings and arrays."},
 	{"parseJSON", "parseJSON(json)", "Parse JSON text into Lux values."},
 	{"toJSON", "toJSON(value)", "Serialize a Lux value to JSON text."},
@@ -146,6 +148,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request with a JSON body."},
 	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
 	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request. Body may be a string, nil, Form, or parts array."},
+	{"httpStat", "httpStat(method, url, body, headers)", "HTTP request that discards the body and returns status, ms, bytes, error, reused (keep-alive)."},
 	{"httpStream", "httpStream(method, url, body, headers, onLine)", "HTTP request that calls onLine(line) for each response line (NDJSON). body and headers may be nil. Returns true or nil."},
 	{"httpPostForm", "httpPostForm(url, parts, [headers])", "POST multipart/form-data from a parts array or Form instance."},
 	{"httpServer", "httpServer(port)", "Start a simple HTTP server (legacy, built-in routes)."},
@@ -243,7 +246,8 @@ static const char* callableCategory(const char* name) {
 	    strcmp(name, "renderTemplate") == 0 ||
 	    strcmp(name, "markdownToHtml") == 0 ||
 	    strcmp(name, "renderMarkdown") == 0) return "File and Directory";
-	if (strcmp(name, "netLookup") == 0 || strcmp(name, "netPing") == 0) return "Network";
+	if (strcmp(name, "netLookup") == 0 || strcmp(name, "netPing") == 0 ||
+	    strcmp(name, "statsdSend") == 0) return "Network";
 	if (strcmp(name, "NineP") == 0 || strcmp(name, "NinePConn") == 0) return "9P";
 	if (strcmp(name, "len") == 0 || strcmp(name, "strFind") == 0 ||
 	    strcmp(name, "strSlice") == 0 || strcmp(name, "strStartsWithAt") == 0 ||
@@ -258,6 +262,7 @@ static const char* callableCategory(const char* name) {
 	if (strncmp(name, "float64_", 8) == 0) return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
+	    strcmp(name, "httpStat") == 0 || strcmp(name, "httpStream") == 0 ||
 	    strcmp(name, "httpPostForm") == 0 ||
 	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0) return "HTTP";
 	if (strcmp(name, "sha256") == 0 || strcmp(name, "hmacSha256") == 0) return "Crypto";
@@ -524,6 +529,31 @@ static Value clockNative(int argCount __attribute__((unused)), Value* args __att
 
 static Value epochNative(int argCount __attribute__((unused)), Value* args __attribute__((unused))) {
 	return NUMBER_VAL((double)time(NULL));
+}
+
+/* sleep(seconds) -> nil. Fractional seconds OK; clamped to [0, 86400]. */
+static Value sleepNative(int argCount, Value* args) {
+	double seconds;
+	struct timespec ts;
+
+	if (argCount != 1 || !IS_NUMBER(args[0]))
+		return NIL_VAL;
+	seconds = AS_NUMBER(args[0]);
+	if (seconds < 0)
+		seconds = 0;
+	if (seconds > 86400)
+		seconds = 86400;
+	ts.tv_sec = (time_t)seconds;
+	ts.tv_nsec = (long)((seconds - (double)ts.tv_sec) * 1000000000.0);
+	if (ts.tv_nsec < 0)
+		ts.tv_nsec = 0;
+	if (ts.tv_nsec >= 1000000000L) {
+		ts.tv_sec++;
+		ts.tv_nsec -= 1000000000L;
+	}
+	while (nanosleep(&ts, &ts) == -1 && errno == EINTR)
+		;
+	return NIL_VAL;
 }
 
 static Value getenvNative(int argCount, Value* args) {
@@ -1253,6 +1283,61 @@ static Value netPingNative(int argCount, Value* args) {
 	close(fd);
 	freeaddrinfo(res);
 	return NUMBER_VAL(rttMs);
+}
+
+/* statsdSend(line) -> bool
+ * statsdSend(host, port, line) -> bool
+ * Fire-and-forget UDP datagram for DogStatsD / StatsD (ECS sidecar often 127.0.0.1:8125). */
+#define STATSD_MAX_LINE 8192
+
+static Value statsdSendNative(int argCount, Value* args) {
+	const char* host = "127.0.0.1";
+	int port = 8125;
+	ObjString* line;
+	char portStr[16];
+	struct addrinfo hints;
+	struct addrinfo* res = NULL;
+	int fd;
+	ssize_t n;
+	int ok;
+
+	if (argCount == 1) {
+		if (!IS_STRING(args[0]))
+			return BOOL_VAL(false);
+		line = AS_STRING(args[0]);
+	} else if (argCount == 3) {
+		if (!IS_STRING(args[0]) || !IS_NUMBER(args[1]) || !IS_STRING(args[2]))
+			return BOOL_VAL(false);
+		host = AS_CSTRING(args[0]);
+		port = (int)AS_NUMBER(args[1]);
+		line = AS_STRING(args[2]);
+	} else {
+		return BOOL_VAL(false);
+	}
+
+	if (port <= 0 || port > 65535)
+		return BOOL_VAL(false);
+	if (line->length <= 0 || line->length > STATSD_MAX_LINE)
+		return BOOL_VAL(false);
+
+	snprintf(portStr, sizeof(portStr), "%d", port);
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_DGRAM;
+	if (getaddrinfo(host, portStr, &hints, &res) != 0 || res == NULL)
+		return BOOL_VAL(false);
+
+	fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+	if (fd < 0) {
+		freeaddrinfo(res);
+		return BOOL_VAL(false);
+	}
+
+	n = sendto(fd, line->chars, (size_t)line->length, 0, res->ai_addr, res->ai_addrlen);
+	ok = (n == (ssize_t)line->length);
+	close(fd);
+	freeaddrinfo(res);
+	return BOOL_VAL(ok);
 }
 
 static bool isAsciiWhitespace(char c) {
@@ -2828,6 +2913,228 @@ static Value httpRequestNative(int argCount, Value* args) {
 	result = OBJ_VAL(copyString(resp.data, (int)resp.size));
 	free(resp.data);
 	return result;
+}
+
+/* Process-local CURL easy handle for httpStat keep-alive / TLS reuse.
+ * Each Lux worker process has its own copy; freeVM releases it. */
+static CURL* httpStatCurl = NULL;
+
+static void httpStatCurlCleanup(void) {
+	if (httpStatCurl != NULL) {
+		curl_easy_cleanup(httpStatCurl);
+		httpStatCurl = NULL;
+	}
+}
+
+static CURL* httpStatCurlHandle(void) {
+	if (httpStatCurl == NULL)
+		httpStatCurl = curl_easy_init();
+	return httpStatCurl;
+}
+
+/* Build HttpStat instance: status, ms, bytes, error, reused. */
+static Value makeHttpStat(long status, double ms, double bytes, const char* error,
+	int reused)
+{
+	ObjString* className;
+	ObjClass* klass;
+	ObjInstance* instance;
+	ObjString* key;
+	ObjString* errVal;
+	Value result;
+
+	className = copyString("HttpStat", 8);
+	push(OBJ_VAL(className));
+	klass = newClass(className);
+	pop();
+
+	push(OBJ_VAL(klass));
+	instance = newInstance(klass);
+	pop();
+
+	push(OBJ_VAL(instance));
+
+	key = copyString("status", 6);
+	push(OBJ_VAL(key));
+	tableSet(&instance->fields, key, NUMBER_VAL((double)status));
+	pop();
+
+	key = copyString("ms", 2);
+	push(OBJ_VAL(key));
+	tableSet(&instance->fields, key, NUMBER_VAL(ms));
+	pop();
+
+	key = copyString("bytes", 5);
+	push(OBJ_VAL(key));
+	tableSet(&instance->fields, key, NUMBER_VAL(bytes));
+	pop();
+
+	key = copyString("reused", 6);
+	push(OBJ_VAL(key));
+	tableSet(&instance->fields, key, BOOL_VAL(reused != 0));
+	pop();
+
+	key = copyString("error", 5);
+	push(OBJ_VAL(key));
+	if (error != NULL) {
+		errVal = copyString(error, (int)strlen(error));
+		push(OBJ_VAL(errVal));
+		tableSet(&instance->fields, key, OBJ_VAL(errVal));
+		pop();
+	} else {
+		tableSet(&instance->fields, key, NIL_VAL);
+	}
+	pop();
+
+	result = OBJ_VAL(instance);
+	pop();
+	return result;
+}
+
+/* Discard body bytes while counting them (for httpStat). */
+static size_t discardCountCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+	size_t realsize = size * nmemb;
+	size_t* total = (size_t*)userp;
+	(void)contents;
+	*total += realsize;
+	return realsize;
+}
+
+/* httpStat(method, url, [body], [headers]) -> HttpStat
+ * Discards the response body. Fields: status, ms, bytes, error, reused.
+ * Reuses one CURL easy handle so TCP/TLS can stay warm across calls. */
+static Value httpStatNative(int argCount, Value* args) {
+	char* method;
+	char* url;
+	char* body = NULL;
+	long bodyLen = 0;
+	int bodyOwned = 0;
+	int isMultipart = 0;
+	char contentTypeLine[160];
+	ObjInstance* headersObj = NULL;
+	CURL* curl;
+	struct curl_slist* headers = NULL;
+	CURLcode res;
+	size_t bytes = 0;
+	long responseCode = 0;
+	long numConnects = 0;
+	double totalTime = 0;
+	struct timeval start, end;
+	double elapsedMs;
+	int reused = 0;
+
+	if (argCount < 2 || argCount > 4)
+		return makeHttpStat(0, 0, 0, "arity", 0);
+
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return makeHttpStat(0, 0, 0, "type", 0);
+
+	method = AS_CSTRING(args[0]);
+	url = AS_CSTRING(args[1]);
+
+	if (argCount >= 3 && !IS_NIL(args[2])) {
+		ObjArray* parts = multipartPartsFromValue(args[2]);
+		if (parts != NULL) {
+			MultipartBody mp;
+			if (!encodeMultipart(parts, &mp))
+				return makeHttpStat(0, 0, 0, "multipart encode failed", 0);
+			body = mp.data;
+			bodyLen = (long)mp.size;
+			bodyOwned = 1;
+			isMultipart = 1;
+			snprintf(contentTypeLine, sizeof(contentTypeLine),
+				"Content-Type: %s", mp.contentType);
+		} else if (IS_STRING(args[2])) {
+			body = AS_CSTRING(args[2]);
+			bodyLen = AS_STRING(args[2])->length;
+		} else {
+			return makeHttpStat(0, 0, 0, "bad body", 0);
+		}
+	}
+
+	if (argCount >= 4 && !IS_NIL(args[3])) {
+		if (!IS_INSTANCE(args[3])) {
+			if (bodyOwned)
+				free(body);
+			return makeHttpStat(0, 0, 0, "bad headers", 0);
+		}
+		headersObj = AS_INSTANCE(args[3]);
+	}
+
+	curl = httpStatCurlHandle();
+	if (!curl) {
+		if (bodyOwned)
+			free(body);
+		return makeHttpStat(0, 0, 0, "curl init", 0);
+	}
+
+	/* Keep connection cache / DNS / TLS session; clear per-transfer options. */
+	curl_easy_reset(curl);
+
+	if (strcmp(method, "GET") == 0) {
+		curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+	} else if (strcmp(method, "POST") == 0) {
+		curl_easy_setopt(curl, CURLOPT_POST, 1L);
+	} else if (strcmp(method, "PUT") == 0) {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+	} else if (strcmp(method, "DELETE") == 0) {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+	} else if (strcmp(method, "HEAD") == 0) {
+		curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+	} else {
+		curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
+	}
+
+	if (body != NULL) {
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, bodyLen);
+	}
+
+	curl_easy_setopt(curl, CURLOPT_URL, url);
+	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discardCountCallback);
+	curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&bytes);
+	curl_easy_setopt(curl, CURLOPT_USERAGENT, "lux-load/1.0");
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+	curl_easy_setopt(curl, CURLOPT_PATH_AS_IS, 1L);
+	curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+	/* Prefer reuse; never force a fresh connect for load-test calls. */
+	curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 0L);
+	curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 0L);
+
+	headers = appendInstanceHeaders(headers, headersObj, isMultipart);
+	if (isMultipart)
+		headers = curl_slist_append(headers, contentTypeLine);
+	if (body != NULL)
+		headers = curl_slist_append(headers, "Expect:");
+
+	if (headers != NULL)
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+	gettimeofday(&start, NULL);
+	res = curl_easy_perform(curl);
+	gettimeofday(&end, NULL);
+	elapsedMs = (end.tv_sec - start.tv_sec) * 1000.0 +
+	            (end.tv_usec - start.tv_usec) / 1000.0;
+
+	if (res == CURLE_OK) {
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
+		curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &totalTime);
+		curl_easy_getinfo(curl, CURLINFO_NUM_CONNECTS, &numConnects);
+		elapsedMs = totalTime * 1000.0;
+		/* 0 new connects => existing connection was reused. */
+		reused = (numConnects == 0);
+	}
+
+	if (headers != NULL)
+		curl_slist_free_all(headers);
+	if (bodyOwned)
+		free(body);
+
+	if (res != CURLE_OK)
+		return makeHttpStat(0, elapsedMs, (double)bytes, curl_easy_strerror(res), 0);
+
+	return makeHttpStat(responseCode, elapsedMs, (double)bytes, NULL, reused);
 }
 
 static bool call(ObjClosure* closure, int argCount);
@@ -6068,6 +6375,7 @@ void initVM() {
 	defineNative("assert", assertNative);
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
+	defineNative("sleep", sleepNative);
 	defineNative("floor", floorNative);
 	defineNative("abs", absNative);
 	defineNative("ceil", ceilNative);
@@ -6093,6 +6401,7 @@ void initVM() {
 	defineNative("run", runNative);
 	defineNative("netLookup", netLookupNative);
 	defineNative("netPing", netPingNative);
+	defineNative("statsdSend", statsdSendNative);
 	defineNative("len", lenNative);
 	defineNative("typeof", typeofNative);
 	defineNative("strFind", strFindNative);
@@ -6130,6 +6439,7 @@ void initVM() {
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
 	defineNative("httpRequest", httpRequestNative);
+	defineNative("httpStat", httpStatNative);
 	defineNative("httpStream", httpStreamNative);
 	defineNative("httpPostForm", httpPostFormNative);
 	defineNative("httpServer", httpServerNative);
@@ -6256,6 +6566,7 @@ void markServerRoots(void) {
 }
 
 void freeVM() {
+	httpStatCurlCleanup();
 	freeTable(&vm.globals);
 	freeTable(&vm.strings);
 	freeTable(&vm.imports);

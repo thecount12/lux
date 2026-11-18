@@ -35,7 +35,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Graphs** — BFS/DFS and Graphviz DOT export, `lib/graph.lux`
 - **Math** — abs, ceil, floor, sqrt, pow, log, sin, cos
 - **HTTP** — client (GET/POST/PUT) and server (routes, static, virtual hosts, OpenAPI/Swagger UI, Lambda via `server.handle` / Mangum)
-- **Network** — `netLookup` (DNS) and `netPing` (TCP-connect RTT), no `run()`
+- **Network** — `netLookup` (DNS), `netPing` (TCP-connect RTT), `statsdSend` (UDP DogStatsD); `lib/statsd.lux`
 - **9P** — serve a synthetic 9P2000 tree and connect as a client (`NineP`, unix socket or TCP). See [NINEP.md](NINEP.md).
 - **Templates** — native `renderTemplate` (`{{ }}`, `{% for %}`, `{% include %}`)
 - **Crypto** — SHA-256, HMAC-SHA256, AWS request signing
@@ -44,6 +44,7 @@ Built from first principles (inspired by "Crafting Interpreters"), Lux combines 
 - **Code formatting** — `luxfmt` (gofmt-style)
 - **Testing** — `luxtest` with timeouts and reporting
 - **Web checks** — `lib/webtest.lux` (POSIX): curl status/body, k6 load, Playwright (shells out; no VM change)
+- **Load tests** — `lib/load.lux`: Locust-style HTTP load tests via `httpStat` + `sleep` (no k6; spawn lux workers). See [LOAD.md](LOAD.md)
 - **Assertions** — `assert(condition, message)` for test-driven development
 - **Syntax** — `luxcheck` fast lightweight syntax checker
 - **Linting** — `luxlint` static checks: unused vars, unreachable code, duplicate functions, shadowed globals
@@ -915,6 +916,22 @@ var elapsed = clock() - start;
 print "Elapsed: " + elapsed + " seconds";
 ```
 
+#### `sleep(seconds)` → nil
+Pause for `seconds` (fractional OK). Clamped to `[0, 86400]`. Used by `lib/load.lux` for think time.
+```lux
+sleep(0.25);
+```
+
+#### `httpStat(method, url, [body], [headers])` → HttpStat
+Like `httpRequest`, but discards the response body and returns an object with `status`, `ms` (total time), `bytes` (body length), `error` (`nil` on success), and `reused` (POSIX: whether the connection was reused). Prefer this for load tests so large pages are not kept as Lux strings. The POSIX runtime keeps one CURL handle warm across `httpStat` calls in the process (important for `lib/load.lux` workers).
+```lux
+var r = httpStat("GET", "https://example.com/", nil, nil);
+print r.status;  // 200
+print r.ms;      // e.g. 45.2
+print r.bytes;
+print r.reused;  // false first time, often true afterward
+```
+
 ### Math
 
 `floor` is the integer floor. The rest wrap `math.h` (IEEE NaN/Inf on domain errors; bad arity or type returns `nil`).
@@ -1419,6 +1436,32 @@ assert(out.ok == true, "playwright");
 
 `HttpCheck` uses curl (`-K` config) so you get `status` / `headers` / `body` (`ok` is 2xx). Headers are a `Dict` or an array of `"Name: value"` strings. `K6.parseSummary` maps `p(95)` via `getField`. Playwright queues `goto` / `fill` / `click` / `waitFor` / `text` / `screenshot` then launches one browser. See `examples/webtest_demo.lux`.
 
+#### Load tests (`lib/load.lux`)
+
+Locust-shaped HTTP load tests against any site. Uses natives `httpStat` (status / latency / bytes, body discarded) and `sleep`. Multi-user runs spawn `lux` worker processes via `sh` (POSIX). No k6 or Locust install.
+
+```lux
+import "../lib/load.lux";
+
+var t = LoadTest();
+t.bin("./lux");          // lux binary for workers (default "lux")
+t.outDir("load-out-" + epoch());  // results.txt, results.json, run.log
+t.users(10);
+t.spawnRate(2);          // new users per second
+t.duration("30s");       // or a number of seconds
+t.wait(1, 3);            // think time between requests
+t.header("User-Agent", "lux-load/1.0 (+https://luxlang.dev)");
+t.get("https://example.com/");
+t.task(3, "GET", "https://example.com/pricing", nil);
+t.post("https://example.com/api", "{\"n\":1}");
+var s = t.run();
+assert(s.failed < 0.01, "error rate");
+assert(s.p95 < 500, "p95");
+print "rps=" + s.rps + " p95=" + s.p95 + " dir=" + s.dir;
+```
+
+`s` has `count`, `failed` (non-2xx rate), `rps`, `avg`, `p50`, `p95`, `p99`, `bytes`, `dir`. `run()` writes `results.txt`, `results.json`, `run.log`, and `samples-all.txt` into `outDir` (default `/tmp/...`). Be polite on public sites: few users, short duration, identifiable User-Agent. Users are capped at **128** (~100 is a practical work max; one process per VU). Full guide: [LOAD.md](LOAD.md). Demo: `examples/load_demo.lux`.
+
 ### HTTP Operations
 
 Lux includes HTTP client functions for making web requests on both Plan 9 and POSIX platforms.
@@ -1902,6 +1945,16 @@ if (ms >= 0) {
     print "down or filtered";
 }
 ```
+
+#### `statsdSend(line)` / `statsdSend(host, port, line)` → bool
+Send one UDP DogStatsD/StatsD metric line. Default destination is `127.0.0.1:8125` (typical Datadog agent sidecar on ECS). Returns `true` if the datagram was written. Fire-and-forget — nothing listening still often returns `true`.
+
+```lux
+statsdSend("lux.load.requests:1|c|#service:api,env:prod");
+statsdSend("10.0.1.5", 8125, "lux.load.p95:80|ms|#service:api");
+```
+
+Helper library `lib/statsd.lux` (`StatsD`) builds count/gauge/timing/histogram/distribution lines, optional tags, `fromEnv()` for `DD_AGENT_HOST` / `DD_DOGSTATSD_PORT`, and `loadResult(s)` for load-test summaries. See `examples/statsd_demo.lux`.
 
 ### AWS S3 Operations
 
