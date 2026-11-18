@@ -1,0 +1,33 @@
+/* Phase 5 seam: 4x4 matmul through the flux9 tile VM.
+ * Build: make USE_FLUX9=1
+ * Run:   ./lux ../examples/flux9_tile.lux
+ */
+
+var A = Tensor(4, 4);
+A.set(0, 0, 1);  A.set(0, 1, 2);  A.set(0, 2, 3);  A.set(0, 3, 4);
+A.set(1, 0, 5);  A.set(1, 1, 6);  A.set(1, 2, 7);  A.set(1, 3, 8);
+A.set(2, 0, 9);  A.set(2, 1, 10); A.set(2, 2, 11); A.set(2, 3, 12);
+A.set(3, 0, 13); A.set(3, 1, 14); A.set(3, 2, 15); A.set(3, 3, 16);
+
+var B = Tensor(4, 4);
+B.set(0, 0, 2);  B.set(0, 1, -1); B.set(0, 2, 0);  B.set(0, 3, 1);
+B.set(1, 0, 0);  B.set(1, 1, 3);  B.set(1, 2, -2); B.set(1, 3, 1);
+B.set(2, 0, 1);  B.set(2, 1, 0);  B.set(2, 2, 2);  B.set(2, 3, -1);
+B.set(3, 0, -1); B.set(3, 1, 2);  B.set(3, 2, 0);  B.set(3, 3, 3);
+
+var viaLux = A.matmul(B);
+var viaFlux = A.matmulFlux9(B);
+
+viaFlux.show("flux9 T0");
+
+var r = 0;
+while (r < 4) {
+    var c = 0;
+    while (c < 4) {
+        assert(viaFlux.get(r, c) == viaLux.get(r, c), "cell mismatch");
+        c = c + 1;
+    }
+    r = r + 1;
+}
+
+print "flux9 tile check passed";

@@ -1,0 +1,42 @@
+/* 8x8 matmul through flux9 tiled API.
+ * Build: make USE_FLUX9=1
+ * Run:   ./lux ../examples/flux9_tiled.lux
+ */
+
+fun fillPattern(t, kind) {
+    var r = 0;
+    while (r < t.rows) {
+        var c = 0;
+        while (c < t.cols) {
+            if (kind == 0) {
+                t.set(r, c, (r + c) % 5 - 2);
+            } else {
+                t.set(r, c, (r * 2 + c) % 5 - 2);
+            }
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+}
+
+var A = Tensor(8, 8);
+var B = Tensor(8, 8);
+fillPattern(A, 0);
+fillPattern(B, 1);
+
+var viaLux = A.matmul(B);
+var viaFlux = A.matmulFlux9(B);
+
+viaFlux.show("flux9 tiled 8x8");
+
+var r = 0;
+while (r < 8) {
+    var c = 0;
+    while (c < 8) {
+        assert(viaFlux.get(r, c) == viaLux.get(r, c), "8x8 cell mismatch");
+        c = c + 1;
+    }
+    r = r + 1;
+}
+
+print "flux9 tiled check passed";

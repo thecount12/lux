@@ -3,6 +3,22 @@
 # Without this, the first rule in the file becomes the goal and `make` never links lux.
 .DEFAULT_GOAL := all
 
+# Optional flux9 tile VM (sibling repo). Default off — lux builds alone.
+# Enable: make USE_FLUX9=1   (FLUX9_DIR ?= ../../flux9)
+USE_FLUX9 ?= 0
+FLUX9_DIR ?= ../../flux9
+FLUX9_FLAGS =
+FLUX9_CFLAGS =
+FLUX9_OBJS =
+FLUX9_NATIVE_OBJ =
+ifeq ($(USE_FLUX9),1)
+    FLUX9_FLAGS = -DLUX_FLUX9
+    FLUX9_CFLAGS = -I$(FLUX9_DIR)
+    FLUX9_OBJS = flux9_tile.o flux9_vm.o flux9_pack.o flux9_api.o
+    FLUX9_NATIVE_OBJ = tensor_flux9_native.o
+endif
+
+
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 ARCH ?= $(UNAME_M)
@@ -29,7 +45,7 @@ DB_LDFLAGS =
 
 # _DEFAULT_SOURCE exposes POSIX APIs (popen, fork, waitpid, etc.) under -std=c99.
 # Default flags for unknown POSIX systems.
-CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS)
+CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS) $(FLUX9_FLAGS)
 LDFLAGS = -lcurl -lcrypto -lm $(DB_LDFLAGS)
 
 ifeq ($(USE_SQLITE),1)
@@ -138,7 +154,7 @@ endif
 # OS-specific flags
 ifeq ($(UNAME_S),Linux)
     # Linux: OpenSSL typically in standard paths
-    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) $(DB_FLAGS) $(FLUX9_FLAGS)
     LDFLAGS = -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),Darwin)
@@ -151,12 +167,12 @@ ifeq ($(UNAME_S),Darwin)
     ifeq ($(OPENSSL_PREFIX),)
         OPENSSL_PREFIX := /usr/local/opt/openssl@3
     endif
-    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch $(ARCH) -I$(OPENSSL_PREFIX)/include $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -arch $(ARCH) -I$(OPENSSL_PREFIX)/include $(DB_FLAGS) $(FLUX9_FLAGS)
     LDFLAGS = -arch $(ARCH) -L$(OPENSSL_PREFIX)/lib -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 ifeq ($(UNAME_S),OpenBSD)
     # OpenBSD: use ports-installed curl and OpenSSL under /usr/local.
-    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -I/usr/local/include $(DB_FLAGS)
+    CFLAGS = -Wall -Wextra -std=c99 -D_DEFAULT_SOURCE -g $(OPT) -I/usr/local/include $(DB_FLAGS) $(FLUX9_FLAGS)
     LDFLAGS = -L/usr/local/lib -lcurl -lcrypto -lm $(DB_LDFLAGS)
 endif
 
@@ -172,6 +188,9 @@ TEST_SRC = luxtest.c
 
 # Automatically determine object files from source files
 OBJS = $(SRCS:.c=.o)
+ifeq ($(USE_FLUX9),1)
+    OBJS += tensor_flux9_native.o
+endif
 FMT_OBJ = $(FMT_SRC:.c=.o)
 TEST_OBJ = $(TEST_SRC:.c=.o)
 
@@ -203,7 +222,7 @@ $(TEST_TARGET): $(TEST_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@
 
 # Rule to link the object files into the executable
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) $(FLUX9_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Pattern rule to compile .c files into .o files
@@ -223,7 +242,7 @@ LUXCHECK_TARGET = luxcheck
 LUXCHECK_SRC = luxcheck.c
 LUXCHECK_OBJ = $(LUXCHECK_SRC:.c=.o)
 
-$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o file_native.o tensor.o tensor_native.o template_render.o markdown.o ninep.o ninep_native.o vm.o
+$(LUXCHECK_TARGET): $(LUXCHECK_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o file_native.o tensor.o tensor_native.o $(FLUX9_NATIVE_OBJ) template_render.o markdown.o ninep.o ninep_native.o vm.o $(FLUX9_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # Build the luxlint utility
@@ -231,16 +250,33 @@ LUXLINT_TARGET = luxlint
 LUXLINT_SRC = luxlint.c
 LUXLINT_OBJ = $(LUXLINT_SRC:.c=.o)
 
-$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o file_native.o tensor.o tensor_native.o template_render.o markdown.o ninep.o ninep_native.o vm.o
+$(LUXLINT_TARGET): $(LUXLINT_OBJ) compiler.o scanner.o object.o memory.o value.o chunk.o table.o dict.o dict_native.o file_native.o tensor.o tensor_native.o $(FLUX9_NATIVE_OBJ) template_render.o markdown.o ninep.o ninep_native.o vm.o $(FLUX9_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 ninep_test: ninep_test.o ninep.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 # Phony targets don't create a file of the same name
+
+# flux9 sources (compiled into the lux binary)
+flux9_tile.o: $(FLUX9_DIR)/tile.c $(FLUX9_DIR)/tile.h $(FLUX9_DIR)/flux9.h
+	$(CC) $(CFLAGS) $(FLUX9_CFLAGS) -c -o $@ $(FLUX9_DIR)/tile.c
+
+flux9_vm.o: $(FLUX9_DIR)/vm.c $(FLUX9_DIR)/vm.h $(FLUX9_DIR)/tile.h $(FLUX9_DIR)/flux9.h
+	$(CC) $(CFLAGS) $(FLUX9_CFLAGS) -c -o $@ $(FLUX9_DIR)/vm.c
+
+flux9_pack.o: $(FLUX9_DIR)/pack.c $(FLUX9_DIR)/pack.h $(FLUX9_DIR)/flux9.h
+	$(CC) $(CFLAGS) $(FLUX9_CFLAGS) -c -o $@ $(FLUX9_DIR)/pack.c
+
+flux9_api.o: $(FLUX9_DIR)/api.c $(FLUX9_DIR)/api.h $(FLUX9_DIR)/pack.h $(FLUX9_DIR)/tile.h $(FLUX9_DIR)/vm.h $(FLUX9_DIR)/flux9.h
+	$(CC) $(CFLAGS) $(FLUX9_CFLAGS) -c -o $@ $(FLUX9_DIR)/api.c
+
+tensor_flux9_native.o: tensor_flux9_native.c tensor.h tensor_native.h $(FLUX9_DIR)/api.h $(FLUX9_DIR)/flux9.h
+	$(CC) $(CFLAGS) $(FLUX9_CFLAGS) -c -o $@ tensor_flux9_native.c
+
 .PHONY: all clean force-stamp $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET)
 
 # Rule to clean up generated files
 clean:
-	rm -f $(OBJS) $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) ninep_test.o $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET) ninep_test ../buildstamp.h ../buildstamp.h.tmp
+	rm -f $(OBJS) $(FLUX9_OBJS) tensor_flux9_native.o $(FMT_OBJ) $(TEST_OBJ) $(LUXCHECK_OBJ) $(LUXLINT_OBJ) ninep_test.o $(TARGET) $(FMT_TARGET) $(TEST_TARGET) $(LUXCHECK_TARGET) $(LUXLINT_TARGET) ninep_test ../buildstamp.h ../buildstamp.h.tmp
 

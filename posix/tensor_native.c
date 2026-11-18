@@ -76,7 +76,7 @@ void tensorFreeFromInstance(ObjInstance* instance) {
 	dropTensor(instance);
 }
 
-static Tensor* getTensor(ObjInstance* inst) {
+Tensor* tensorFromInstance(ObjInstance* inst) {
 	Value v;
 
 	if (inst == NULL) return NULL;
@@ -84,6 +84,10 @@ static Tensor* getTensor(ObjInstance* inst) {
 	if (!tableGet(&inst->fields, copyString("_ptr", 4), &v)) return NULL;
 	if (!IS_NUMBER(v)) return NULL;
 	return (Tensor*)(uintptr_t)AS_NUMBER(v);
+}
+
+static Tensor* getTensor(ObjInstance* inst) {
+	return tensorFromInstance(inst);
 }
 
 static int asDim(Value v, int* out) {
@@ -116,7 +120,7 @@ static void bindTensor(ObjInstance* inst, Tensor* t) {
 }
 
 /* The instance must already be on the VM stack. */
-static Value adoptTensor(Tensor* t) {
+Value tensorAdopt(Tensor* t) {
 	ObjInstance* inst;
 
 	if (t == NULL || tensorClass == NULL) {
@@ -128,6 +132,10 @@ static Value adoptTensor(Tensor* t) {
 	bindTensor(inst, t);
 	pop();
 	return OBJ_VAL(inst);
+}
+
+static Value adoptTensor(Tensor* t) {
+	return tensorAdopt(t);
 }
 
 Value tensorInitNative(int argCount, Value* args) {

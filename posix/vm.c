@@ -74,6 +74,9 @@ Value tensorFillNative(int argCount, Value* args);
 Value tensorSetNative(int argCount, Value* args);
 Value tensorGetNative(int argCount, Value* args);
 Value tensorMatmulNative(int argCount, Value* args);
+#ifdef LUX_FLUX9
+Value tensorMatmulFlux9Native(int argCount, Value* args);
+#endif
 Value tensorAddBiasNative(int argCount, Value* args);
 Value tensorReluNative(int argCount, Value* args);
 Value tensorShowNative(int argCount, Value* args);
@@ -117,7 +120,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"cos", "cos(number)", "Return the cosine of a number (radians)."},
 	{"readFile", "readFile(path)", "Read a file and return its contents as a string."},
 	{"File", "File(path)", "Open a file for line-at-a-time reading. f.ok is false if open failed. f.readLine() returns the next line or nil at EOF. f.close() closes the handle."},
-	{"Tensor", "Tensor(rows, cols)", "Contiguous float matrix. t.set(r, c, v), t.get(r, c), t.fill(v), t.matmul(b), t.addBias(bias), t.relu(), t.show(label). Each side must be from 1 to 4096. t.ok is false if allocation failed."},
+	{"Tensor", "Tensor(rows, cols)", "Contiguous float matrix. t.set(r, c, v), t.get(r, c), t.fill(v), t.matmul(b), t.matmulFlux9(b) (dims multiple of 4; needs USE_FLUX9=1), t.addBias(bias), t.relu(), t.show(label). Each side must be from 1 to 4096. t.ok is false if allocation failed."},
 	{"renderTemplate", "renderTemplate(path, ctx)", "Render a .tpl file with {{ }}, {% for %}, {% include %}, {% include_md %} using ctx instance fields."},
 	{"markdownToHtml", "markdownToHtml(md)", "Convert Markdown text to an HTML fragment."},
 	{"renderMarkdown", "renderMarkdown(path)", "Read a Markdown file and convert it to an HTML fragment."},
@@ -6192,6 +6195,9 @@ void initVM() {
 	tableSet(&tensorClass->methods, copyString("set", 3), OBJ_VAL(newNative(tensorSetNative)));
 	tableSet(&tensorClass->methods, copyString("get", 3), OBJ_VAL(newNative(tensorGetNative)));
 	tableSet(&tensorClass->methods, copyString("matmul", 6), OBJ_VAL(newNative(tensorMatmulNative)));
+#ifdef LUX_FLUX9
+	tableSet(&tensorClass->methods, copyString("matmulFlux9", 11), OBJ_VAL(newNative(tensorMatmulFlux9Native)));
+#endif
 	tableSet(&tensorClass->methods, copyString("addBias", 7), OBJ_VAL(newNative(tensorAddBiasNative)));
 	tableSet(&tensorClass->methods, copyString("relu", 4), OBJ_VAL(newNative(tensorReluNative)));
 	tableSet(&tensorClass->methods, copyString("show", 4), OBJ_VAL(newNative(tensorShowNative)));
