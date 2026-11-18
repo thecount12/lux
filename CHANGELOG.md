@@ -9,6 +9,7 @@ Work landed on `front` since v1.1.0.
 - **Net and HTTP:** DNS lookup, TCP ping, Swagger / OpenAPI, bearer tokens, web checks.
 - **Load tests:** `httpStat` / `sleep` natives and `lib/load.lux` (Locust-style HTTP load against any site; no k6). Writes `results.json` / `results.txt` / `run.log`; see [LOAD.md](LOAD.md). Compare harness: `benchmark/load_compare/` (Lux vs k6 vs Locust). POSIX `httpStat` reuses a CURL handle (`reused` field) for keep-alive / TLS session reuse.
 - **DogStatsD:** `statsdSend` UDP native and `lib/statsd.lux` (`StatsD`, `fromEnv`, `loadResult`) for Datadog agent sidecars.
+- **Plan 9 load:** `%` uses `vlong` (no 32-bit `long` FP suicide on large quotients); load workers use rc-safe bare paths; `examples/load_demo_plan9.lux` is single-user.
 - **Cloud:** AWS tooling, Lambda / Mangum, OpenAI, Bedrock, MCP streamable HTTP.
 - **Databases:** Oracle, plus Docker builds for Oracle, PostgreSQL, and MySQL.
 

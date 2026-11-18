@@ -7105,8 +7105,23 @@ run(void)
 			}
 			da = AS_NUMBER(a);
 			db = AS_NUMBER(b);
-			/* Floating-point modulo for Plan 9 */
-			push(NUMBER_VAL(da - ((long)(da / db)) * db));
+			if (db == 0) {
+				runtimeError("Division by zero.");
+				return INTERPRET_RUNTIME_ERROR;
+			}
+			/* Truncating remainder. Use vlong — Plan 9 long is 32-bit and
+			 * (long)(da/db) suicides with fp invalid on large quotients
+			 * (e.g. load-test LCG: seed*1103515245 % 2^31). */
+			{
+				double q = da / db;
+				double iq;
+
+				if (q >= 9007199254740992.0 || q <= -9007199254740992.0)
+					iq = q; /* |q| >= 2^53: already an integer in double */
+				else
+					iq = (double)(vlong)q; /* toward zero */
+				push(NUMBER_VAL(da - iq * db));
+			}
 			break;
 
 		case OP_NOT:

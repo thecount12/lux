@@ -1,5 +1,6 @@
 // HTTP load test against a public site. From posix/:
 //   ./lux ../examples/load_demo.lux
+// Plan 9 / 9front (single user, rc): see load_demo_plan9.lux
 // Artifacts land in ./load-out-<epoch>/ (results.txt, results.json, run.log).
 // Be polite: few users, short duration, identifiable User-Agent.
 import "../lib/load.lux";

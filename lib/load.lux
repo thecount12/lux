@@ -37,6 +37,16 @@ fun _loadQuote(s) {
     return out + "\"";
 }
 
+/* Arg for run()/rc: bare path when safe. Plan 9 rc treats "..." as literal
+ * quote characters, so POSIX-style quoting breaks worker spawn. */
+fun _loadCmdArg(s) {
+    if (s == nil) s = "";
+    s = "" + s;
+    if (strFind(s, " ") >= 0 or strFind(s, "\t") >= 0 or strFind(s, "\"") >= 0)
+        return _loadQuote(s);
+    return s;
+}
+
 fun _loadJsEscape(s) {
     if (s == nil) return "";
     s = "" + s;
@@ -220,7 +230,9 @@ class LoadTest {
         s = s + "  var cfg = parseJSON(readFile(\"" + _loadJsEscape(cfgPath) + "\"));\n";
         s = s + "  var out = \"" + _loadJsEscape(outPath) + "\";\n";
         s = s + "  var end = epoch() + cfg.durationSec;\n";
-        s = s + "  var seed = epoch() * 1000 + cfg.userId * 997 + 1;\n";
+        /* Keep seed in 31-bit range so % stays Plan 9-safe even on old VMs. */
+        s = s + "  var seed = (epoch() + cfg.userId * 997 + 1) % 2147483647;\n";
+        s = s + "  if (seed < 0) seed = 0 - seed;\n";
         s = s + "  var tasks = cfg.tasks;\n";
         s = s + "  var total = 0;\n";
         s = s + "  var i = 0;\n";
@@ -230,7 +242,7 @@ class LoadTest {
         s = s + "  }\n";
         s = s + "  if (total < 1) return;\n";
         s = s + "  while (epoch() < end) {\n";
-        s = s + "    seed = (seed * 1103515245 + 12345) % 2147483648;\n";
+        s = s + "    seed = (seed * 1103515245 + 12345) % 2147483647;\n";
         s = s + "    if (seed < 0) seed = 0 - seed;\n";
         s = s + "    var pick = seed % total;\n";
         s = s + "    var acc = 0;\n";
@@ -251,11 +263,11 @@ class LoadTest {
         s = s + "    if (by == nil) by = 0;\n";
         s = s + "    appendFile(out, \"\" + st + \" \" + ms + \" \" + by + \"\\n\");\n";
         s = s + "    if (cfg.waitMax > 0) {\n";
-        s = s + "      seed = (seed * 1103515245 + 12345) % 2147483648;\n";
+        s = s + "      seed = (seed * 1103515245 + 12345) % 2147483647;\n";
         s = s + "      if (seed < 0) seed = 0 - seed;\n";
         s = s + "      var span = cfg.waitMax - cfg.waitMin;\n";
         s = s + "      var pause = cfg.waitMin;\n";
-        s = s + "      if (span > 0) pause = cfg.waitMin + (seed / 2147483648) * span;\n";
+        s = s + "      if (span > 0) pause = cfg.waitMin + (seed / 2147483647) * span;\n";
         s = s + "      sleep(pause);\n";
         s = s + "    }\n";
         s = s + "  }\n";
@@ -387,7 +399,7 @@ class LoadTest {
             this.workerScript(this.dir + "/cfg-" + userId + ".json", outPath));
         writeFile(outPath, "");
         this.logLine("worker " + userId + " start");
-        var cmd = this.luxBin + " " + _loadQuote(this.dir + "/worker-" + userId + ".lux");
+        var cmd = this.luxBin + " " + _loadCmdArg(this.dir + "/worker-" + userId + ".lux");
         run(cmd);
         this.logLine("worker " + userId + " done");
     }

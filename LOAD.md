@@ -179,7 +179,13 @@ See [`benchmark/load_compare/README.md`](benchmark/load_compare/README.md). Reco
 
 ## Plan 9 notes
 
-`httpStat` and `sleep` exist on Plan 9. Multi-user spawning uses `sh` + background jobs (POSIX-oriented). Prefer `t.users(1)` on Plan 9, or generate workers and launch them with `rc` yourself. Script generation (`workerScript`, `configJson`) still works everywhere.
+`httpStat` and `sleep` exist on Plan 9. Multi-user spawning still uses Bourne `sh` (POSIX). For 9front, use **`users(1)`** so the parent runs one worker via `rc` (`run()`), with an unquoted path.
+
+```text
+6.out examples/load_demo_plan9.lux
+```
+
+Set `t.bin("./6.out")` or `"./8.out"` to match your arch. DogStatsD is optional and unused in the Plan 9 demo. Script generation (`workerScript`, `configJson`) still works if you want to launch more workers yourself under `rc`.
 
 ## Etiquette
 
