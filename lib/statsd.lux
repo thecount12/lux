@@ -1,0 +1,148 @@
+// DogStatsD / StatsD helpers for ECS sidecars and local agents.
+// Needs native statsdSend(). Import has no network side effects:
+//   import "../lib/statsd.lux";
+//
+// Default destination: 127.0.0.1:8125 (Datadog agent sidecar).
+// Override with DD_AGENT_HOST / DD_DOGSTATSD_PORT, or StatsD.addr().
+
+fun _statsdAppend(arr, val) {
+    arr[arr.length] = val;
+    return arr;
+}
+
+fun _statsdJoinTags(tags) {
+    if (tags == nil or tags.length == 0) return "";
+    var out = "";
+    var i = 0;
+    while (i < tags.length) {
+        if (i > 0) out = out + ",";
+        out = out + tags[i];
+        i = i + 1;
+    }
+    return out;
+}
+
+class StatsD {
+    init() {
+        this.host = "127.0.0.1";
+        this.port = 8125;
+        this.ns = "";
+        this.baseTags = [];
+    }
+
+    addr(host, port) {
+        if (typeof(host) == "string" and host != "") this.host = host;
+        if (typeof(port) == "number" and port > 0) this.port = floor(port);
+        return this;
+    }
+
+    // POSIX: read DD_AGENT_HOST / DD_DOGSTATSD_PORT (ECS Datadog sidecar).
+    fromEnv() {
+        var host = getenv("DD_AGENT_HOST");
+        if (host != nil and host != "") this.host = host;
+        var portStr = getenv("DD_DOGSTATSD_PORT");
+        if (portStr != nil and portStr != "") {
+            var port = parseJSON(portStr);
+            if (typeof(port) == "number" and port > 0) this.port = floor(port);
+        }
+        return this;
+    }
+
+    // Metric name prefix, e.g. "lux.load."
+    prefix(p) {
+        if (p == nil) this.ns = "";
+        else this.ns = "" + p;
+        return this;
+    }
+
+    tag(key, value) {
+        _statsdAppend(this.baseTags, "" + key + ":" + value);
+        return this;
+    }
+
+    clearTags() {
+        this.baseTags = [];
+        return this;
+    }
+
+    fullName(name) {
+        return this.ns + name;
+    }
+
+    // Merge base tags with optional extra array of "k:v" strings.
+    tagSuffix(extra) {
+        var all = [];
+        var i = 0;
+        while (i < this.baseTags.length) {
+            _statsdAppend(all, this.baseTags[i]);
+            i = i + 1;
+        }
+        if (extra != nil) {
+            var j = 0;
+            while (j < extra.length) {
+                _statsdAppend(all, extra[j]);
+                j = j + 1;
+            }
+        }
+        if (all.length == 0) return "";
+        return "|#" + _statsdJoinTags(all);
+    }
+
+    line(name, value, type, extraTags) {
+        return this.fullName(name) + ":" + value + "|" + type + this.tagSuffix(extraTags);
+    }
+
+    send(raw) {
+        return statsdSend(this.host, this.port, "" + raw);
+    }
+
+    count(name, n, extraTags) {
+        if (typeof(n) != "number") n = 1;
+        return this.send(this.line(name, n, "c", extraTags));
+    }
+
+    incr(name, extraTags) {
+        return this.count(name, 1, extraTags);
+    }
+
+    gauge(name, n, extraTags) {
+        if (typeof(n) != "number") return false;
+        return this.send(this.line(name, n, "g", extraTags));
+    }
+
+    timing(name, ms, extraTags) {
+        if (typeof(ms) != "number") return false;
+        return this.send(this.line(name, ms, "ms", extraTags));
+    }
+
+    histogram(name, n, extraTags) {
+        if (typeof(n) != "number") return false;
+        return this.send(this.line(name, n, "h", extraTags));
+    }
+
+    distribution(name, n, extraTags) {
+        if (typeof(n) != "number") return false;
+        return this.send(this.line(name, n, "d", extraTags));
+    }
+
+    // Emit LoadResult / similar: count, failed, rps, avg, p95.
+    loadResult(s, extraTags) {
+        if (s == nil) return false;
+        var ok = true;
+        if (typeof(s.count) == "number")
+            ok = this.count("requests", s.count, extraTags) and ok;
+        if (typeof(s.failed) == "number")
+            ok = this.gauge("failed_rate", s.failed, extraTags) and ok;
+        if (typeof(s.rps) == "number")
+            ok = this.gauge("rps", s.rps, extraTags) and ok;
+        if (typeof(s.avg) == "number")
+            ok = this.timing("latency_avg", s.avg, extraTags) and ok;
+        if (typeof(s.p50) == "number")
+            ok = this.timing("latency_p50", s.p50, extraTags) and ok;
+        if (typeof(s.p95) == "number")
+            ok = this.timing("latency_p95", s.p95, extraTags) and ok;
+        if (typeof(s.p99) == "number")
+            ok = this.timing("latency_p99", s.p99, extraTags) and ok;
+        return ok;
+    }
+}

@@ -1,0 +1,43 @@
+// Lux LoadTest scenario — same mix as k6 / Locust in this directory.
+// Run via run_compare.py (sets cwd / binary). Env via getenv:
+//   LOAD_HOST, LOAD_VUS, LOAD_DURATION, LOAD_OUT, LUX_BIN
+import "../../lib/load.lux";
+
+fun envOr(name, fallback) {
+    var v = getenv(name);
+    if (v == nil or v == "") return fallback;
+    return v;
+}
+
+fun main() {
+    var host = envOr("LOAD_HOST", "http://127.0.0.1:8765");
+    var users = parseJSON(envOr("LOAD_VUS", "10"));
+    if (typeof(users) != "number") users = 10;
+    var dur = envOr("LOAD_DURATION", "10s");
+    var out = envOr("LOAD_OUT", "out/lux");
+    var bin = envOr("LUX_BIN", "./lux");
+    var wait = parseJSON(envOr("LOAD_WAIT", "0.05"));
+    if (typeof(wait) != "number" or wait < 0) wait = 0.05;
+
+    var t = LoadTest();
+    t.bin(bin);
+    t.outDir(out);
+    t.users(users);
+    t.spawnRate(users); // start all promptly (match k6/locust headless)
+    t.duration(dur);
+    t.wait(wait, wait);
+    t.header("User-Agent", "lux-load-compare/1.0");
+    t.header("Content-Type", "application/json");
+
+    // Weight 5 / 1 / 1 — same as Locust @task weights and k6 random mix.
+    t.task(5, "GET", host + "/hello", nil);
+    t.task(1, "POST", host + "/echo", "{\"n\":1}");
+    t.task(1, "POST", host + "/graphql", "{\"query\":\"{ ping }\"}");
+
+    var s = t.run();
+    print "LUX_COMPARE ok=" + s.ok + " count=" + s.count + " failed=" + s.failed +
+        " rps=" + s.rps + " avg=" + s.avg + " p50=" + s.p50 + " p95=" + s.p95 +
+        " p99=" + s.p99 + " bytes=" + s.bytes + " dir=" + s.dir;
+}
+
+main();

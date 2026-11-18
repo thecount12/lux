@@ -1,0 +1,39 @@
+// HTTP load test against a public site. From posix/:
+//   ./lux ../examples/load_demo.lux
+// Artifacts land in ./load-out-<epoch>/ (results.txt, results.json, run.log).
+// Be polite: few users, short duration, identifiable User-Agent.
+import "../lib/load.lux";
+
+fun main() {
+    var t = LoadTest();
+    t.bin("./lux");
+    t.outDir("load-out-" + epoch());
+    t.users(2);
+    t.spawnRate(2);
+    t.duration(5);
+    t.wait(0.2, 0.5);
+    t.header("User-Agent", "lux-load/1.0 (+https://luxlang.dev)");
+    t.get("https://example.com/");
+    t.task(1, "GET", "https://example.com/", nil);
+
+    print "=== output dir: " + t.dir + " ===";
+    print "=== generated worker (user 0) ===";
+    print t.workerScript(t.dir + "/cfg-0.json", t.dir + "/samples-0.txt");
+
+    print "=== run " + t.nUsers + " users for " + t.durationSec + "s ===";
+    var s = t.run();
+    if (s.ok != true) {
+        print "load failed: " + s.error;
+        print "see " + t.dir + "/run.log";
+        return;
+    }
+    print "reqs=" + s.count + " fail=" + s.failed + " rps=" + s.rps;
+    print "avg=" + s.avg + "ms p50=" + s.p50 + " p95=" + s.p95 + " p99=" + s.p99;
+    print "bytes=" + s.bytes;
+    print "wrote " + s.dir + "/results.txt";
+    print "wrote " + s.dir + "/results.json";
+    print "wrote " + s.dir + "/run.log";
+    print "wrote " + s.dir + "/samples-all.txt";
+}
+
+main();

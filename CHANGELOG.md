@@ -7,6 +7,8 @@ Work landed on `front` since v1.1.0.
 - **Language and data:** `continue`, Float64Array, DataFrame, and graphs.
 - **I/O:** streamed file reads, multipart forms, acme-friendly errors, editor support, large-file GC fix.
 - **Net and HTTP:** DNS lookup, TCP ping, Swagger / OpenAPI, bearer tokens, web checks.
+- **Load tests:** `httpStat` / `sleep` natives and `lib/load.lux` (Locust-style HTTP load against any site; no k6). Writes `results.json` / `results.txt` / `run.log`; see [LOAD.md](LOAD.md). Compare harness: `benchmark/load_compare/` (Lux vs k6 vs Locust). POSIX `httpStat` reuses a CURL handle (`reused` field) for keep-alive / TLS session reuse.
+- **DogStatsD:** `statsdSend` UDP native and `lib/statsd.lux` (`StatsD`, `fromEnv`, `loadResult`) for Datadog agent sidecars.
 - **Cloud:** AWS tooling, Lambda / Mangum, OpenAI, Bedrock, MCP streamable HTTP.
 - **Databases:** Oracle, plus Docker builds for Oracle, PostgreSQL, and MySQL.
 

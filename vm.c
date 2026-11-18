@@ -56,6 +56,7 @@ typedef struct {
 static const NativeDoc kNativeDocs[] = {
 	{"clock", "clock()", "Return process uptime in seconds."},
 	{"epoch", "epoch()", "Return Unix epoch time in seconds (UTC)."},
+	{"sleep", "sleep(seconds)", "Sleep for the given number of seconds (fractional OK)."},
 	{"exit", "exit([code])", "Terminate the Lux process with an optional numeric status (default 0)."},
 	{"args", "args()", "Return command-line arguments passed after the script path."},
 	{"floor", "floor(number)", "Return largest integer less than or equal to number."},
@@ -80,6 +81,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"run", "run(cmd)", "Run a shell command and return stdout as string, or nil on failure."},
 	{"netLookup", "netLookup(host)", "Resolve a hostname to its first IP address string, or nil."},
 	{"netPing", "netPing(host, port)", "TCP-connect probe; return round-trip milliseconds, or -1 on failure."},
+	{"statsdSend", "statsdSend(line) or statsdSend(host, port, line)", "Send one UDP DogStatsD/StatsD line. Default host 127.0.0.1 port 8125."},
 	{"len", "len(value)", "Return length for strings and arrays."},
 	{"strFind", "strFind(haystack, needle)", "Return index of substring or -1."},
 	{"strSlice", "strSlice(s, start, end)", "Return substring from start to end."},
@@ -116,6 +118,7 @@ static const NativeDoc kNativeDocs[] = {
 	{"httpPost", "httpPost(url, body)", "Make an HTTP POST request with a JSON body."},
 	{"httpPut", "httpPut(url, body)", "Make an HTTP PUT request."},
 	{"httpRequest", "httpRequest(method, url, body, headers)", "Make a generic HTTP request. Body may be a string, nil, Form, or parts array."},
+	{"httpStat", "httpStat(method, url, body, headers)", "HTTP request that discards the body and returns status, ms, bytes, error."},
 	{"httpStream", "httpStream(method, url, body, headers, onLine)", "HTTP request that calls onLine(line) for each response line (NDJSON). body and headers may be nil. Returns true or nil."},
 	{"httpPostForm", "httpPostForm(url, parts, [headers])", "POST multipart/form-data from a parts array or Form instance."},
 	{"httpServer", "httpServer(port, handler)", "Start a simple HTTP server."},
@@ -188,7 +191,8 @@ callableCategory(const char* name)
 	    strcmp(name, "markdownToHtml") == 0 ||
 	    strcmp(name, "renderMarkdown") == 0)
 		return "File and Directory";
-	if (strcmp(name, "netLookup") == 0 || strcmp(name, "netPing") == 0)
+	if (strcmp(name, "netLookup") == 0 || strcmp(name, "netPing") == 0 ||
+	    strcmp(name, "statsdSend") == 0)
 		return "Network";
 	if (strcmp(name, "NineP") == 0 || strcmp(name, "NinePConn") == 0)
 		return "9P";
@@ -208,6 +212,7 @@ callableCategory(const char* name)
 		return "Float64";
 	if (strcmp(name, "httpGet") == 0 || strcmp(name, "httpPost") == 0 ||
 	    strcmp(name, "httpPut") == 0 || strcmp(name, "httpRequest") == 0 ||
+	    strcmp(name, "httpStat") == 0 || strcmp(name, "httpStream") == 0 ||
 	    strcmp(name, "httpPostForm") == 0 ||
 	    strcmp(name, "httpServer") == 0 || strcmp(name, "Server") == 0)
 		return "HTTP";
@@ -474,6 +479,27 @@ epochNative(int argCount, Value* args)
 	(void)argCount;
 	(void)args;
 	return NUMBER_VAL((double)time(0));
+}
+
+/* sleep(seconds) -> nil. Plan 9 sleep() takes milliseconds. */
+static Value
+sleepNative(int argCount, Value* args)
+{
+	double seconds;
+	long ms;
+
+	if (argCount != 1 || !IS_NUMBER(args[0]))
+		return NIL_VAL;
+	seconds = AS_NUMBER(args[0]);
+	if (seconds < 0)
+		seconds = 0;
+	if (seconds > 86400)
+		seconds = 86400;
+	ms = (long)(seconds * 1000.0);
+	if (ms < 0)
+		ms = 0;
+	sleep(ms);
+	return NIL_VAL;
 }
 
 static Value
@@ -1073,6 +1099,53 @@ netPingNative(int argCount, Value* args)
 	close(fd);
 
 	return NUMBER_VAL((double)(end - start) / 1000000.0);
+}
+
+/* statsdSend(line) -> bool
+ * statsdSend(host, port, line) -> bool
+ * Fire-and-forget UDP for DogStatsD / StatsD. */
+#define STATSD_MAX_LINE 8192
+
+static Value
+statsdSendNative(int argCount, Value* args)
+{
+	char* host;
+	int port;
+	ObjString* line;
+	char dialAddr[300];
+	int fd;
+	int n;
+
+	host = "127.0.0.1";
+	port = 8125;
+
+	if (argCount == 1) {
+		if (!IS_STRING(args[0]))
+			return BOOL_VAL(0);
+		line = AS_STRING(args[0]);
+	} else if (argCount == 3) {
+		if (!IS_STRING(args[0]) || !IS_NUMBER(args[1]) || !IS_STRING(args[2]))
+			return BOOL_VAL(0);
+		host = AS_CSTRING(args[0]);
+		port = (int)AS_NUMBER(args[1]);
+		line = AS_STRING(args[2]);
+	} else {
+		return BOOL_VAL(0);
+	}
+
+	if (port <= 0 || port > 65535)
+		return BOOL_VAL(0);
+	if (line->length <= 0 || line->length > STATSD_MAX_LINE)
+		return BOOL_VAL(0);
+
+	snprint(dialAddr, sizeof(dialAddr), "udp!%s!%d", host, port);
+	fd = dial(dialAddr, nil, nil, nil);
+	if (fd < 0)
+		return BOOL_VAL(0);
+
+	n = write(fd, line->chars, line->length);
+	close(fd);
+	return BOOL_VAL(n == line->length);
 }
 
 static bool
@@ -2319,9 +2392,10 @@ decodeChunkedBody(char* body, int bodyLen, int* outLen)
 	return out;
 }
 
-/* Read HTTP response and extract body */
+/* Read HTTP response and extract body.
+ * If outStatus is non-nil, parse the HTTP status code from the status line. */
 static char*
-readHttpResponse(int fd, int* outLen)
+readHttpResponse(int fd, int* outLen, int* outStatus)
 {
 	int cap = 4096;
 	int len = 0;
@@ -2352,6 +2426,14 @@ readHttpResponse(int fd, int* outLen)
 	}
 	
 	buffer[len] = '\0';
+
+	if (outStatus != nil) {
+		char* sp;
+		*outStatus = 0;
+		sp = strchr(buffer, ' ');
+		if (sp != nil && sp[1] >= '0' && sp[1] <= '9')
+			*outStatus = atoi(sp + 1);
+	}
 	
 	/* Find start of body (after headers) */
 	char* bodyStart = strstr(buffer, "\r\n\r\n");
@@ -2531,7 +2613,7 @@ httpGetNative(int argCount, Value* args)
 	
 	/* Read response */
 	int bodyLen;
-	char* body = readHttpResponse(fd, &bodyLen);
+	char* body = readHttpResponse(fd, &bodyLen, nil);
 	
 	if (parts.ishttps)
 		free(conn.cert);
@@ -3025,7 +3107,7 @@ httpRequestNative(int argCount, Value* args)
 		free(requestBody);
 	
 	/* Read response */
-	respBody = readHttpResponse(fd, &bodyLen);
+	respBody = readHttpResponse(fd, &bodyLen, nil);
 	
 	if (parts.ishttps)
 		free(conn.cert);
@@ -3037,6 +3119,248 @@ httpRequestNative(int argCount, Value* args)
 	result = OBJ_VAL(copyString(respBody, bodyLen));
 	free(respBody);
 	return result;
+}
+
+/* Build HttpStat instance: status, ms, bytes, error. */
+static Value
+makeHttpStat(int status, double ms, double bytes, char* error)
+{
+	ObjString* className;
+	ObjClass* klass;
+	ObjInstance* instance;
+	ObjString* key;
+	ObjString* errVal;
+	Value result;
+
+	className = copyString("HttpStat", 8);
+	push(OBJ_VAL(className));
+	klass = newClass(className);
+	pop();
+
+	push(OBJ_VAL(klass));
+	instance = newInstance(klass);
+	pop();
+
+	push(OBJ_VAL(instance));
+
+	key = copyString("status", 6);
+	push(OBJ_VAL(key));
+	tableSet(&instance->fields, key, NUMBER_VAL((double)status));
+	pop();
+
+	key = copyString("ms", 2);
+	push(OBJ_VAL(key));
+	tableSet(&instance->fields, key, NUMBER_VAL(ms));
+	pop();
+
+	key = copyString("bytes", 5);
+	push(OBJ_VAL(key));
+	tableSet(&instance->fields, key, NUMBER_VAL(bytes));
+	pop();
+
+	key = copyString("error", 5);
+	push(OBJ_VAL(key));
+	if (error != nil) {
+		errVal = copyString(error, strlen(error));
+		push(OBJ_VAL(errVal));
+		tableSet(&instance->fields, key, OBJ_VAL(errVal));
+		pop();
+	} else {
+		tableSet(&instance->fields, key, NIL_VAL);
+	}
+	pop();
+
+	result = OBJ_VAL(instance);
+	pop();
+	return result;
+}
+
+/* httpStat(method, url, [body], [headers]) -> HttpStat
+ * Discards the response body. Fields: status, ms, bytes, error. */
+static Value
+httpStatNative(int argCount, Value* args)
+{
+	char* method;
+	char* url;
+	char* requestBody;
+	int requestBodyLen;
+	int bodyOwned;
+	int isMultipart;
+	char multipartCT[128];
+	ObjInstance* headersObj;
+	UrlParts parts;
+	int fd;
+	TLSconn conn;
+	char dialAddr[512];
+	char request[32768];
+	int reqLen;
+	int bodyLen;
+	int status;
+	char* respBody;
+	vlong t0, t1;
+	double ms;
+
+	requestBody = nil;
+	requestBodyLen = 0;
+	bodyOwned = 0;
+	isMultipart = 0;
+	headersObj = nil;
+
+	if (argCount < 2 || argCount > 4)
+		return makeHttpStat(0, 0, 0, "arity");
+
+	if (!IS_STRING(args[0]) || !IS_STRING(args[1]))
+		return makeHttpStat(0, 0, 0, "type");
+
+	method = AS_CSTRING(args[0]);
+	url = AS_CSTRING(args[1]);
+
+	if (argCount >= 3 && !IS_NIL(args[2])) {
+		ObjArray* mpParts = multipartPartsFromValue(args[2]);
+		if (mpParts != nil) {
+			MultipartBody mp;
+			if (!encodeMultipart(mpParts, &mp))
+				return makeHttpStat(0, 0, 0, "multipart encode failed");
+			requestBody = mp.data;
+			requestBodyLen = mp.size;
+			bodyOwned = 1;
+			isMultipart = 1;
+			snprint(multipartCT, sizeof(multipartCT), "%s", mp.contentType);
+		} else if (IS_STRING(args[2])) {
+			requestBody = AS_CSTRING(args[2]);
+			requestBodyLen = AS_STRING(args[2])->length;
+		} else {
+			return makeHttpStat(0, 0, 0, "bad body");
+		}
+	}
+
+	if (argCount >= 4 && !IS_NIL(args[3])) {
+		if (!IS_INSTANCE(args[3])) {
+			if (bodyOwned)
+				free(requestBody);
+			return makeHttpStat(0, 0, 0, "bad headers");
+		}
+		headersObj = AS_INSTANCE(args[3]);
+	}
+
+	if (parseUrl(url, &parts) < 0) {
+		if (bodyOwned)
+			free(requestBody);
+		return makeHttpStat(0, 0, 0, "bad url");
+	}
+
+	snprint(dialAddr, sizeof(dialAddr), "tcp!%s!%s", parts.host, parts.port);
+	t0 = nsec();
+
+	if (parts.ishttps) {
+		memset(&conn, 0, sizeof(conn));
+		conn.serverName = parts.host;
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0) {
+			if (bodyOwned)
+				free(requestBody);
+			return makeHttpStat(0, 0, 0, "dial");
+		}
+		fd = tlsClient(fd, &conn);
+		if (fd < 0) {
+			close(fd);
+			if (bodyOwned)
+				free(requestBody);
+			return makeHttpStat(0, 0, 0, "tls");
+		}
+	} else {
+		fd = dial(dialAddr, nil, nil, nil);
+		if (fd < 0) {
+			if (bodyOwned)
+				free(requestBody);
+			return makeHttpStat(0, 0, 0, "dial");
+		}
+	}
+
+	reqLen = snprint(request, sizeof(request),
+		"%s %s HTTP/1.1\r\n"
+		"Host: %s\r\n"
+		"User-Agent: lux-load/1.0\r\n",
+		method, parts.path, parts.host);
+
+	if (headersObj != nil) {
+		int i;
+		for (i = 0; i < headersObj->fields.capacity; i++) {
+			if (headersObj->fields.entries[i].key != nil) {
+				char* headerName = headersObj->fields.entries[i].key->chars;
+				Value headerValue = headersObj->fields.entries[i].value;
+
+				if (IS_STRING(headerValue)) {
+					char convertedName[256];
+					char* p;
+					strncpy(convertedName, headerName, sizeof(convertedName) - 1);
+					convertedName[sizeof(convertedName) - 1] = '\0';
+					for (p = convertedName; *p; p++) {
+						if (*p == '_') *p = '-';
+					}
+					if (isMultipart && headerNameIsContentType(convertedName))
+						continue;
+					reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+						"%s: %s\r\n", convertedName, AS_CSTRING(headerValue));
+				}
+			}
+		}
+	}
+
+	if (isMultipart) {
+		reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+			"Content-Type: %s\r\n", multipartCT);
+	}
+
+	if (requestBody != nil && requestBodyLen > 0) {
+		reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+			"Content-Length: %d\r\n", requestBodyLen);
+	}
+
+	reqLen += snprint(request + reqLen, sizeof(request) - reqLen,
+		"Connection: close\r\n\r\n");
+
+	if (writeAll(fd, request, reqLen) < 0) {
+		if (parts.ishttps)
+			free(conn.cert);
+		close(fd);
+		if (bodyOwned)
+			free(requestBody);
+		t1 = nsec();
+		ms = (double)(t1 - t0) / 1000000.0;
+		return makeHttpStat(0, ms, 0, "write");
+	}
+
+	if (requestBody != nil && requestBodyLen > 0) {
+		if (writeAll(fd, requestBody, requestBodyLen) < 0) {
+			if (parts.ishttps)
+				free(conn.cert);
+			close(fd);
+			if (bodyOwned)
+				free(requestBody);
+			t1 = nsec();
+			ms = (double)(t1 - t0) / 1000000.0;
+			return makeHttpStat(0, ms, 0, "write body");
+		}
+	}
+
+	if (bodyOwned)
+		free(requestBody);
+
+	status = 0;
+	respBody = readHttpResponse(fd, &bodyLen, &status);
+
+	if (parts.ishttps)
+		free(conn.cert);
+	close(fd);
+	t1 = nsec();
+	ms = (double)(t1 - t0) / 1000000.0;
+
+	if (respBody == nil)
+		return makeHttpStat(0, ms, 0, "read");
+
+	free(respBody);
+	return makeHttpStat(status, ms, (double)bodyLen, nil);
 }
 
 static bool call(ObjClosure* closure, int argCount);
@@ -3458,7 +3782,7 @@ httpPostNative(int argCount, Value* args)
 	
 	/* Read response */
 	int bodyLen;
-	char* respBody = readHttpResponse(fd, &bodyLen);
+	char* respBody = readHttpResponse(fd, &bodyLen, nil);
 	
 	if (parts.ishttps)
 		free(conn.cert);
@@ -3543,7 +3867,7 @@ httpPutNative(int argCount, Value* args)
 	
 	/* Read response */
 	int bodyLen;
-	char* respBody = readHttpResponse(fd, &bodyLen);
+	char* respBody = readHttpResponse(fd, &bodyLen, nil);
 	
 	if (parts.ishttps)
 		free(conn.cert);
@@ -5363,7 +5687,7 @@ s3ListObjectsNative(int argCount, Value* args)
 	
 	/* Read response */
 	int bodyLen;
-	char* respBody = readHttpResponse(fd, &bodyLen);
+	char* respBody = readHttpResponse(fd, &bodyLen, nil);
 	
 	free(conn.cert);
 	close(fd);
@@ -5479,7 +5803,7 @@ s3GetObjectNative(int argCount, Value* args)
 	
 	/* Read response */
 	int bodyLen;
-	char* respBody = readHttpResponse(fd, &bodyLen);
+	char* respBody = readHttpResponse(fd, &bodyLen, nil);
 	
 	free(conn.cert);
 	close(fd);
@@ -5608,7 +5932,7 @@ s3PutObjectNative(int argCount, Value* args)
 	
 	/* Read response */
 	int bodyLen;
-	char* respBody = readHttpResponse(fd, &bodyLen);
+	char* respBody = readHttpResponse(fd, &bodyLen, nil);
 	
 	free(conn.cert);
 	close(fd);
@@ -6051,6 +6375,7 @@ initVM(void)
 	defineNative("assert", assertNative);
 	defineNative("clock", clockNative);
 	defineNative("epoch", epochNative);
+	defineNative("sleep", sleepNative);
 	defineNative("floor", floorNative);
 	defineNative("abs", absNative);
 	defineNative("ceil", ceilNative);
@@ -6075,6 +6400,7 @@ initVM(void)
 	defineNative("run", runNative);
 	defineNative("netLookup", netLookupNative);
 	defineNative("netPing", netPingNative);
+	defineNative("statsdSend", statsdSendNative);
 	defineNative("len", lenNative);
 	defineNative("typeof", typeofNative);
 	defineNative("strFind", strFindNative);
@@ -6098,6 +6424,7 @@ initVM(void)
 	defineNative("httpPost", httpPostNative);
 	defineNative("httpPut", httpPutNative);
 	defineNative("httpRequest", httpRequestNative);
+	defineNative("httpStat", httpStatNative);
 	defineNative("httpStream", httpStreamNative);
 	defineNative("httpPostForm", httpPostFormNative);
 	defineNative("httpServer", httpServerNative);

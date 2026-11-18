@@ -1,0 +1,436 @@
+// Locust-style HTTP load tests (POSIX; Plan 9 can use httpStat + users(1)).
+// Needs httpStat and sleep natives. Multi-user runs spawn lux workers via sh.
+// Import has no network side effects:
+//   import "../lib/load.lux";
+//
+// Example:
+//   var t = LoadTest();
+//   t.bin("./lux");
+//   t.users(5);
+//   t.duration(10);
+//   t.get("https://example.com/");
+//   var s = t.run();
+
+var _loadSeq = 0;
+
+fun _loadAppend(arr, val) {
+    arr[arr.length] = val;
+    return arr;
+}
+
+fun _loadTmp(prefix) {
+    _loadSeq = _loadSeq + 1;
+    return "/tmp/" + prefix + "-" + epoch() + "-" + _loadSeq;
+}
+
+fun _loadQuote(s) {
+    if (s == nil) s = "";
+    s = "" + s;
+    var out = "\"";
+    var i = 0;
+    while (i < len(s)) {
+        var ch = s[i];
+        if (ch == "\\" or ch == "\"") out = out + "\\";
+        out = out + ch;
+        i = i + 1;
+    }
+    return out + "\"";
+}
+
+fun _loadJsEscape(s) {
+    if (s == nil) return "";
+    s = "" + s;
+    var out = "";
+    var i = 0;
+    while (i < len(s)) {
+        var ch = s[i];
+        if (ch == "\\") out = out + "\\\\";
+        else if (ch == "\"") out = out + "\\\"";
+        else if (ch == "\n") out = out + "\\n";
+        else if (ch == "\r") out = out + "\\r";
+        else out = out + ch;
+        i = i + 1;
+    }
+    return out;
+}
+
+fun _loadParseDuration(s) {
+    if (typeof(s) == "number") {
+        if (s < 1) return 1;
+        return s;
+    }
+    s = "" + s;
+    var n = len(s);
+    if (n == 0) return 10;
+    var last = s[n - 1];
+    if (last == "s" or last == "S") {
+        var v = parseJSON(strSlice(s, 0, n - 1));
+        if (typeof(v) == "number" and v >= 1) return v;
+        return 10;
+    }
+    if (last == "m" or last == "M") {
+        var m = parseJSON(strSlice(s, 0, n - 1));
+        if (typeof(m) == "number" and m >= 1) return m * 60;
+        return 60;
+    }
+    var raw = parseJSON(s);
+    if (typeof(raw) == "number" and raw >= 1) return raw;
+    return 10;
+}
+
+fun _loadPercentile(sorted, p) {
+    if (sorted.length == 0) return nil;
+    if (sorted.length == 1) return sorted[0];
+    var idx = floor(p * (sorted.length - 1));
+    if (idx < 0) idx = 0;
+    if (idx >= sorted.length) idx = sorted.length - 1;
+    return sorted[idx];
+}
+
+class LoadResult {
+    init(ok, count, failed, rps, avg, p50, p95, p99, bytes, error, dir) {
+        this.ok = ok;
+        this.count = count;
+        this.failed = failed;
+        this.rps = rps;
+        this.avg = avg;
+        this.p50 = p50;
+        this.p95 = p95;
+        this.p99 = p99;
+        this.bytes = bytes;
+        this.error = error;
+        this.dir = dir;
+    }
+}
+
+class LoadTest {
+    init() {
+        this.nUsers = 1;
+        this.rate = 1;
+        this.durationSec = 10;
+        this.waitMin = 0;
+        this.waitMax = 0;
+        this.tasks = [];
+        this.hdrs = [];
+        this.luxBin = "lux";
+        this.dir = _loadTmp("lux-load");
+        this.startedAt = 0;
+        this.finishedAt = 0;
+    }
+
+    users(n) {
+        if (typeof(n) == "number" and n >= 1) this.nUsers = floor(n);
+        if (this.nUsers < 1) this.nUsers = 1;
+        /* Soft cap: one OS process per VU. 100 is a solid work max; 128 leaves headroom. */
+        if (this.nUsers > 128) this.nUsers = 128;
+        return this;
+    }
+
+    spawnRate(n) {
+        if (typeof(n) == "number" and n > 0) this.rate = n;
+        return this;
+    }
+
+    duration(s) {
+        this.durationSec = _loadParseDuration(s);
+        return this;
+    }
+
+    wait(lo, hi) {
+        if (typeof(lo) != "number") lo = 0;
+        if (typeof(hi) != "number") hi = lo;
+        if (lo < 0) lo = 0;
+        if (hi < lo) hi = lo;
+        this.waitMin = lo;
+        this.waitMax = hi;
+        return this;
+    }
+
+    // Output directory for samples, run.log, results.json, results.txt.
+    // Default is under /tmp; set this to something local to keep artifacts.
+    outDir(path) {
+        if (typeof(path) == "string" and path != "") this.dir = path;
+        return this;
+    }
+
+    bin(path) {
+        if (typeof(path) == "string" and path != "") this.luxBin = path;
+        return this;
+    }
+
+    logLine(msg) {
+        createDir(this.dir);
+        appendFile(this.dir + "/run.log", "" + epoch() + " " + msg + "\n");
+    }
+
+    header(name, value) {
+        _loadAppend(this.hdrs, ["" + name, "" + value]);
+        return this;
+    }
+
+    task(weight, method, url, body) {
+        if (typeof(weight) != "number" or weight < 1) weight = 1;
+        if (method == nil) method = "GET";
+        _loadAppend(this.tasks, [floor(weight), "" + method, "" + url, body]);
+        return this;
+    }
+
+    get(url) {
+        return this.task(1, "GET", url, nil);
+    }
+
+    post(url, body) {
+        return this.task(1, "POST", url, body);
+    }
+
+    configJson(userId) {
+        var json = "{\"durationSec\":" + this.durationSec;
+        json = json + ",\"waitMin\":" + this.waitMin;
+        json = json + ",\"waitMax\":" + this.waitMax;
+        json = json + ",\"userId\":" + userId;
+        json = json + ",\"tasks\":[";
+        var i = 0;
+        while (i < this.tasks.length) {
+            if (i > 0) json = json + ",";
+            var t = this.tasks[i];
+            json = json + "{\"weight\":" + t[0];
+            json = json + ",\"method\":\"" + _loadJsEscape(t[1]) + "\"";
+            json = json + ",\"url\":\"" + _loadJsEscape(t[2]) + "\"";
+            if (t[3] == nil) json = json + ",\"body\":null";
+            else json = json + ",\"body\":\"" + _loadJsEscape("" + t[3]) + "\"";
+            json = json + "}";
+            i = i + 1;
+        }
+        json = json + "],\"headers\":{";
+        var j = 0;
+        while (j < this.hdrs.length) {
+            if (j > 0) json = json + ",";
+            var h = this.hdrs[j];
+            json = json + "\"" + _loadJsEscape(h[0]) + "\":\"" + _loadJsEscape(h[1]) + "\"";
+            j = j + 1;
+        }
+        if (this.hdrs.length == 0)
+            json = json + "\"User-Agent\":\"lux-load/1.0\"";
+        json = json + "}}";
+        return json;
+    }
+
+    workerScript(cfgPath, outPath) {
+        var s = "fun runLoadWorker() {\n";
+        s = s + "  var cfg = parseJSON(readFile(\"" + _loadJsEscape(cfgPath) + "\"));\n";
+        s = s + "  var out = \"" + _loadJsEscape(outPath) + "\";\n";
+        s = s + "  var end = epoch() + cfg.durationSec;\n";
+        s = s + "  var seed = epoch() * 1000 + cfg.userId * 997 + 1;\n";
+        s = s + "  var tasks = cfg.tasks;\n";
+        s = s + "  var total = 0;\n";
+        s = s + "  var i = 0;\n";
+        s = s + "  while (i < tasks.length) {\n";
+        s = s + "    total = total + tasks[i].weight;\n";
+        s = s + "    i = i + 1;\n";
+        s = s + "  }\n";
+        s = s + "  if (total < 1) return;\n";
+        s = s + "  while (epoch() < end) {\n";
+        s = s + "    seed = (seed * 1103515245 + 12345) % 2147483648;\n";
+        s = s + "    if (seed < 0) seed = 0 - seed;\n";
+        s = s + "    var pick = seed % total;\n";
+        s = s + "    var acc = 0;\n";
+        s = s + "    var ti = 0;\n";
+        s = s + "    var task = tasks[0];\n";
+        s = s + "    while (ti < tasks.length) {\n";
+        s = s + "      acc = acc + tasks[ti].weight;\n";
+        s = s + "      if (pick < acc) { task = tasks[ti]; break; }\n";
+        s = s + "      ti = ti + 1;\n";
+        s = s + "    }\n";
+        s = s + "    var body = task.body;\n";
+        s = s + "    var r = httpStat(task.method, task.url, body, cfg.headers);\n";
+        s = s + "    var st = r.status;\n";
+        s = s + "    if (st == nil) st = 0;\n";
+        s = s + "    var ms = r.ms;\n";
+        s = s + "    if (ms == nil) ms = 0;\n";
+        s = s + "    var by = r.bytes;\n";
+        s = s + "    if (by == nil) by = 0;\n";
+        s = s + "    appendFile(out, \"\" + st + \" \" + ms + \" \" + by + \"\\n\");\n";
+        s = s + "    if (cfg.waitMax > 0) {\n";
+        s = s + "      seed = (seed * 1103515245 + 12345) % 2147483648;\n";
+        s = s + "      if (seed < 0) seed = 0 - seed;\n";
+        s = s + "      var span = cfg.waitMax - cfg.waitMin;\n";
+        s = s + "      var pause = cfg.waitMin;\n";
+        s = s + "      if (span > 0) pause = cfg.waitMin + (seed / 2147483648) * span;\n";
+        s = s + "      sleep(pause);\n";
+        s = s + "    }\n";
+        s = s + "  }\n";
+        s = s + "}\n";
+        s = s + "runLoadWorker();\n";
+        return s;
+    }
+
+    shellScript() {
+        var delay = 0;
+        if (this.rate > 0) delay = 1 / this.rate;
+        var sh = "#!/bin/sh\n";
+        sh = sh + "bin=" + _loadQuote(this.luxBin) + "\n";
+        sh = sh + "dir=" + _loadQuote(this.dir) + "\n";
+        var i = 0;
+        while (i < this.nUsers) {
+            sh = sh + "$bin " + _loadQuote(this.dir + "/worker-" + i + ".lux") + " &\n";
+            if (delay > 0 and i + 1 < this.nUsers)
+                sh = sh + "sleep " + delay + "\n";
+            i = i + 1;
+        }
+        sh = sh + "wait\n";
+        return sh;
+    }
+
+    parseSamples(text) {
+        var latencies = [];
+        var count = 0;
+        var fails = 0;
+        var bytes = 0;
+        var sum = 0;
+        if (text == nil or text == "")
+            return LoadResult(false, 0, nil, nil, nil, nil, nil, nil, 0, "no samples", this.dir);
+        var lines = strSplit(text, "\n");
+        var i = 0;
+        while (i < lines.length) {
+            var line = strTrim(lines[i]);
+            i = i + 1;
+            if (line == "") continue;
+            var parts = strSplit(line, " ");
+            if (parts.length < 2) continue;
+            var status = parseJSON(parts[0]);
+            var ms = parseJSON(parts[1]);
+            var by = 0;
+            if (parts.length >= 3) {
+                var b = parseJSON(parts[2]);
+                if (typeof(b) == "number") by = b;
+            }
+            if (typeof(status) != "number" or typeof(ms) != "number") continue;
+            count = count + 1;
+            sum = sum + ms;
+            bytes = bytes + by;
+            _loadAppend(latencies, ms);
+            if (status < 200 or status >= 300) fails = fails + 1;
+        }
+        if (count == 0)
+            return LoadResult(false, 0, nil, nil, nil, nil, nil, nil, 0, "no samples", this.dir);
+        arraySort(latencies);
+        var failed = fails / count;
+        var avg = sum / count;
+        var p50 = _loadPercentile(latencies, 0.50);
+        var p95 = _loadPercentile(latencies, 0.95);
+        var p99 = _loadPercentile(latencies, 0.99);
+        var rps = nil;
+        if (this.durationSec > 0) rps = count / this.durationSec;
+        return LoadResult(true, count, failed, rps, avg, p50, p95, p99, bytes, nil, this.dir);
+    }
+
+    resultsText(s) {
+        var text = "Lux load test results\n";
+        text = text + "dir: " + this.dir + "\n";
+        text = text + "users: " + this.nUsers + "\n";
+        text = text + "durationSec: " + this.durationSec + "\n";
+        text = text + "spawnRate: " + this.rate + "\n";
+        text = text + "wait: " + this.waitMin + ".." + this.waitMax + "\n";
+        text = text + "tasks: " + this.tasks.length + "\n";
+        text = text + "startedAt: " + this.startedAt + "\n";
+        text = text + "finishedAt: " + this.finishedAt + "\n";
+        text = text + "ok: " + s.ok + "\n";
+        text = text + "count: " + s.count + "\n";
+        text = text + "failed: " + s.failed + "\n";
+        text = text + "rps: " + s.rps + "\n";
+        text = text + "avg_ms: " + s.avg + "\n";
+        text = text + "p50_ms: " + s.p50 + "\n";
+        text = text + "p95_ms: " + s.p95 + "\n";
+        text = text + "p99_ms: " + s.p99 + "\n";
+        text = text + "bytes: " + s.bytes + "\n";
+        if (s.error != nil) text = text + "error: " + s.error + "\n";
+        return text;
+    }
+
+    resultsJson(s) {
+        var json = "{";
+        json = json + "\"ok\":" + toJSON(s.ok);
+        json = json + ",\"count\":" + toJSON(s.count);
+        json = json + ",\"failed\":" + toJSON(s.failed);
+        json = json + ",\"rps\":" + toJSON(s.rps);
+        json = json + ",\"avg\":" + toJSON(s.avg);
+        json = json + ",\"p50\":" + toJSON(s.p50);
+        json = json + ",\"p95\":" + toJSON(s.p95);
+        json = json + ",\"p99\":" + toJSON(s.p99);
+        json = json + ",\"bytes\":" + toJSON(s.bytes);
+        json = json + ",\"error\":" + toJSON(s.error);
+        json = json + ",\"dir\":" + toJSON(this.dir);
+        json = json + ",\"users\":" + this.nUsers;
+        json = json + ",\"durationSec\":" + this.durationSec;
+        json = json + ",\"spawnRate\":" + this.rate;
+        json = json + ",\"waitMin\":" + this.waitMin;
+        json = json + ",\"waitMax\":" + this.waitMax;
+        json = json + ",\"tasks\":" + this.tasks.length;
+        json = json + ",\"startedAt\":" + this.startedAt;
+        json = json + ",\"finishedAt\":" + this.finishedAt;
+        json = json + "}";
+        return json;
+    }
+
+    writeReports(s) {
+        createDir(this.dir);
+        writeFile(this.dir + "/results.json", this.resultsJson(s) + "\n");
+        writeFile(this.dir + "/results.txt", this.resultsText(s));
+        this.logLine("results count=" + s.count + " failed=" + s.failed +
+            " rps=" + s.rps + " p95=" + s.p95);
+        return s;
+    }
+
+    driveOne(userId, outPath) {
+        writeFile(this.dir + "/cfg-" + userId + ".json", this.configJson(userId));
+        writeFile(this.dir + "/worker-" + userId + ".lux",
+            this.workerScript(this.dir + "/cfg-" + userId + ".json", outPath));
+        writeFile(outPath, "");
+        this.logLine("worker " + userId + " start");
+        var cmd = this.luxBin + " " + _loadQuote(this.dir + "/worker-" + userId + ".lux");
+        run(cmd);
+        this.logLine("worker " + userId + " done");
+    }
+
+    summarize() {
+        var all = "";
+        var i = 0;
+        while (i < this.nUsers) {
+            var chunk = readFile(this.dir + "/samples-" + i + ".txt");
+            if (chunk != nil) all = all + chunk;
+            i = i + 1;
+        }
+        writeFile(this.dir + "/samples-all.txt", all);
+        return this.parseSamples(all);
+    }
+
+    run() {
+        if (this.tasks.length == 0)
+            return LoadResult(false, 0, nil, nil, nil, nil, nil, nil, 0, "no tasks", this.dir);
+        createDir(this.dir);
+        writeFile(this.dir + "/run.log", "");
+        this.startedAt = epoch();
+        this.logLine("start users=" + this.nUsers + " durationSec=" + this.durationSec +
+            " tasks=" + this.tasks.length + " bin=" + this.luxBin);
+        if (this.nUsers == 1) {
+            this.driveOne(0, this.dir + "/samples-0.txt");
+        } else {
+            var i = 0;
+            while (i < this.nUsers) {
+                writeFile(this.dir + "/cfg-" + i + ".json", this.configJson(i));
+                writeFile(this.dir + "/worker-" + i + ".lux",
+                    this.workerScript(this.dir + "/cfg-" + i + ".json",
+                        this.dir + "/samples-" + i + ".txt"));
+                writeFile(this.dir + "/samples-" + i + ".txt", "");
+                i = i + 1;
+            }
+            writeFile(this.dir + "/run.sh", this.shellScript());
+            this.logLine("spawn " + this.nUsers + " workers via run.sh");
+            run("sh " + _loadQuote(this.dir + "/run.sh"));
+            this.logLine("all workers finished");
+        }
+        this.finishedAt = epoch();
+        var s = this.summarize();
+        return this.writeReports(s);
+    }
+}

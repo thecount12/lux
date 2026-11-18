@@ -465,6 +465,7 @@ Wrong arity or type usually returns `nil` (math domain errors follow C `math.h`,
 | `assert` | `assert(cond, message)` | Abort on falsy `cond` |
 | `clock` | `clock()` → number | Process-relative seconds |
 | `epoch` | `epoch()` → number | Unix time, UTC seconds |
+| `sleep` | `sleep(seconds)` → nil | Pause; fractional OK; clamped to `[0, 86400]` |
 | `exit` | `exit([code])` | Never returns; default `0` |
 | `args` | `args()` → array | Strings after script path |
 | `help` | `help()` / `help(name)` | REPL documentation |
@@ -537,13 +538,15 @@ There is **no** `{ "k": v }` literal. Build objects with classes / `Dict`, or pa
 | `httpPost(url, body)` | Body string or `nil` (JSON `Content-Type`) |
 | `httpPut(url, body)` | Body string or `nil` |
 | `httpRequest(method, url, body, headers)` | Body string or `nil`. `body` may be a string, `nil`, `Form`, or parts array |
+| `httpStat(method, url, body, headers)` | Instance with `status`, `ms`, `bytes`, `error`, `reused` (body discarded; POSIX keeps a CURL handle warm) |
 | `httpStream(method, url, body, headers, onLine)` | `true` or `nil`. Calls `onLine(line)` per response line (NDJSON). `body` / `headers` may be `nil`. Return `false` from `onLine` to stop |
 | `httpPostForm(url, parts, [headers])` | Body string or `nil`. POST `multipart/form-data` |
 | `httpServer(port)` | Legacy blocking server |
 | `netLookup(host)` | First IP string or `nil` |
 | `netPing(host, port)` | RTT ms, or `-1` |
+| `statsdSend(line)` / `statsdSend(host, port, line)` | `true`/`false`. One UDP DogStatsD/StatsD datagram (default `127.0.0.1:8125`) |
 
-Client calls return a **body string**, not a response object (no `.statusCode`). `httpStream` is the exception: it returns `true`/`nil` and delivers lines to `onLine`.
+Client calls return a **body string**, not a response object (no `.statusCode`), except `httpStat` (metrics object) and `httpStream` (`true`/`nil`, lines to `onLine`). `lib/load.lux` builds Locust-style multi-user load tests on `httpStat` + `sleep`.
 
 ### 14.9 9P
 

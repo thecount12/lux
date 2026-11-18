@@ -1,0 +1,44 @@
+// statsdSend + lib/statsd.lux (no agent required; UDP send still returns true).
+import "../lib/statsd.lux";
+
+fun runStatsdTests() {
+    assert(statsdSend("lux.test:1|c") == true, "send default");
+    assert(statsdSend("127.0.0.1", 8125, "lux.test:1|c|#env:test") == true, "send host");
+    assert(statsdSend("") == false, "empty line");
+    assert(statsdSend(1) == false, "bad arity type");
+
+    var dd = StatsD();
+    dd.prefix("lux.load.");
+    dd.tag("service", "lux");
+    dd.tag("env", "test");
+
+    var line = dd.line("requests", 3, "c", ["tool:lux"]);
+    assert(strFind(line, "lux.load.requests:3|c") == 0, "line name");
+    assert(strFind(line, "#service:lux,env:test,tool:lux") >= 0, "line tags");
+
+    assert(dd.count("requests", 1, nil) == true, "count");
+    assert(dd.incr("hits", nil) == true, "incr");
+    assert(dd.gauge("rps", 6.2, nil) == true, "gauge");
+    assert(dd.timing("p95", 79.4, nil) == true, "timing");
+    assert(dd.histogram("size", 100, nil) == true, "hist");
+    assert(dd.distribution("size", 100, nil) == true, "dist");
+
+    class FakeResult {
+        init() {
+            this.count = 10;
+            this.failed = 0;
+            this.rps = 5.5;
+            this.avg = 50;
+            this.p50 = 45;
+            this.p95 = 80;
+            this.p99 = 90;
+        }
+    }
+    assert(dd.loadResult(FakeResult(), ["site:demo"]) == true, "loadResult");
+
+    dd.fromEnv();
+    assert(typeof(dd.host) == "string", "fromEnv host");
+}
+
+runStatsdTests();
+print "test_statsd: all assertions passed";

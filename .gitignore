@@ -57,3 +57,8 @@ aws_config.json
 # Temporary test files
 /tmp/
 /temp/
+
+# Load-test output dirs (examples/load_demo.lux, tests)
+load-out-*/
+posix/load-out-*/
+benchmark/load_compare/out/
